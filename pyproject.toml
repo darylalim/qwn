@@ -1,0 +1,39 @@
+[project]
+name = "qwn"
+version = "0.1.0"
+description = "Local multimodal RAG and voice assistant using Qwen models on Apple Silicon with MLX"
+readme = "README.md"
+authors = [
+    { name = "Daryl Lim", email = "73304404+darylalim@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+qwn = "qwn:main"
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+    "ty>=0.0.84",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["slow: loads real MLX models (deselect with -m 'not slow')"]
