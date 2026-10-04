@@ -97,8 +97,10 @@ uv run pytest                    # everything, including real-model tests
 - **`mlx-embeddings` is young (0.1.0).** In phase 0, compare its embeddings with the PyTorch reference on 5 samples (cosine ≥ 0.99).
 - **Long contexts eat memory.** Cap the generation context at ~16K tokens.
 
-## Open questions
+## Decisions (resolved open questions)
 
-1. Corpus type: PDFs, images, markdown, or a mix?
-2. Voice in v1 or deferred to phase 4?
-3. Streamlit only, or keep a CLI alongside it for evaluation and scripting?
+1. **Corpus:** mixed. PDFs/slides (page images + text), images/screenshots, and markdown/text.
+   Video is out of scope.
+2. **Voice:** deferred to phase 4. v1 is text-only (~13 GB) and doesn't depend on `mlx-audio`.
+3. **Interface:** Typer CLI for ingesting, evaluating and scripting, plus Streamlit for everyday use.
+   Both are thin layers over the same `qwn.*` modules.
