@@ -19,7 +19,8 @@ with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qw
 | Voice | Deferred to phase 4. v1 is text-only. |
 | Interface | Typer CLI (ingest/eval/scripting) **and** Streamlit (daily use). Both are thin layers over `qwn.*`. |
 | Model I/O | Our own `Protocol` interfaces with exact types; library calls hidden behind adapters. |
-| Libraries | `mlx-vlm` for generation, embedding **and** reranking; `mlx-lm` for Guard; `mlx-embeddings` as fallback. |
+| Libraries | `mlx-vlm` for generation, embedding **and** reranking; `mlx-lm` for Guard; `mlx-embeddings` as fallback (**GPL-3.0**: needs a license decision before it's adopted). PDF via **pypdfium2** (not PyMuPDF, which is AGPL). |
+| License | **Apache-2.0** (`LICENSE` + `license`/`license-files` in `pyproject.toml`, already applied). Runtime dependencies must be permissive (see License). |
 | Index | SQLite + `sqlite-vec` in one file (`index/qwn.db`, WAL), tables `documents`/`chunks`/`vec_chunks`/`meta`; each file re-indexed in one transaction, keyed by content hash. |
 | Page renders | WebP q85 at 150 dpi on disk under `index/pages/`. |
 | UI | Streamlit app with 3 pages: Chat, Library, System. |
@@ -54,12 +55,12 @@ with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qw
 | `mlx-vlm` | `>=0.7.4` | Pulls `mlx>=0.32.2`, `transformers>=5.14`, **and `mlx-audio>=0.5.2`** |
 | `mlx-lm` | `>=0.32.0` | `transformers>=5.7`, compatible with the above |
 | `sqlite-vec` | `>=0.1.9` | Vector search inside SQLite (0.2 MB wheel). SQLite itself ships with Python |
-| `pymupdf` | `>=1.28` | PDF → page image + text |
+| `pypdfium2` | `>=5.14` | PDF → page image + text (BSD-3/Apache-2.0; PDFium, Chrome's PDF engine) |
 | `pillow` | latest | Image loading/resizing, WebP encoding |
 | `typer` | `>=0.27` | CLI |
 | `streamlit` | `>=1.65` | UI (`numpy<3`, OK) |
 | `pydantic-settings` | latest | Config, TOML + env |
-| `mlx-embeddings` | `==0.1.0` | **Fallback only**, added only if mlx-vlm embed/rerank fails phase 0 |
+| `mlx-embeddings` | `==0.1.0` | **Fallback only, GPL-3.0**: added only if mlx-vlm embed/rerank fails phase 0 **and** the user accepts GPL for the project (otherwise write a minimal in-house adapter) |
 
 These pins overlap, so a single environment should resolve. Phase 0 confirms it with
 `uv lock`.
@@ -67,7 +68,7 @@ These pins overlap, so a single environment should resolve. Phase 0 confirms it 
 ## Data flow
 
 ```
-INGEST   PDF ─► PyMuPDF ─► page WebP (150 dpi) + page text ─┐
+INGEST   PDF ─► pypdfium2 ─► page WebP (150 dpi) + page text ─┐
          image / screenshot ─► normalised WebP copy ─────────┼─► Embedder ─► 1024-d, L2-norm ─► SQLite + sqlite-vec
          .md / .txt ─► ~800-token chunks (heading-aware) ───┘
 
@@ -239,6 +240,8 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 -- Later (hybrid search): CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='rowid');
 ```
 
+- **PDF text**: `page.get_textpage().get_text_range()` (pypdfium2). Checked on 2026-10-04 with a
+  generated 2-page PDF: text came back exact; a 150 dpi render is 1275×1651 px, ~8 KB as WebP q85.
 - **Library**: `sqlite-vec>=0.1.9`. Load it with `sqlite_vec.load(conn)` after
   `conn.enable_load_extension(True)`. Checked: the uv Python 3.12 build has SQLite 3.53 with
   extension loading enabled. The `vec0` dimension comes from `meta.embed_dim` when the schema is
@@ -254,7 +257,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   txt}. For each file, compute sha256. If it matches `documents.sha256`, skip. Otherwise render or
   chunk it, embed in batches (8 images or 32 texts), and commit as above.
 - **Images**: re-encode each image to WebP q85 in `index_dir/pages/<doc_id>/0.webp`, keeping the
-  aspect ratio, capped at `max_pixels`. PDF pages: PyMuPDF `get_pixmap(dpi=pdf_dpi)` → Pillow →
+  aspect ratio, capped at `max_pixels`. PDF pages: pypdfium2 `page.render(scale=pdf_dpi / 72).to_pil()` → Pillow →
   WebP q85.
 - **Removed files**: `qwn ingest --prune` deletes rows and render folders for files that no longer
   exist.
@@ -341,7 +344,7 @@ tests/fakes.py       FakeEmbedder (hash-seeded unit vectors), FakeReranker (word
 tests/unit/          chunking, IDs/hashing, guard regex parsing (incl. unparseable),
                      citation parsing (incl. invented labels), prompt building,
                      MRL truncate + renorm, settings precedence
-tests/integration/   tmp_path SQLite index (real sqlite-vec); PyMuPDF-generated 2-page PDF; PIL image; markdown file
+tests/integration/   tmp_path SQLite index (real sqlite-vec); 2-page text PDF from `tests/pdf_fixture.py` (dependency-free writer, see License); PIL image; markdown file
                      ingest → re-ingest skips → modify one file → only it re-indexes → --prune;
                      crash between embed and commit leaves the old version intact
 tests/ui/            streamlit.testing.v1.AppTest smoke test per page, with fakes injected
@@ -404,6 +407,34 @@ qwn/
 ├─ tests/                   # fakes.py, unit/, integration/, ui/, hooks/, slow/
 └─ data/  index/            # gitignored
 ```
+
+## License
+
+**Apache-2.0** (decided 2026-10-04, already applied: `LICENSE` holds the official text, and
+`pyproject.toml` has `license = "Apache-2.0"` and `license-files = ["LICENSE"]`; the built wheel
+carries `License-Expression: Apache-2.0`).
+
+- **Why:** permissive with an explicit patent grant. It matches the Qwen models, Streamlit and
+  transformers; everything else in the stack is MIT/BSD.
+- **Dependency license audit (2026-10-04):**
+
+  | License | Packages |
+  |---|---|
+  | MIT | mlx, mlx-lm, mlx-vlm, mlx-audio, typer, pydantic-settings |
+  | Apache-2.0 | streamlit, transformers, all Qwen models used (VL-8B, Embedding, Reranker, Guard, ASR, TTS) |
+  | MIT or Apache-2.0 | sqlite-vec |
+  | BSD-3 / Apache-2.0 | pypdfium2 |
+  | Permissive (MIT-CMU, BSD, …) | pillow, numpy |
+  | **Excluded: AGPL-3.0** | PyMuPDF. Replaced by pypdfium2 so the combined program stays permissive |
+  | **Fallback only: GPL-3.0** | mlx-embeddings. Needs the user's decision before adoption |
+
+- **Rule for new dependencies:** check the license before `uv add`. Anything copyleft (GPL, AGPL,
+  LGPL with static linking, SSPL) needs the user's explicit OK and an update to this table.
+- **Model weights** aren't redistributed; they're downloaded from Hugging Face at runtime under
+  their own Apache-2.0 terms. Phase 0 adds a README "Models and licenses" section crediting them.
+- **Test PDF fixtures** come from `tests/pdf_fixture.py`, a ~35-line dependency-free writer for
+  multi-page text PDFs (Helvetica, one line per page). It was prototyped on 2026-10-04: pypdfium2
+  parsed it, rendered it and extracted the text exactly.
 
 ## Claude Code hooks
 
@@ -594,7 +625,7 @@ echo "Implement PLAN.md phase by phase. Check which phase's exit criteria are al
 ## GitHub Actions CI
 
 A single job on **macOS arm64** (`macos-15`), the same platform as the M2 Max. It installs the same
-prebuilt packages (mlx, sqlite-vec, pymupdf) and runs the hook scripts under macOS bash 3.2 (the
+prebuilt packages (mlx, sqlite-vec, pypdfium2) and runs the hook scripts under macOS bash 3.2 (the
 runner image has Bash 3.2.57 and jq 1.8.2, checked 2026-10-04). CI never loads real models: the
 `slow` tests are deselected, and `HF_HUB_OFFLINE=1` makes any accidental model download fail
 immediately instead of pulling ~12 GB.
@@ -861,7 +892,9 @@ uv run qwn ui                    # launch Streamlit
 ## Risks and mitigations
 
 - **mlx-vlm embed/rerank Python API isn't documented.** Phase 0 reads the server handlers and
-  copies their calls. Fallback: `mlx-embeddings` 0.1.0 behind the same adapters.
+  copies their calls. Fallback: `mlx-embeddings` 0.1.0 behind the same adapters. It's GPL-3.0, so
+  adopting it needs the user's OK; the alternative is a minimal in-house adapter (last-token pooling,
+  yes/no logit difference).
 - **mlx-community 8-bit conversions may not load.** Fallback: the original `Qwen/…` bf16 repos
   (~4.5 GB each), which still fit.
 - **mlx-embeddings / mlx-vlm embedding numbers may drift from the reference.** The `slow` test
