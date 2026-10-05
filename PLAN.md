@@ -204,6 +204,22 @@ class Guard(Protocol):
 
 Back up or move the index by copying `index_dir/`. Delete it to start fresh.
 
+### `.gitignore` conventions (applied 2026-10-04)
+
+- **Anchor root-only paths with a leading `/`** (`/data/`, `/index/`, `/eval/results/`,
+  `/qwn.toml`, `/dist/`, `/.venv/`). Without the anchor, `data/` also matches `tests/data/` and
+  `src/qwn/data/`, and those files are silently left out of commits. Use unanchored patterns only
+  for things that can appear anywhere (`__pycache__/`, `*.log`, `.DS_Store`).
+- **Ignore the real file, commit an example:** `qwn.toml` / `qwn.example.toml`, `.env*` /
+  `!.env.example`.
+- **Shared vs personal Claude Code files:** commit `.claude/settings.json` and `.claude/hooks/`;
+  ignore `.claude/settings.local.json` and `CLAUDE.local.md`.
+- **Editor folders** (`.vscode/`, `.idea/`) belong in each developer's global ignore
+  (`~/.config/git/ignore`), not here.
+- **Check new rules before committing:** `git check-ignore -v <path>`, especially for anything
+  under `tests/` or `src/`. The current file was tested against 34 paths (20 to ignore, 14 to keep);
+  all behaved as intended.
+
 ## Data model (SQLite + sqlite-vec at `index_dir/qwn.db`)
 
 ```sql
