@@ -29,6 +29,7 @@ with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qw
 | Config | `pydantic-settings`: defaults → `qwn.toml` → `QWN_*` env → CLI flags / UI sliders. |
 | Tooling | uv (Python 3.12), ruff, ty, pytest (already set up). |
 | Claude Code hooks | 5 project hooks in `.claude/settings.json`: format+lint on edit, protected paths, uv-only and heavy-command confirmation, stop-time quality gate, session orientation. |
+| CI | GitHub Actions, one job on `macos-15` (arm64): `uv sync --locked`, ruff format/check, ty, `pytest -m "not slow"` (including hook tests), `HF_HUB_OFFLINE=1`. Slow tests run locally before merging. |
 
 ## Stack and memory budget
 
@@ -343,6 +344,8 @@ tests/integration/   tmp_path SQLite index (real sqlite-vec); PyMuPDF-generated 
                      ingest → re-ingest skips → modify one file → only it re-indexes → --prune;
                      crash between embed and commit leaves the old version intact
 tests/ui/            streamlit.testing.v1.AppTest smoke test per page, with fakes injected
+tests/hooks/         run each .claude/hooks/*.sh via subprocess with JSON payloads; assert the
+                     allow/deny/ask decisions and exit codes from the hooks section's test list
 tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms, determinism,
                      guard on known safe/unsafe prompts, mlx-vlm vs reference embedding (cos ≥ 0.99)
 ```
@@ -370,7 +373,7 @@ tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms,
 
 | # | Phase | Deliverable | Exit criterion |
 |---|---|---|---|
-| 0 | Env + checks | **Install and test the Claude Code hooks first**; add runtime deps; `interfaces.py`; adapters; `scripts/smoke_test.py`; `tests/slow/` contract tests | `uv lock` resolves; 4 core models loaded together under 24 GB; VL-8B ≥ 35 tok/s; slow tests pass (or the fallback library is adopted) |
+| 0 | Env + checks | **Install and test the Claude Code hooks first**; add `ci.yml`, the `pyproject.toml` CI changes (`extend-exclude` for `*.md`, `required-version`) and `tests/hooks/`; add runtime deps; `interfaces.py`; adapters; `scripts/smoke_test.py`; `tests/slow/` contract tests | `uv lock` resolves; 4 core models loaded together under 24 GB; VL-8B ≥ 35 tok/s; slow tests pass (or the fallback library is adopted) |
 | 1 | Retrieval | `config`, `ingest`, `index` (SQLite schema + sqlite-vec), `retrieve`; `qwn ingest/search/status`; unit + integration tests | recall@5 ≥ 0.8 on 20 queries; rerank beats embedding alone |
 | 2 | Answering | `prompts`, `answer`; `qwn ask`; `qwn eval` with citation_hit | Correct page cited in most of the 20 queries |
 | 3 | Safety | `guard` wired into ask/chat; controversial policy | Known unsafe prompts blocked; normal prompts pass; unparseable output → warn |
@@ -384,6 +387,7 @@ Phase 5 may begin once phase 2 is done; the Chat page doesn't need Guard or voic
 ```
 qwn/
 ├─ .claude/                 # settings.json (hooks) + hooks/*.sh, committed
+├─ .github/workflows/ci.yml # CI (macOS arm64)
 ├─ pyproject.toml           # uv; runtime deps above; dev group: ruff, ty, pytest
 ├─ PLAN.md   qwn.example.toml
 ├─ src/qwn/
@@ -396,7 +400,7 @@ qwn/
 │  └─ ui/                   # app.py, pages/chat.py, pages/library.py, pages/system.py
 ├─ scripts/smoke_test.py
 ├─ eval/queries.jsonl  eval/baseline.json
-├─ tests/                   # fakes.py, unit/, integration/, ui/, slow/
+├─ tests/                   # fakes.py, unit/, integration/, ui/, hooks/, slow/
 └─ data/  index/            # gitignored
 ```
 
@@ -585,6 +589,105 @@ echo "Implement PLAN.md phase by phase. Check which phase's exit criteria are al
   a security boundary.
 - **H1 calls `.venv/bin/ruff` directly.** `uv run` rebuilds the project first, and a build failure
   would be misreported as lint. It falls back to `uv run` only when `.venv` doesn't exist yet.
+
+## GitHub Actions CI
+
+A single job on **macOS arm64** (`macos-15`), the same platform as the M2 Max. It installs the same
+prebuilt packages (mlx, sqlite-vec, pymupdf) and runs the hook scripts under macOS bash 3.2 (the
+runner image has Bash 3.2.57 and jq 1.8.2, checked 2026-10-04). CI never loads real models: the
+`slow` tests are deselected, and `HF_HUB_OFFLINE=1` makes any accidental model download fail
+immediately instead of pulling ~12 GB.
+
+### `.github/workflows/ci.yml`
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Lint, types, fast tests (macOS arm64)
+    runs-on: macos-15            # Apple Silicon
+    timeout-minutes: 15
+    env:
+      HF_HUB_OFFLINE: "1"        # no model downloads in CI; anything that tries fails fast
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10   # caches uv's package downloads automatically on GitHub runners
+        with:
+          version-file: pyproject.toml # reads [tool.uv] required-version
+
+      - name: Install (fails if uv.lock is out of date)
+        run: uv sync --locked
+
+      - name: Ruff format
+        run: uv run --frozen ruff format --check .
+
+      - name: Ruff lint
+        run: uv run --frozen ruff check --output-format=github .
+
+      - name: Type check
+        run: uv run --frozen ty check
+
+      - name: Fast tests (unit, integration, UI, hooks)
+        run: uv run --frozen pytest -m "not slow" -ra
+```
+
+Supporting changes in `pyproject.toml`:
+
+```toml
+[tool.ruff]
+# (existing settings) plus:
+extend-exclude = ["*.md"]  # PLAN.md/README.md code blocks are illustrative, not source
+
+[tool.uv]
+required-version = ">=0.12.22,<0.13"   # CI and your machine use the same uv
+```
+
+**Why exclude Markdown:** ruff 0.16 also formats Python code blocks inside `.md` files. Without the
+exclude, `ruff format --check .` fails on PLAN.md's illustrative snippets, which breaks both CI and
+the H4 Stop hook. This was found by running the CI steps locally on 2026-10-04, and the fix was
+checked in a scratch copy: format and lint both pass.
+
+### Design notes
+
+- **Same checks as the H4 Stop hook.** The local gate and CI run the same four commands, so
+  "passes locally" means "passes in CI". CI adds `uv sync --locked`, which catches a `uv.lock` that
+  doesn't match `pyproject.toml`.
+- **Hook scripts are tested in CI** through `tests/hooks/` (see Testing), so a broken hook is
+  caught before it can affect an implementation session.
+- **Least privilege:** `contents: read`; the checkout doesn't keep the token
+  (`persist-credentials: false`); no secrets are used.
+- **Cost:** about 3 minutes per run with a warm cache. That's free on a public repo. On a private
+  repo macOS minutes are billed at 10×, so roughly 30 billed minutes per run.
+- **Speed:** concurrency cancels older runs of a PR when a new commit is pushed. Pushes to `main`
+  are never cancelled.
+- **Slow tests stay local** (decided). GitHub runners can't run the ~20 GB real-model suite. It's
+  part of the merge checklist below.
+
+### Merge checklist (each phase's PR into `main`)
+
+1. CI is green.
+2. `uv run pytest` passes locally on the M2 Max, **including** `slow` tests.
+3. From phase 1 on: `uv run qwn eval` meets the phase's exit criterion. If the change was
+   intentional, update `eval/baseline.json` with `--update-baseline` in the same PR.
+4. After the first push to GitHub, protect `main`: require the `Lint, types, fast tests (macOS arm64)`
+   check, and require branches to be up to date before merging.
 
 ## Development workflow
 
