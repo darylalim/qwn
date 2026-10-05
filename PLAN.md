@@ -30,6 +30,7 @@ with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qw
 | Tooling | uv (Python 3.12), ruff, ty, pytest (already set up). |
 | Claude Code hooks | 5 project hooks in `.claude/settings.json`: format+lint on edit, protected paths, uv-only and heavy-command confirmation, stop-time quality gate, session orientation. |
 | CI | GitHub Actions, one job on `macos-15` (arm64): `uv sync --locked`, ruff format/check, ty, `pytest -m "not slow"` (including hook tests), `HF_HUB_OFFLINE=1`. Slow tests run locally before merging. |
+| Releases | Push to `main` changing `pyproject.toml` with an untagged version → CI gate → tag `vX.Y.Z` + GitHub Release (notes, wheel, sdist). No PyPI. Bump with `uv version --bump`; one minor release per phase. |
 
 ## Stack and memory budget
 
@@ -373,7 +374,7 @@ tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms,
 
 | # | Phase | Deliverable | Exit criterion |
 |---|---|---|---|
-| 0 | Env + checks | **Install and test the Claude Code hooks first**; add `ci.yml`, `[tool.uv] required-version` and `tests/hooks/` (`extend-exclude` for `*.md` is already done); add runtime deps; `interfaces.py`; adapters; `scripts/smoke_test.py`; `tests/slow/` contract tests | `uv lock` resolves; 4 core models loaded together under 24 GB; VL-8B ≥ 35 tok/s; slow tests pass (or the fallback library is adopted) |
+| 0 | Env + checks | **Install and test the Claude Code hooks first**; add `ci.yml`, `release.yml`, `[tool.uv] required-version` and `tests/hooks/` (`extend-exclude` for `*.md` is already done); add runtime deps; `interfaces.py`; adapters; `scripts/smoke_test.py`; `tests/slow/` contract tests | `uv lock` resolves; 4 core models loaded together under 24 GB; VL-8B ≥ 35 tok/s; slow tests pass (or the fallback library is adopted) |
 | 1 | Retrieval | `config`, `ingest`, `index` (SQLite schema + sqlite-vec), `retrieve`; `qwn ingest/search/status`; unit + integration tests | recall@5 ≥ 0.8 on 20 queries; rerank beats embedding alone |
 | 2 | Answering | `prompts`, `answer`; `qwn ask`; `qwn eval` with citation_hit | Correct page cited in most of the 20 queries |
 | 3 | Safety | `guard` wired into ask/chat; controversial policy | Known unsafe prompts blocked; normal prompts pass; unparseable output → warn |
@@ -387,7 +388,7 @@ Phase 5 may begin once phase 2 is done; the Chat page doesn't need Guard or voic
 ```
 qwn/
 ├─ .claude/                 # settings.json (hooks) + hooks/*.sh, committed
-├─ .github/workflows/ci.yml # CI (macOS arm64)
+├─ .github/workflows/       # ci.yml (macOS arm64, reusable), release.yml
 ├─ pyproject.toml           # uv; runtime deps above; dev group: ruff, ty, pytest
 ├─ PLAN.md   qwn.example.toml
 ├─ src/qwn/
@@ -608,12 +609,13 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:                 # reused by release.yml as its gate
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -686,8 +688,163 @@ checked in a scratch copy: format and lint both pass.
 2. `uv run pytest` passes locally on the M2 Max, **including** `slow` tests.
 3. From phase 1 on: `uv run qwn eval` meets the phase's exit criterion. If the change was
    intentional, update `eval/baseline.json` with `--update-baseline` in the same PR.
-4. After the first push to GitHub, protect `main`: require the `Lint, types, fast tests (macOS arm64)`
+4. The version is bumped with `uv version --bump minor` when the PR completes a phase (merging it
+   triggers the release).
+5. After the first push to GitHub, protect `main`: require the `Lint, types, fast tests (macOS arm64)`
    check, and require branches to be up to date before merging.
+
+## Automatic releases
+
+When a push to `main` changes `pyproject.toml` and the version has **no `v<version>` tag yet**, the
+`release` workflow runs CI and, if it passes, creates a tag and a **GitHub Release** with
+auto-generated notes and the wheel and sdist attached. Nothing is published to PyPI (decided). The
+name `qwn` was free on PyPI on 2026-10-04, and Trusted Publishing can be added later as one extra
+job.
+
+### Versioning and how to release
+
+- **One command bumps the version:** `uv version --bump patch|minor|major` (pre-releases:
+  `uv version --bump minor --bump rc`). It updates **both** `pyproject.toml` and `uv.lock`. Never
+  hand-edit the version: `uv.lock` records it, so `uv sync --locked` in CI fails on a hand-edit
+  (H2 also blocks `uv.lock` edits).
+- **Policy: each completed phase is a minor release.** Phase 0 → `0.1.0` (the current version, not
+  yet tagged), phase 1 → `0.2.0`, … phase 5 → `0.6.0`, then `1.0.0` once you use it daily. Fixes
+  between phases → patch.
+- **Flow:** bump on the phase branch → PR (CI) → merge to `main` → `release.yml` → tag `vX.Y.Z` +
+  GitHub Release.
+- **Note:** `0.1.0` has no tag, so the **first** merge to `main` that touches `pyproject.toml`
+  (phase 0) publishes `v0.1.0`. That's intended. Bump first if you'd rather not release phase 0.
+
+### `.github/workflows/release.yml`
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [pyproject.toml]
+  workflow_dispatch:             # re-run a release that failed after the fix is merged
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release                 # one release at a time, never cancelled mid-way
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect version bump
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0         # need all tags
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version-file: pyproject.toml
+      - id: check
+        name: Compare pyproject version with existing tags (PEP 440)
+        run: |
+          set -euo pipefail
+          version=$(uv version --short)
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Tag $tag already exists; nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # PEP 440 comparison against every existing v* tag (git's version sort mis-orders rc tags).
+          read -r newer pre latest < <(git tag --list 'v*' | uv run --no-project --quiet --with packaging python -c '
+          import sys
+          from packaging.version import InvalidVersion, Version
+          new = Version(sys.argv[1])
+          tags = []
+          for line in sys.stdin:
+              try:
+                  tags.append(Version(line.strip().removeprefix("v")))
+              except InvalidVersion:
+                  pass
+          latest = max(tags, default=None)
+          print(str(latest is None or new > latest).lower(), str(new.is_prerelease).lower(), latest or "none")
+          ' "$version")
+          if [ "$newer" != "true" ]; then
+            echo "::error file=pyproject.toml::Version $version is not greater than the latest released v$latest"
+            exit 1
+          fi
+          { echo "release=true"; echo "version=$version"; echo "tag=$tag"; echo "prerelease=$pre"; } >> "$GITHUB_OUTPUT"
+          echo "Will release $tag (prerelease=$pre, previous: $latest)"
+
+  ci:
+    name: CI gate
+    needs: detect
+    if: needs.detect.outputs.release == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Build and publish GitHub Release
+    needs: [detect, ci]
+    if: needs.detect.outputs.release == 'true'
+    runs-on: ubuntu-latest       # pure-Python wheel (uv_build): platform-independent, cheap
+    permissions:
+      contents: write            # create tag + release; only this job can write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version-file: pyproject.toml
+      - name: Build wheel and sdist
+        run: uv build --out-dir dist
+      - name: Check artifact versions
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          ls dist
+          test -f "dist/qwn-${VERSION}-py3-none-any.whl"
+          test -f "dist/qwn-${VERSION}.tar.gz"
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          PRERELEASE: ${{ needs.detect.outputs.prerelease }}
+        run: |
+          flags=(--repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --generate-notes)
+          [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* "${flags[@]}"
+```
+
+### Design notes
+
+- **"Version bump" means "no tag for this version yet",** not "the diff touched the version line".
+  This handles squash merges and multi-commit pushes, makes re-runs safe (an existing tag means a
+  no-op), and lets `workflow_dispatch` retry a failed release. The `paths` filter keeps it from
+  running on unrelated pushes.
+- **Mistakes fail loudly:** a version that isn't greater than the newest tag (by PEP 440, including
+  rc/dev ordering) fails `detect` with an annotation on `pyproject.toml`. A hand-edited version
+  without a lock update fails CI's `uv sync --locked`.
+- **The CI gate is the same `ci.yml`** (via `workflow_call`), so a release can't skip a check that
+  PRs run. This means CI runs twice on a bump commit (once from `ci.yml`'s own push trigger); that's
+  accepted for simplicity.
+- **Least privilege:** read-only at the top level. Only the `release` job gets `contents: write`,
+  and it uses the built-in `GITHUB_TOKEN`; no secrets. Tags created with `GITHUB_TOKEN` don't
+  trigger other workflows, so there are no loops.
+- **Prototyped on 2026-10-04** in a scratch git repo:
+  - Detection: no tags → release `v0.1.0`; tag exists → no-op; `0.3.0rc2` while `v0.3.0` exists
+    → error; `0.3.1` → release; `0.4.0.dev1` → prerelease. Invalid tags such as `vjunk` are ignored
+    (git's own sort would have picked it as "latest").
+  - Bumping and build: `uv version --bump minor` updated `uv.lock`, and `uv build` produced
+    `qwn-0.2.0-py3-none-any.whl` and `qwn-0.2.0.tar.gz`.
+- **Optional later:** add `.github/release.yml` to group generated notes by PR label, and a `pypi`
+  job (Trusted Publishing, `environment: pypi`) between `ci` and `release`.
 
 ## Development workflow
 
