@@ -18,7 +18,8 @@ group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*
    releases, License.
 3. **Phases 1–3:** Data flow, Storage layout, Data model, CLI, Settings, Runtime robustness,
    Security → Prompt injection, Testing, Evaluation.
-4. **Phase 4:** Voice input pipeline, plus Memory policy (evictable voice models).
+4. **Phase 4:** Voice input pipeline, plus Memory policy (evictable voice models). CLI only; the
+   Chat page gets voice in whichever of phases 4 and 5 merges second.
 5. **Phase 5:** Streamlit UI incl. Theme and Responsive layout.
 6. **Once, at any point:** Repository setup (after first push).
 
@@ -43,15 +44,16 @@ around the plan. Agreed changes go into `PLAN.md` in the same PR.
 
 Ask questions, typed (v1) or spoken (phase 4), over your own PDFs, slides (exported as PDF),
 screenshots, images and markdown. Answers come from **Qwen3-VL-8B**, which reads the actual page
-images and cites the source file and page. Prompts and answers pass through Qwen3Guard. Everything runs locally on Apple Silicon
-with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qwn.*` core.
+images and cites the source file and page. Prompts and answers pass through Qwen3Guard.
+Everything runs locally on Apple Silicon with MLX, through a **Typer CLI** and a **Streamlit UI**
+that share the same `qwn.*` core.
 
 ## Decisions
 
 | Topic | Decision |
 |---|---|
 | Corpus | PDFs and slides exported as PDF (page images + text), images/screenshots, markdown/text. **No video, and no native `.pptx`/`.key`**: export slides to PDF first (PowerPoint and Keynote both do this, and PDFium renders the result faithfully). |
-| Voice | Deferred to phase 4. v1 is text-only. Click-to-record (`st.audio_input`) → **Silero VAD** (trim, reject silence, split long recordings) → ASR. Hands-free is out of scope. |
+| Voice | Deferred to phase 4 (pipeline + `qwn ask --audio`; Chat-page voice lands with the UI). v1 is text-only. Click-to-record (`st.audio_input`) → **Silero VAD** (trim, reject silence, split long recordings) → ASR. Hands-free is out of scope. |
 | Interface | Typer CLI (ingest/eval/scripting) **and** Streamlit (daily use). Both are thin layers over `qwn.*`. |
 | Model I/O | Our own `Protocol` interfaces with exact types; library calls hidden behind adapters. |
 | Robustness | Memory policy (resident core, lazy/evictable voice, pre-load memory check), one MLX lock, one PDFium lock, one SQLite writer, background ingest, explicit bad-input handling. |
@@ -120,6 +122,19 @@ QUERY    question ─► Guard.check_prompt ─► Embedder(is_query) ─► top
                     ─► Reranker ─► rerank_k=5 ─► Generator (≤ max_images page images + text)
                     ─► answer with [S#] citations ─► Guard.check_response ─► rendered "[file p.N]"
 ```
+
+**What each chunk embeds (one vector per chunk):**
+
+| Chunk kind | Embedder input (`Item`) | Why |
+|---|---|---|
+| `pdf_page` | `Item(image_path=page.webp, text=page_text[:2000])`, i.e. image **and** text in one input. A page with no text layer sends the image alone | The image carries layout, charts and scans; the text layer makes exact terms (names, numbers) searchable. Qwen3-VL-Embedding accepts both in one input |
+| `image` | `Item(image_path=…)` | No text layer; the visual path does the work |
+| `text` | `Item(text=chunk)` | Markdown/text chunks |
+
+The 2000-character cap keeps a dense page from crowding out the image in the embedder's context.
+**Phase 1 ablation:** run the public eval once with `pdf_page` embedded as image-only and once as
+image+text, and report both. If image-only wins on recall@5, propose switching the default in that
+PR. The rerank input mirrors the embed input.
 
 ## Model interfaces (`src/qwn/interfaces.py`)
 
@@ -243,6 +258,23 @@ class Vad(Protocol):
 - **Generation parameters**: start with Qwen3-VL-Instruct's recommended sampling
   (temperature 0.7, top_p 0.8, top_k 20; check the card in phase 0). `max_tokens=1024`. Context
   capped at `max_context=16384` tokens.
+- **More sources than images** (`rerank_k=5` > `max_images=4`): the top `max_images` sources by
+  rerank score send their image; the rest are sent as their text excerpt only. A source with
+  neither (an image beyond the limit) is left out and gets no label, so the model can't cite it.
+- **Image size sent to the model:** PDF renders are stored at `pdf_dpi` (sharp in the UI); the
+  generator adapter passes `max_pixels` to the processor, which downsizes before encoding.
+  Qwen3-VL uses **32 px per visual token** (16 px patches, 2×2 merge), so
+  `max_pixels = 1280 * 32 * 32` ≈ 1,280 tokens per image, ≈ 5.1k for 4 images, well inside
+  `max_context`. Phase 0 checks `patch_size` and `spatial_merge_size` in the processor config and
+  the keyword the processor accepts.
+- **No token streaming in v1 (decided):** Guard's response check needs the whole answer, and
+  showing text before it passes would defeat the check. The UI shows the stages in `st.status`
+  instead. If waiting proves painful in daily use, the fix is to stream and check sentence by
+  sentence, which is a design change for a later PR, not an implementation detail.
+- **Single-turn questions (decided for v1):** each question is answered on its own. Chat history
+  is shown but not sent to retrieval or the model, so "and in Q4?" won't work. The Chat page says
+  so under the input box (`st.caption`). Multi-turn means rewriting the question with the history
+  before retrieval; it's a later phase, measured with its own eval queries.
 - **Citations**: the model cites `[S#]`. `qwn.answer.parse_citations` extracts the labels, and the
   UI/CLI renders them as `[file p.N]`. Labels the model makes up (not in `sources`) are dropped and
   logged.
@@ -312,7 +344,7 @@ CREATE INDEX chunks_doc ON chunks(doc_id);
 CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[1024]);   -- rowid = chunks.rowid
 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- keys: embed_model, embed_dim, schema_version
+-- keys: embed_model, embed_revision, embed_dim, ingest_hash, schema_version
 
 -- Later (hybrid search): CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='rowid');
 ```
@@ -333,14 +365,28 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 - **Ingest algorithm**: walk the paths, skipping anything not in {pdf, png, jpg, jpeg, webp, md,
   txt}. For each file, compute sha256. If it matches `documents.sha256`, skip. Otherwise render or
   chunk it, embed in batches (8 images or 32 texts), and commit as above.
+- **Moved files**: if a new path's sha256 matches a document whose path no longer exists, re-key
+  it instead of re-embedding: in one transaction, update `documents.path`/`doc_id` and each chunk's
+  `doc_id`, `chunk_id` and `image_path` (the foreign key has no `ON UPDATE CASCADE`, and
+  `chunk_id` is derived from `doc_id`), keeping `rowid`s so `vec_chunks` is untouched. Rename the
+  `pages/` folder after the commit, as for re-indexing.
+- **Duplicates**: the same content at two existing paths is indexed under both (each path is a
+  real file you may delete separately), but search collapses hits with the same
+  `documents.sha256` + `page`/`chunk_idx` and keeps the best-scoring one, so copies can't fill the
+  top 5.
 - **Images**: re-encode each image to WebP q85 in `index_dir/pages/<doc_id>/0.webp`, keeping the
   aspect ratio, capped at `max_pixels`. PDF pages: pypdfium2 `page.render(scale=pdf_dpi / 72).to_pil()` → Pillow →
   WebP q85.
 - **Removed files**: `qwn ingest --prune` deletes rows and render folders for files that no longer
   exist.
-- **Rebuild trigger**: if `meta.embed_model`, `meta.embed_dim` or `meta.schema_version` differs
-  from the settings, stop with a message suggesting `--reindex` (drops and recreates all tables
-  and `pages/`).
+- **Rebuild trigger**: if any `meta` key differs from the current settings, stop with a message
+  naming the key and suggesting `--reindex` (drops and recreates all tables and `pages/`).
+  - `embed_revision` is the pinned SHA from `models_lock.py`. A repo name alone isn't enough:
+    `qwn models pull --update` can change the vectors under the same name.
+  - `ingest_hash` hashes every setting that changes what's stored: `pdf_dpi`, `max_pixels`,
+    `chunk_tokens`, `pdf_embed`, `embed_dim`. Without it, changing `pdf_dpi` would silently mix
+    old and new chunks in one index.
+  - Eval's `corpus_hash` includes `embed_revision` and `ingest_hash`, so baselines notice too.
 - **Search**:
   `SELECT rowid, distance FROM vec_chunks WHERE embedding MATCH ? AND k = ?` (brute-force KNN),
   then join `chunks`. Vectors are L2-normalised, so the default L2 distance ranks exactly like
@@ -356,6 +402,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 qwn ingest PATH... [--reindex] [--prune] [--dry-run]
 qwn search QUERY [--rerank-k 5] [--no-rerank] [--json]   # shows rerank_k results
 qwn ask QUESTION [--sources] [--no-guard] [--json]
+qwn ask --audio IN.wav [--speak OUT.wav]   # phase 4: voice question in, optional spoken answer out
 qwn eval [--set public|private (default: public)] [--no-rerank] [--no-generate] [--guard] [--update-baseline] [--force]
 qwn status            # index stats, embed model/dim, loaded models, MLX memory, model cache state
 qwn models pull [--voice] [--update]   # download every model at its pinned revision (the only
@@ -373,15 +420,20 @@ Run as an `st.navigation` app with 3 pages. Models are loaded through `@st.cache
 around `qwn.models`. The UI has no model or retrieval logic of its own.
 
 - **Chat**
-  - History in `st.chat_message`.
+  - History in `st.chat_message`. Each question is answered on its own (single-turn in v1; see
+    Prompts and parameters), and an `st.caption` under the input says so.
   - `st.status` shows the steps: Guard → Retrieving → Reranking → Answering → Guard.
   - Sources appear as compact **cards** (96 px page thumbnail, `file · p.N`, rerank-score badge,
     "Open page" button). The button opens the full page in an `st.dialog` (see Responsive layout).
   - Guard results: Controversial → `st.warning`, Unsafe → a blocked-message bubble.
 - **Library**
   - `st.file_uploader` (pdf/png/jpg/jpeg/webp/md/txt) saves files into `data_dir`, then ingests
-    them with `st.progress`.
+    them with `st.progress`. Name clash: identical content is "already in your library"; different
+    content is saved as `name (2).pdf`, never overwriting.
   - `st.dataframe` lists documents, with Delete and Re-index buttons.
+  - **Delete** always removes the index rows and the `pages/` folder. It deletes the file itself
+    only if it lives inside `data_dir` (an upload), and says so in the confirmation. Files indexed
+    in place by `qwn ingest` are never touched on disk.
 - **System**
   - Shows loaded models and MLX active/peak memory.
   - Sliders for `top_k`, `rerank_k`, `max_images`, plus guard toggles. Values live in
@@ -397,8 +449,17 @@ st.audio_input (click start / stop, browser WAV)
        ├─ total speech < vad_min_speech_ms  → "Didn't catch that, try again" (no models run)
        ├─ trim to first..last segment ± vad_pad_ms
        └─ trimmed > asr_max_seconds         → split at the longest pauses into chunks ≤ asr_max_seconds
-  └─ Qwen3-ASR per chunk → join → Guard → retrieve → rerank → VL-8B → TTS
+  └─ Qwen3-ASR per chunk → join → Guard → retrieve → rerank → VL-8B → Guard (full answer) → TTS
 ```
+
+- **Latency, measured per stage (not end to end):** speech can only start after VL-8B has
+  finished the whole answer *and* Guard has passed it (v1 doesn't stream; see Prompts and
+  parameters), so "end of speech → first audio" is dominated by answer time and isn't a voice
+  target. Phase 4's targets are the parts voice adds: **end of speech → transcript ≤ 2 s** for a
+  10 s question, and **TTS real-time factor ≤ 0.5** (synthesis takes at most half the length of
+  the audio it produces). The UI shows the transcript as soon as it's ready and the answer text as
+  soon as Guard passes it; audio follows, so reading is never blocked on TTS. If a target doesn't
+  hold on the M2 Max, stop and propose a new one.
 
 - **Why VAD, when the user already marks the end with "stop":** speech recognisers tend to *invent*
   text for silence or background noise, and a blank or accidental recording would otherwise run the
@@ -654,6 +715,7 @@ server and Chrome, so they're too heavy for CI. Run them locally with the merge 
 class Settings(BaseSettings):
     data_dir: Path = Path("data")
     index_dir: Path = Path("index")
+    log_dir: Path = Path("~/Library/Logs/qwn").expanduser()
     gen_model: str = "mlx-community/Qwen3-VL-8B-Instruct-4bit"
     embed_model: str = "mlx-community/Qwen3-VL-Embedding-2B-8bit"
     rerank_model: str = "mlx-community/Qwen3-VL-Reranker-2B-8bit"
@@ -662,7 +724,8 @@ class Settings(BaseSettings):
     top_k: int = 50
     rerank_k: int = 5
     max_images: int = 4
-    max_pixels: int = 1_003_520          # 1280 * 28 * 28
+    max_pixels: int = 1_310_720          # 1280 * 32 * 32 (Qwen3-VL: 32 px per visual token)
+    pdf_embed: Literal["image+text", "image"] = "image+text"   # phase 1 ablation; see Data flow
     max_context: int = 16_384
     max_tokens: int = 1024
     pdf_dpi: int = 150
@@ -767,6 +830,19 @@ shown in the Library page and `qwn ingest` output, and the run continues with th
   (a small file declaring huge dimensions), a non-UTF-8 text file, concurrent ingest requests, and
   a cancelled job leaving the database unchanged.
 
+### Logging
+
+- **Where:** `log_dir/qwn.log` (default `~/Library/Logs/qwn/`, the macOS convention, so it's
+  outside the repo and visible in Console.app). `RotatingFileHandler`, 5 MB × 3 files. The CLI
+  also prints warnings and errors to stderr.
+- **Level:** `INFO` by default; `QWN_LOG_LEVEL=DEBUG` for more. Set up once in `qwn.logging_setup`,
+  called by the CLI and UI entry points; library modules only call `logging.getLogger(__name__)`.
+- **Never logged, at any level:** document or page text, chunk text, questions, answers, transcripts.
+  Log IDs, paths, counts, timings, scores and error types instead (e.g. `question_len=42`). This
+  keeps the privacy rule true even when a log file is attached to a bug report.
+- **Test:** a unit test runs an ingest and an answer with fakes over sentinel text and asserts the
+  sentinel never appears in the captured log.
+
 ## Security: prompt injection and model supply chain
 
 ### Prompt injection from documents
@@ -839,7 +915,10 @@ tests/unit/          chunking, IDs/hashing, guard regex parsing (incl. unparseab
                      MRL truncate + renorm, settings precedence
 tests/integration/   tmp_path SQLite index (real sqlite-vec); 2-page text PDF from `tests/pdf_fixture.py` (dependency-free writer, see License); PIL image; markdown file
                      ingest → re-ingest skips → modify one file → only it re-indexes → --prune;
-                     crash between embed and commit leaves the old version intact
+                     crash between embed and commit leaves the old version intact;
+                     moved file → path updated, no re-embed; duplicate copies → one search hit;
+                     changed pdf_dpi or embed revision → rebuild trigger names the key;
+                     upload name clash → "name (2)"; Delete never removes files outside data_dir
 tests/ui/            streamlit.testing.v1.AppTest smoke test per page, with fakes injected
                      + test_responsive.py (slow): Playwright matrix of 6 widths × light/dark,
                        no horizontal overflow, Chat width ≤ 736 px, sidebar collapse, dialog fit
@@ -869,7 +948,7 @@ isn't in CI. The scoring code itself is unit-tested with fakes.
 | Documents | Synthetic, generated by `eval/public/build_corpus.py` into `data/eval-public/` (gitignored), deterministic from a fixed seed | Your real documents in `data_dir` |
 | Questions | `eval/public/queries.jsonl`, written to match the generator's known facts | `eval/private/queries.jsonl`, hand-written by you |
 | Purpose | Regression testing anyone can reproduce; exit criteria for phases 1–3 | True quality on what you actually use |
-| Size | ~40 answerable + ~8 unanswerable + 3 injection | Start at 20 and grow to ~50 |
+| Size | ~60 answerable (**≥ 10 each** for `scan`, `chart`, `table`, which have their own thresholds) + ~10 unanswerable + 3 injection | Start at 20 and grow to ~50 |
 
 **Privacy:** questions, file names and expected pages reveal what your documents contain, and the
 repo is public. So private questions, results and baselines never leave `eval/private/`
@@ -906,8 +985,11 @@ hash in every result confirms.
     `build_corpus.py` and ingests into that index if it's missing or its `corpus_hash` changed, so
     your own documents never affect public scores;
   - private: root `data_dir`, using your normal index (it measures what you actually use).
-  An expected item matches a retrieved chunk when `root / path` equals the chunk's absolute
-  `documents.path`.
+    Since `qwn ingest` indexes files in place, private queries may also use **absolute** paths
+    for files outside `data_dir`.
+  An expected item matches a retrieved chunk when its resolved path (`root / path`, or the
+  absolute path as given) equals the chunk's absolute `documents.path`. `qwn eval` fails up
+  front, listing them, if any expected path isn't in the index, so a typo can't pass as recall 0.
 - `page` is 1-based and used for PDFs. Images match on `path` alone.
 - Markdown and text match on `path`, optionally narrowed by `heading` (the chunk's nearest heading).
 - `expected: []` means **unanswerable**: the right behaviour is to abstain.
@@ -965,8 +1047,9 @@ Each run writes `eval/results/<UTC timestamp>-<set>.json` (gitignored):
  "per_query": [{"id": "pub-017", "rank_embed": 3, "rank_rerank": 1, "citation_hit": true, "...": "..."}]}
 ```
 
-- `corpus_hash` is a hash over the documents' content hashes; `eval_set_hash` is the hash of the
-  questions file; `settings_hash` covers retrieval and generation settings (not paths).
+- `corpus_hash` is a hash over the documents' content hashes plus the index's `embed_revision`
+  and `ingest_hash`; `eval_set_hash` is the hash of the questions file; `settings_hash` covers
+  retrieval and generation settings (not paths).
 - **Comparability:** the baseline comparison only runs when `set`, `eval_set_hash`, `corpus_hash`,
   `models` and `settings_hash` all match. Otherwise it prints what differs and exits non-zero,
   unless `--force` (which marks the report "not comparable").
@@ -993,10 +1076,13 @@ the interval's lower bound is under the threshold, the PR notes that the result 
 | 1 | Retrieval | `config`, `ingest`, `index` (SQLite schema + sqlite-vec), `retrieve`; `qwn ingest/search/status`; `eval/public/build_corpus.py` + public queries; `qwn eval --no-generate`; unit + integration tests | Evaluation → Exit criteria, phase 1 (public set) |
 | 2 | Answering | `prompts` (incl. `ABSTAIN_TEXT`), `answer`; `qwn ask`; full `qwn eval` (greedy) | Evaluation → Exit criteria, phase 2 |
 | 3 | Safety | `guard` wired into ask/chat; controversial policy; `eval/public/guard.jsonl`; `qwn eval --guard` | Evaluation → Exit criteria, phase 3; unparseable output → warn |
-| 4 | Voice | ASR/TTS/VAD adapters (mlx-audio already installed via mlx-vlm); `qwn.voice` pipeline (decode, resample, VAD trim/reject/split); `st.audio_input` + playback | About 3 s or less from end of speech to first audio; silent or noise-only recordings are rejected before ASR; VAD round-trip slow test passes |
-| 5 | Streamlit UI | 3-page app; `.streamlit/config.toml`; `uv add --dev playwright`; AppTest smoke tests + `test_responsive.py`; `qwn ui` | Full flow usable from the browser |
+| 4 | Voice | ASR/TTS/VAD adapters (mlx-audio already installed via mlx-vlm); `qwn.voice` pipeline (decode, resample, VAD trim/reject/split); `qwn ask --audio IN.wav [--speak OUT.wav]` | Per-stage targets (see Voice input pipeline → Latency): end of speech → transcript ≤ 2 s for a 10 s question; TTS real-time factor ≤ 0.5; silent or noise-only recordings are rejected before ASR; VAD round-trip slow test passes |
+| 5 | Streamlit UI | 3-page app; `.streamlit/config.toml`; `uv add --dev playwright`; AppTest smoke tests + `test_responsive.py`; `qwn ui`; voice in Chat (`st.audio_input` + `st.audio` playback) if phase 4 is merged | Full flow usable from the browser |
 
-Phase 5 may begin once phase 2 is done; the Chat page doesn't need Guard or voice.
+Phase 5 may begin once phase 2 is done; the Chat page doesn't need Guard or voice. Phase 4 has no
+UI of its own: it ships the voice pipeline behind the CLI, and whichever of phases 4 and 5 merges
+second wires voice into the Chat page. Phase 2 also reports `qwn ask` latency (p50/p95, per stage)
+on the public set, and its PR proposes a latency target from that measurement.
 
 ## Repo layout (target)
 
