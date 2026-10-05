@@ -311,8 +311,8 @@ around `qwn.models`. The UI has no model or retrieval logic of its own.
 - **Chat**
   - History in `st.chat_message`.
   - `st.status` shows the steps: Guard → Retrieving → Reranking → Answering → Guard.
-  - Each `[file p.N]` citation opens an `st.expander` with the page thumbnail, rerank score and
-    text excerpt.
+  - Sources appear as compact **cards** (96 px page thumbnail, `file · p.N`, rerank-score badge,
+    "Open page" button). The button opens the full page in an `st.dialog` (see Responsive layout).
   - Guard results: Controversial → `st.warning`, Unsafe → a blocked-message bubble.
 - **Library**
   - `st.file_uploader` (pdf/png/jpg/jpeg/webp/md/txt) saves files into `data_dir`, then ingests
@@ -494,9 +494,59 @@ borderColor = "#3B3833"
 - **Running in development:** `uv run streamlit run src/qwn/ui/app.py --client.toolbarMode developer`
   restores Rerun and Clear cache for that run only.
 
-**Phase 5 check:** add an AppTest smoke test, then take the light/dark screenshot pair of the real
-Chat, Library and System pages (Playwright with `channel="chrome"`, `color_scheme` set to light then
-dark, wait for a page element before the screenshot) and look at both before closing the phase.
+**Phase 5 check:** add an AppTest smoke test, then run the screenshot matrix from Responsive layout
+(every page × 6 widths × light/dark) and look at the results before closing the phase.
+
+### Responsive layout
+
+**The constraint:** the server never knows the screen size. `st.context` exposes theme, locale,
+timezone, URL and headers, but no viewport width. So the Python code never branches on screen size;
+every adaptation comes from Streamlit's own fluid layout, set up per page as below.
+
+**Target displays:** the server only accepts connections from this Mac, so phones and tablets are
+out of scope. The real range is the MacBook's built-in screen (~1512–1728 px), an external monitor
+(2560 px+), split-screen or Stage Manager windows (~700–1000 px) and browser zoom. 200% zoom on a
+1440 px window behaves like a 720 px window. 390 px is tested as an extreme-zoom safety net, not as
+a phone target.
+
+**Rules (prototyped with Streamlit 1.65 on 2026-10-04 and measured with Playwright):**
+
+| Rule | How | Measured |
+|---|---|---|
+| **Layout per page** | Each page calls `st.set_page_config(layout=...)`: Chat → `"centered"` (comfortable reading width for answer text); Library, System → `"wide"` (tables and charts) | Chat content stays at **736 px** on 1024–2560 px windows; Library spans 724–2260 px |
+| **Sidebar = navigation only** | `st.navigation` pages plus at most a Guard status line. Settings live on the System page | Auto-collapses behind `>>` on narrow windows (expanded at 1728, collapsed at 760 and 390) |
+| **Source cards, max 2 per row** | `st.columns(2)`, each card a `st.container(border=True, horizontal=True)` holding `st.image(..., width=96)` + title, score badge and "Open page" (`type="tertiary"`). More than 2 rows → wrap the rest in an `st.expander("More sources")` | Side by side at 1728 px, stacked at ≤ 640 px. Full-width page images were rejected: two pages cost ~900 px of scroll on narrow windows |
+| **Full page in a dialog** | `@st.dialog("Source page", width="medium")` + `st.image(page, width="stretch")` | 752 px dialog / 704×912 image on desktop; 358 px / 310×401 at 390 px. `"large"` (≈1230 px image, ~1600 px of scroll) was rejected, and `"small"` makes page text unreadable |
+| **Stretch, don't fix** | `st.dataframe(..., width="stretch")`, charts `width="stretch"`. Fixed pixel widths only for thumbnails | No horizontal overflow at any tested width |
+| **Groups wrap** | Button and action groups in `st.container(horizontal=True)`; metric rows in `st.columns(4)` (stack at ≤ 640 px) | Library at 760 px: 4 metrics still in one row, table fills the width |
+| **Chart + table pairs** | `st.columns(2)`: chart left, `st.dataframe` right; they stack on narrow windows | (pattern from the theme mock) |
+| **rem-based sizes** | Never set pixel font sizes; the theme uses `baseFontSize` only | Browser zoom scales everything |
+
+**Images and sharpness:** page renders are 1275 px wide (150 dpi). That's sharp for 96 px
+thumbnails at 2× Retina and for the 704 px dialog (~55% scale). Raise `pdf_dpi` only if very small
+print in the dialog is unreadable.
+
+**Optional, decide in phase 5:** on 2560 px+ monitors the wide pages stretch to ~2260 px. If
+Library or System looks too spread out, try capping their content with
+`st.container(width=1600)` inside a centred parent, and test that it still shrinks on narrow
+windows before adopting it.
+
+**Tests (phase 5, `tests/ui/test_responsive.py`, marked `slow`):** they start a real Streamlit
+server and Chrome, so they're too heavy for CI. Run them locally with the merge checklist.
+
+- Start `streamlit run src/qwn/ui/app.py --server.port 8599` with fakes injected, then use
+  Playwright (`channel="chrome"`) to load each page at **2560, 1728, 1512, 1024, 760 and 390 px**
+  in **light and dark**.
+- Wait for a page-specific element (e.g. `stDataFrame`), not a fixed delay.
+- Assert:
+  - no horizontal overflow (`document.documentElement.scrollWidth <= innerWidth`);
+  - Chat's `stMainBlockContainer` width is ≤ 736 px;
+  - the sidebar's `aria-expanded` is `false` at ≤ 760 px;
+  - the "Open page" dialog's image fits the viewport width.
+- Save the screenshots to `tests/ui/screenshots/` (gitignored) for the visual review in the phase 5
+  check.
+- The dev dependency needed is `playwright` (Apache-2.0). It uses the installed Chrome, so there's
+  no browser download.
 
 ## Settings (`src/qwn/config.py`)
 
@@ -539,6 +589,8 @@ tests/integration/   tmp_path SQLite index (real sqlite-vec); 2-page text PDF fr
                      ingest → re-ingest skips → modify one file → only it re-indexes → --prune;
                      crash between embed and commit leaves the old version intact
 tests/ui/            streamlit.testing.v1.AppTest smoke test per page, with fakes injected
+                     + test_responsive.py (slow): Playwright matrix of 6 widths × light/dark,
+                       no horizontal overflow, Chat width ≤ 736 px, sidebar collapse, dialog fit
 tests/hooks/         run each .claude/hooks/*.sh via subprocess with JSON payloads; assert the
                      allow/deny/ask decisions and exit codes from the hooks section's test list
 tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms, determinism,
@@ -616,6 +668,7 @@ carries `License-Expression: Apache-2.0`).
   | Apache-2.0 | streamlit, transformers, all Qwen models used (VL-8B, Embedding, Reranker, Guard, ASR, TTS) |
   | MIT or Apache-2.0 | sqlite-vec |
   | BSD-3 / Apache-2.0 | pypdfium2 |
+  | Apache-2.0 (dev only) | playwright (responsive UI tests; uses the installed Chrome) |
   | Permissive (MIT-CMU, BSD, …) | pillow, numpy |
   | **Excluded: AGPL-3.0** | PyMuPDF. Replaced by pypdfium2 so the combined program stays permissive |
   | **Fallback only: GPL-3.0** | mlx-embeddings. Needs the user's decision before adoption |
