@@ -28,6 +28,7 @@ with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qw
 | Eval | recall@1/5/10 + MRR (with/without rerank), latency by stage, citation hit. JSON results + committed baseline. |
 | Config | `pydantic-settings`: defaults → `qwn.toml` → `QWN_*` env → CLI flags / UI sliders. |
 | Tooling | uv (Python 3.12), ruff, ty, pytest (already set up). |
+| Claude Code hooks | 5 project hooks in `.claude/settings.json`: format+lint on edit, protected paths, uv-only and heavy-command confirmation, stop-time quality gate, session orientation. |
 
 ## Stack and memory budget
 
@@ -369,7 +370,7 @@ tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms,
 
 | # | Phase | Deliverable | Exit criterion |
 |---|---|---|---|
-| 0 | Env + checks | Add runtime deps; `interfaces.py`; adapters; `scripts/smoke_test.py`; `tests/slow/` contract tests | `uv lock` resolves; 4 core models loaded together under 24 GB; VL-8B ≥ 35 tok/s; slow tests pass (or the fallback library is adopted) |
+| 0 | Env + checks | **Install and test the Claude Code hooks first**; add runtime deps; `interfaces.py`; adapters; `scripts/smoke_test.py`; `tests/slow/` contract tests | `uv lock` resolves; 4 core models loaded together under 24 GB; VL-8B ≥ 35 tok/s; slow tests pass (or the fallback library is adopted) |
 | 1 | Retrieval | `config`, `ingest`, `index` (SQLite schema + sqlite-vec), `retrieve`; `qwn ingest/search/status`; unit + integration tests | recall@5 ≥ 0.8 on 20 queries; rerank beats embedding alone |
 | 2 | Answering | `prompts`, `answer`; `qwn ask`; `qwn eval` with citation_hit | Correct page cited in most of the 20 queries |
 | 3 | Safety | `guard` wired into ask/chat; controversial policy | Known unsafe prompts blocked; normal prompts pass; unparseable output → warn |
@@ -382,6 +383,7 @@ Phase 5 may begin once phase 2 is done; the Chat page doesn't need Guard or voic
 
 ```
 qwn/
+├─ .claude/                 # settings.json (hooks) + hooks/*.sh, committed
 ├─ pyproject.toml           # uv; runtime deps above; dev group: ruff, ty, pytest
 ├─ PLAN.md   qwn.example.toml
 ├─ src/qwn/
@@ -397,6 +399,192 @@ qwn/
 ├─ tests/                   # fakes.py, unit/, integration/, ui/, slow/
 └─ data/  index/            # gitignored
 ```
+
+## Claude Code hooks
+
+Install these first, at the start of phase 0, before any code is written. They run in every
+implementation session and make the plan's rules automatic instead of relying on memory.
+
+| # | Event (matcher) | Script | What it enforces | On violation |
+|---|---|---|---|---|
+| H1 | `PostToolUse` (`Write\|Edit\|MultiEdit`) | `py-format.sh` | Every edited `.py` is `ruff format`ted and `ruff check --fix`ed immediately | Exit 2: lint errors ruff can't fix are reported back to Claude to fix |
+| H2 | `PreToolUse` (`Write\|Edit\|MultiEdit`) | `protect-paths.sh` | No hand edits to generated or user-owned paths: `uv.lock`, `.venv/`, `data/`, `index/`, `eval/baseline.json`, `.streamlit/secrets.toml` | `deny` with the right command to use instead |
+| H3 | `PreToolUse` (`Bash`) | `guard-bash.sh` | uv only (no `pip install`); confirm before anything that downloads or loads ~13 GB of models, starts Streamlit, or deletes `data/`/`index/` | `deny` (pip) / `ask` (heavy or destructive) |
+| H4 | `Stop` | `quality-gate.sh` | If `.py`/`pyproject.toml` changed: `ruff format --check`, `ruff check`, `ty check`, `pytest -m "not slow"` must pass before Claude finishes | Exit 2: Claude keeps working with the failure output |
+| H5 | `SessionStart` (`startup`) | `session-context.sh` | A fresh session starts knowing the branch, recent commits and "follow PLAN.md" | — (stdout becomes context) |
+
+Exit-code meaning: 0 = OK. **2 = blocking**: stderr goes to Claude; for PreToolUse the tool call is
+blocked, and for Stop Claude can't finish. Any other code = non-blocking error shown to the user.
+PreToolUse hooks may instead print JSON with
+`hookSpecificOutput.permissionDecision` = `allow` / `deny` / `ask`.
+
+### `.claude/settings.json` (committed)
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup",
+        "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-context.sh" }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-paths.sh" }] },
+      { "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-bash.sh" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/py-format.sh",
+                    "timeout": 60, "statusMessage": "ruff format + check" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/quality-gate.sh",
+                    "timeout": 300, "statusMessage": "Quality gate: ruff, ty, fast tests" }] }
+    ]
+  }
+}
+```
+
+### Scripts (`.claude/hooks/`, `chmod +x`, committed)
+
+Constraints: macOS ships bash 3.2, so no bash-4 features. `jq` is at `/usr/bin/jq` (checked). Use
+`uv run --frozen` so a hook never rewrites `uv.lock`. All five scripts were pipe-tested from this
+plan on 2026-10-04 (see Installing and checking).
+
+`py-format.sh` (H1)
+
+```bash
+#!/usr/bin/env bash
+# PostToolUse(Write|Edit|MultiEdit): format + lint the edited Python file; report unfixable lint to Claude.
+set -uo pipefail
+f=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty')
+case "$f" in *.py|*.pyi) ;; *) exit 0 ;; esac
+[ -f "$f" ] || exit 0
+cd "$CLAUDE_PROJECT_DIR" || exit 0
+ruff="$CLAUDE_PROJECT_DIR/.venv/bin/ruff"            # direct call: fast, no project build
+[ -x "$ruff" ] || ruff="uv run --frozen --quiet ruff"
+$ruff format --quiet "$f" 2>/dev/null                 # syntax errors surface in the check below
+if ! out=$($ruff check --fix --quiet "$f" 2>&1); then
+  printf 'ruff found issues it could not fix in %s:\n%s\n' "$f" "$out" >&2
+  exit 2
+fi
+```
+
+`protect-paths.sh` (H2)
+
+```bash
+#!/usr/bin/env bash
+# PreToolUse(Write|Edit|MultiEdit): block edits to generated or user-owned paths.
+set -uo pipefail
+f=$(jq -r '.tool_input.file_path // empty')
+[ -z "$f" ] && exit 0
+rel=${f#"$CLAUDE_PROJECT_DIR"/}
+case "$rel" in
+  uv.lock)                 why="uv.lock is generated; change dependencies with 'uv add' / 'uv remove'." ;;
+  .venv/*)                 why=".venv is managed by uv; run 'uv sync'." ;;
+  data/*|index/*)          why="data/ and index/ hold the user's corpus and generated index; change them via 'qwn ingest'." ;;
+  eval/baseline.json)      why="Update the baseline only with 'qwn eval --update-baseline'." ;;
+  .streamlit/secrets.toml) why="The secrets file is user-managed." ;;
+  *) exit 0 ;;
+esac
+jq -n --arg r "$why" \
+  '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
+```
+
+`guard-bash.sh` (H3)
+
+```bash
+#!/usr/bin/env bash
+# PreToolUse(Bash): enforce uv; confirm before model downloads/loads, servers, or deleting user data.
+set -uo pipefail
+cmd=$(jq -r '.tool_input.command // empty')
+decide() {
+  jq -n --arg d "$1" --arg r "$2" \
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: $d, permissionDecisionReason: $r}}'
+  exit 0
+}
+has() { printf '%s' "$cmd" | grep -Eq "$1"; }
+
+has '(^|[;&|[:space:]])(pip3?|python3? -m pip|uv pip) install' &&
+  decide deny "Use 'uv add <pkg>' (or 'uv add --dev <pkg>') so pyproject.toml and uv.lock stay in sync."
+
+if has 'pytest' && ! has 'not slow' && ! has 'tests/(unit|integration|ui)'; then
+  decide ask "Full pytest includes @slow tests that download ~12 GB of models and use ~20 GB of memory."
+fi
+
+has 'smoke_test\.py|hf download|huggingface-cli download|qwn (ingest|search|ask|eval|ui)|streamlit run' &&
+  decide ask "This downloads or loads MLX models (~13 GB) or starts a long-running server."
+
+has 'rm[[:space:]]+-[a-zA-Z]*r[a-zA-Z]*([[:space:]]+[^[:space:]]+)*[[:space:]]+([^[:space:]]*/)?(data|index)/?([[:space:];&|]|$)' &&
+  decide ask "This deletes the user's corpus or index."
+
+exit 0
+```
+
+`quality-gate.sh` (H4)
+
+```bash
+#!/usr/bin/env bash
+# Stop: if Python changed and isn't committed yet, require format/lint/types/fast tests to pass.
+set -uo pipefail
+input=$(cat)
+[ "$(printf '%s' "$input" | jq -r '.stop_hook_active // false')" = "true" ] && exit 0
+cd "$CLAUDE_PROJECT_DIR" || exit 0
+git status --porcelain -- '*.py' pyproject.toml | grep -q . || exit 0
+fail() { printf '%s failed:\n%s\n' "$1" "$(printf '%s' "$2" | tail -40)" >&2; exit 2; }
+out=$(uv run --frozen ruff format --check . 2>&1) || fail "ruff format --check" "$out"
+out=$(uv run --frozen ruff check . 2>&1)          || fail "ruff check" "$out"
+out=$(uv run --frozen ty check 2>&1)              || fail "ty check" "$out"
+out=$(uv run --frozen pytest -m "not slow" -q -x 2>&1); rc=$?
+[ "$rc" -eq 0 ] || [ "$rc" -eq 5 ] || fail "pytest -m 'not slow'" "$out"   # 5 = no tests collected
+exit 0
+```
+
+`session-context.sh` (H5)
+
+```bash
+#!/usr/bin/env bash
+# SessionStart(startup): orient a fresh implementation session. Stdout is added to Claude's context.
+cd "$CLAUDE_PROJECT_DIR" || exit 0
+echo "Branch: $(git branch --show-current)"
+echo "Recent commits:"; git log --oneline -5
+echo "Implement PLAN.md phase by phase. Check which phase's exit criteria are already met before starting."
+```
+
+### Installing and checking (start of phase 0)
+
+1. Create the scripts and `.claude/settings.json` as above, run `chmod +x .claude/hooks/*.sh`, and
+   commit them.
+2. Pipe-test each script with a sample payload (`export CLAUDE_PROJECT_DIR=$PWD` first). These
+   expected results were confirmed against the scripts above on 2026-10-04:
+   - H1: `echo '{"tool_input":{"file_path":"'$PWD'/src/qwn/__init__.py"}}' | .claude/hooks/py-format.sh; echo $?` → `0`.
+     For a temporary file with `import os` and an undefined name: it gets formatted, the unused
+     import is removed, and `F821` is reported with exit 2 (~35 ms). A syntax error is reported
+     with exit 2. Non-`.py` files are skipped.
+   - H2: `uv.lock`, `index/qwn.db` → `deny` JSON; `src/qwn/x.py` → no output (allowed)
+   - H3: `pip install foo`, `uv pip install foo` → `deny`. `uv run pytest`, `uv run qwn ingest data/`,
+     `streamlit run …`, `rm -rf index`, `rm -rf ./data`, `rm -r -f /abs/path/index` → `ask`.
+     `uv add foo`, `pytest -m "not slow"`, `pytest tests/unit`, `rm -rf .ruff_cache`,
+     `rm -rf indexer`, `rm -rf data_old`, `ls data` → no output (allowed).
+   - H4: `echo '{}' | .claude/hooks/quality-gate.sh; echo $?` → `0` on a clean tree, and `0` with
+     `{"stop_hook_active":true}`
+   - H5: `.claude/hooks/session-context.sh` → branch + recent commits + the PLAN.md reminder
+3. Validate the JSON: `jq -e '.hooks.Stop[0].hooks[0].command' .claude/settings.json`.
+4. Have the user open `/hooks` once, or restart the session. The settings watcher only picks up a
+   newly created `.claude/` after a reload.
+5. Prove H1 fires: make an edit that leaves a `.py` file unformatted and confirm the hook fixes it.
+
+### Known trade-offs
+
+- **H4 only checks uncommitted changes.** If Claude commits before stopping, the gate is skipped,
+  so implementation sessions must run `uv run pytest -m "not slow"` before each commit.
+  `stop_hook_active` lets Claude stop on the *second* attempt, so a test that can't be fixed can't
+  trap the session in a loop. The failure output is still visible.
+- **H3's `ask` list is pattern-based.** It's a speed bump against accidental 12 GB downloads, not
+  a security boundary.
+- **H1 calls `.venv/bin/ruff` directly.** `uv run` rebuilds the project first, and a build failure
+  would be misreported as lint. It falls back to `uv run` only when `.venv` doesn't exist yet.
 
 ## Development workflow
 
