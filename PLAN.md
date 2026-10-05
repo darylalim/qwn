@@ -24,6 +24,7 @@ with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qw
 | Index | SQLite + `sqlite-vec` in one file (`index/qwn.db`, WAL), tables `documents`/`chunks`/`vec_chunks`/`meta`; each file re-indexed in one transaction, keyed by content hash. |
 | Page renders | WebP q85 at 150 dpi on disk under `index/pages/`. |
 | UI | Streamlit app with 3 pages: Chat, Library, System. |
+| UI theme | "Paper & Ink" / "Lamplight": warm paper + deep-teal accent, complementary light/dark (same hues, only lightness changes), built-in fonts, localhost-only server, viewer toolbar. Validated for contrast, colour-blindness and by rendering. |
 | CLI | `ingest`, `search`, `ask`, `eval`, `status`, `ui`. |
 | Testing | 3 tiers + fakes: unit, integration, UI (AppTest), plus `slow` real-model tests. |
 | Eval | recall@1/5/10 + MRR (with/without rerank), latency by stage, citation hit. JSON results + committed baseline. |
@@ -323,6 +324,180 @@ around `qwn.models`. The UI has no model or retrieval logic of its own.
     `st.session_state` and are applied per request (they don't persist).
 - **State**: `st.session_state.messages`, `st.session_state.settings`. Single local user.
 
+### Theme (`.streamlit/config.toml`, committed)
+
+**Concept: "Paper & Ink" (light) / "Lamplight" (dark).** It's a reading tool for your own
+documents, so the UI should feel like paper rather than a dashboard. That means warm off-white
+paper and near-black ink in light mode, and warm charcoal (not blue-black) in dark mode, so white
+PDF page thumbnails don't glare. There's one accent: **deep teal** for primary actions, links and
+citations. Teal is distinct from Streamlit's default red and from every status colour.
+
+**Complementary by construction:** the two modes share every hue and differ only in lightness.
+Measured in OKLCH (2026-10-04), the light and dark values of each role (background, text, border,
+primary, link, red, orange, green, blue, violet, grey) are within **≤ 7° of hue**. The one deliberate
+exception is **yellow**: it moves from 66° (amber) to 82° in dark mode, because yellow only reads as
+yellow when it's light, and keeping 66° made dark-mode yellow look the same as orange.
+
+```toml
+# qwn theme: "Paper & Ink" (light) / "Lamplight" (dark).
+# Same hues in both modes; only lightness changes. All values validated 2026-10-04 (see PLAN.md).
+
+[server]
+address = "localhost"            # private: never listen on LAN/external interfaces
+
+[client]
+toolbarMode = "viewer"           # hide Deploy/Rerun/Clear cache; keep the light/dark theme toggle
+
+[browser]
+gatherUsageStats = false          # local-first: no telemetry
+
+[theme]
+# Shared across both modes. Built-in fonts are bundled with Streamlit, so no network requests.
+font = "sans-serif"
+codeFont = "monospace"
+baseFontSize = 16
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+baseRadius = "medium"
+buttonRadius = "medium"
+showWidgetBorder = true
+showSidebarBorder = true
+linkUnderline = false
+
+[theme.light]
+primaryColor = "#0E6B63"
+backgroundColor = "#FBFAF7"
+secondaryBackgroundColor = "#F1EEE7"
+textColor = "#1F1D1A"
+linkColor = "#0E6B63"
+borderColor = "#D9D3C7"
+codeBackgroundColor = "#F1EEE7"
+codeTextColor = "#3B3732"
+dataframeBorderColor = "#D9D3C7"
+dataframeHeaderBackgroundColor = "#F1EEE7"
+redColor = "#B42318"
+redBackgroundColor = "#FBE9E6"
+redTextColor = "#8A1A12"
+orangeColor = "#B54708"
+orangeBackgroundColor = "#FCEFDF"
+orangeTextColor = "#8A3606"
+yellowColor = "#A16207"
+yellowBackgroundColor = "#FBF3D9"
+yellowTextColor = "#7A4A05"
+greenColor = "#2F7D32"
+greenBackgroundColor = "#E6F2E3"
+greenTextColor = "#1F5A22"
+blueColor = "#1D5FA8"
+blueBackgroundColor = "#E4EEF8"
+blueTextColor = "#174C87"
+violetColor = "#5B4BB7"
+violetBackgroundColor = "#ECEAF8"
+violetTextColor = "#45389A"
+grayColor = "#6B665E"
+grayBackgroundColor = "#EEECE7"
+grayTextColor = "#4A463F"
+chartCategoricalColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
+chartSequentialColors = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5", "#2a78d6", "#1c5cab", "#0d366b"]
+
+[theme.light.sidebar]
+backgroundColor = "#F4F1EA"
+secondaryBackgroundColor = "#EAE6DC"
+borderColor = "#D9D3C7"
+
+[theme.dark]
+primaryColor = "#0F7D73"
+backgroundColor = "#1B1A18"
+secondaryBackgroundColor = "#262420"
+textColor = "#ECE8E1"
+linkColor = "#5CC9BC"
+borderColor = "#3B3833"
+codeBackgroundColor = "#262420"
+codeTextColor = "#DDD7CD"
+dataframeBorderColor = "#3B3833"
+dataframeHeaderBackgroundColor = "#262420"
+redColor = "#F0857A"
+redBackgroundColor = "#3A1F1C"
+redTextColor = "#F6B1A9"
+orangeColor = "#F59569"
+orangeBackgroundColor = "#3C251A"
+orangeTextColor = "#FEC1A6"
+yellowColor = "#E6B557"
+yellowBackgroundColor = "#352913"
+yellowTextColor = "#F2D39B"
+greenColor = "#7CC47F"
+greenBackgroundColor = "#1F3221"
+greenTextColor = "#AEDDB0"
+blueColor = "#7FB0EA"
+blueBackgroundColor = "#1C2A3B"
+blueTextColor = "#B3D0F3"
+violetColor = "#AFA4F0"
+violetBackgroundColor = "#28243D"
+violetTextColor = "#CFC8F7"
+grayColor = "#A49E93"
+grayBackgroundColor = "#2B2925"
+grayTextColor = "#CFC9BE"
+chartCategoricalColors = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
+chartSequentialColors = ["#0d366b", "#104281", "#184f95", "#1c5cab", "#256abf", "#2a78d6", "#3987e5", "#5598e7", "#6da7ec", "#9ec5f4"]
+
+[theme.dark.sidebar]
+backgroundColor = "#151412"
+secondaryBackgroundColor = "#211F1C"
+borderColor = "#3B3833"
+```
+
+**Validation (2026-10-04, Streamlit 1.65 in a scratch environment):**
+
+- **WCAG contrast:** every pair passes, with zero failures.
+  - Body text: 16.1:1 (light) / 14.2:1 (dark). Muted text: ≥ 5.9:1. Links: ≥ 5.5:1.
+  - **White text on the primary button: 6.4:1 / 5.0:1.**
+  - Primary against the background: 6.1:1 / 3.5:1 (UI-component minimum is 3:1).
+  - Status text on its tinted background: ≥ 6.7:1 in both modes.
+- **Chart palette:** the `dataviz` reference palette, run through its validator against *these*
+  backgrounds.
+  - Light: colour-blind separation ΔE 9.1, normal-vision ΔE 19.6.
+  - Dark: colour-blind separation ΔE 8.4, normal-vision ΔE 19.3.
+  - Light-mode slots 3–5 (aqua, yellow, magenta) are below 3:1 contrast against the paper
+    background, so the **relief rule** applies: any chart that uses them must also show values as
+    labels or in a table next to it.
+- **Config:** a headless server booted with no warnings, and all keys are recognised by
+  `streamlit config show`.
+- **Rendering:** a mock Chat page (chat messages, source cards, Guard warning and error, success
+  message, primary and secondary buttons, bar chart, dataframe, sidebar) was screenshotted in both
+  modes with Playwright and the installed Chrome. Both look intentional and consistent.
+- **Privacy:** Streamlit listens on all interfaces by default. The log showed an **External URL**
+  before `server.address = "localhost"` was added, and only `localhost` after.
+
+**Usage rules for the UI code:**
+
+- **No custom CSS/HTML for styling.** Everything comes from this file, per Streamlit's own theming
+  guidance; CSS breaks across Streamlit upgrades.
+- **Built-in fonts only** (`sans-serif`, `monospace`, which are bundled with Streamlit). Google Fonts
+  would make network requests from a "fully local" app. A self-hosted font (`[[theme.fontFaces]]`
+  + `static/`) is an option later, but its licence (usually OFL) would need adding to the License
+  section.
+- **Colour has a meaning, and only one:**
+  - Teal (primary) = actions, links, citations.
+  - Guard **Controversial** → `st.warning` (yellow, `:material/warning:`).
+  - Guard **Unsafe** → `st.error` (red, `:material/block:`).
+  - Ingest done → `st.success` (green). Info → `st.info` (blue).
+  - Status colours always come with an icon and words, never colour alone.
+- **Chat avatars must be explicit**, e.g. `st.chat_message("user", avatar=":material/person:")` and
+  `st.chat_message("assistant", avatar=":material/menu_book:")`. The defaults are red and orange,
+  which would borrow the Unsafe and Controversial colours. Re-check them in both modes in phase 5.
+- **Charts:**
+  - A single series uses one colour, no legend, in a meaningful order. For example, per-stage
+    latency bars go in pipeline order (embed → search → rerank → generate), not alphabetical.
+  - Use categorical colours only for ≥ 2 series (e.g. eval "embedding only" vs "+ rerank"), always
+    in palette order, and colour follows the series name, never its rank.
+  - Every chart has an `st.dataframe` / table alongside it.
+- **Dark-mode page thumbnails:** show them inside `st.container(border=True)` at thumbnail width.
+  The warm charcoal plus the border softens the white page edge without CSS.
+- **Running in development:** `uv run streamlit run src/qwn/ui/app.py --client.toolbarMode developer`
+  restores Rerun and Clear cache for that run only.
+
+**Phase 5 check:** add an AppTest smoke test, then take the light/dark screenshot pair of the real
+Chat, Library and System pages (Playwright with `channel="chrome"`, `color_scheme` set to light then
+dark, wait for a page element before the screenshot) and look at both before closing the phase.
+
 ## Settings (`src/qwn/config.py`)
 
 ```python
@@ -408,6 +583,7 @@ Phase 5 may begin once phase 2 is done; the Chat page doesn't need Guard or voic
 qwn/
 ├─ .claude/                 # settings.json (hooks) + hooks/*.sh, committed
 ├─ .github/workflows/       # ci.yml (macOS arm64, reusable), release.yml
+├─ .streamlit/config.toml   # theme + localhost-only server (committed; secrets.toml ignored)
 ├─ pyproject.toml           # uv; runtime deps above; dev group: ruff, ty, pytest
 ├─ PLAN.md   qwn.example.toml
 ├─ src/qwn/
