@@ -4,6 +4,40 @@
 > phase by phase. Library facts below were verified against PyPI and GitHub on 2026-10-04. Phase 0
 > re-checks them against the installed versions before any feature work.
 
+## Start here
+
+**Already done on `plan/mlx-multimodal-rag`:** uv project (Python 3.12) with the ruff/ty/pytest dev
+group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*.md`; `CLAUDE.md`.
+**Not done:** everything in the Phases table, starting with phase 0.
+
+**Reading order** (the plan is long; read only what the current phase needs):
+
+1. **Every session:** `CLAUDE.md`, this section, Goal, Decisions, Phases.
+2. **Phase 0:** Stack and memory budget, Model interfaces (incl. adapter notes), Security → Model
+   pinning, Runtime robustness → Memory policy, Claude Code hooks, GitHub Actions CI, Automatic
+   releases, License.
+3. **Phases 1–3:** Data flow, Storage layout, Data model, CLI, Settings, Runtime robustness,
+   Security → Prompt injection, Testing, Evaluation.
+4. **Phase 4:** Voice input pipeline, plus Memory policy (evictable voice models).
+5. **Phase 5:** Streamlit UI incl. Theme and Responsive layout.
+6. **Once, at any point:** Repository setup (after first push).
+
+**Workflow for each phase:**
+
+1. Start from an up-to-date `main` (before the GitHub remote exists: merge
+   `plan/mlx-multimodal-rag` into `main` locally first) and branch `phase-<N>-<short-name>`.
+2. Re-read that phase's row in the Phases table and its exit criteria. List the deliverables as
+   tasks.
+3. Build behind the interfaces, writing tests as you go (fakes first, then `slow` tests for real
+   models).
+4. Run the checks in Development workflow; from phase 1, also run `qwn eval --set public`.
+5. Walk through the merge checklist (GitHub Actions CI → Merge checklist), bump the version
+   (`uv version --bump minor`), open the PR and stop. Next phase, next session.
+
+**When reality disagrees with the plan** (a library API changed, a number doesn't hold, a
+criterion is unreachable): stop, explain what you found, and propose a change. Don't silently work
+around the plan. Agreed changes go into `PLAN.md` in the same PR.
+
 ## Goal
 
 Ask questions, typed (v1) or spoken (phase 4), over your own PDFs, slides, screenshots, images and
@@ -946,7 +980,7 @@ qwn/
 ├─ .github/workflows/       # ci.yml (macOS arm64, reusable), release.yml
 ├─ .streamlit/config.toml   # theme + localhost-only server (committed; secrets.toml ignored)
 ├─ pyproject.toml           # uv; runtime deps above; dev group: ruff, ty, pytest
-├─ PLAN.md   qwn.example.toml
+├─ PLAN.md   CLAUDE.md   qwn.example.toml
 ├─ src/qwn/
 │  ├─ interfaces.py         # Protocols + dataclasses (above)
 │  ├─ config.py             # Settings
