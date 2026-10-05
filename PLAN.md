@@ -20,7 +20,8 @@ with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qw
 | Interface | Typer CLI (ingest/eval/scripting) **and** Streamlit (daily use). Both are thin layers over `qwn.*`. |
 | Model I/O | Our own `Protocol` interfaces with exact types; library calls hidden behind adapters. |
 | Libraries | `mlx-vlm` for generation, embedding **and** reranking; `mlx-lm` for Guard; `mlx-embeddings` as fallback. |
-| Index | LanceDB, 3 tables (`documents`, `chunks`, `meta`), per-file update by content hash. |
+| Index | SQLite + `sqlite-vec` in one file (`index/qwn.db`, WAL), tables `documents`/`chunks`/`vec_chunks`/`meta`; each file re-indexed in one transaction, keyed by content hash. |
+| Page renders | WebP q85 at 150 dpi on disk under `index/pages/`. |
 | UI | Streamlit app with 3 pages: Chat, Library, System. |
 | CLI | `ingest`, `search`, `ask`, `eval`, `status`, `ui`. |
 | Testing | 3 tiers + fakes: unit, integration, UI (AppTest), plus `slow` real-model tests. |
@@ -49,9 +50,9 @@ with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qw
 |---|---|---|
 | `mlx-vlm` | `>=0.7.4` | Pulls `mlx>=0.32.2`, `transformers>=5.14`, **and `mlx-audio>=0.5.2`** |
 | `mlx-lm` | `>=0.32.0` | `transformers>=5.7`, compatible with the above |
-| `lancedb` | `>=0.39` | Embedded vector store |
-| `pymupdf` | `>=1.28` | PDF → PNG + text |
-| `pillow` | latest | Image loading/resizing |
+| `sqlite-vec` | `>=0.1.9` | Vector search inside SQLite (0.2 MB wheel). SQLite itself ships with Python |
+| `pymupdf` | `>=1.28` | PDF → page image + text |
+| `pillow` | latest | Image loading/resizing, WebP encoding |
 | `typer` | `>=0.27` | CLI |
 | `streamlit` | `>=1.65` | UI (`numpy<3`, OK) |
 | `pydantic-settings` | latest | Config, TOML + env |
@@ -63,8 +64,8 @@ These pins overlap, so a single environment should resolve. Phase 0 confirms it 
 ## Data flow
 
 ```
-INGEST   PDF ─► PyMuPDF ─► page PNG (150 dpi) + page text ─┐
-         image / screenshot ─► normalised PNG copy ─────────┼─► Embedder ─► 1024-d, L2-norm ─► LanceDB
+INGEST   PDF ─► PyMuPDF ─► page WebP (150 dpi) + page text ─┐
+         image / screenshot ─► normalised WebP copy ─────────┼─► Embedder ─► 1024-d, L2-norm ─► SQLite + sqlite-vec
          .md / .txt ─► ~800-token chunks (heading-aware) ───┘
 
 QUERY    question ─► Guard.check_prompt ─► Embedder(is_query) ─► top_k=50
@@ -187,38 +188,84 @@ class Guard(Protocol):
   - `Refusal: (Yes|No)` (responses only)
   - If the output can't be parsed: `label=None`. Treat this as **Controversial** (warn) and log it.
 
-## Data model (LanceDB at `index_dir`)
+## Storage layout
 
+| What | Where | Size guide | Git |
+|---|---|---|---|
+| Models | `~/.cache/huggingface/hub` (shared, outside the repo) | ~13 GB v1, ~18 GB with voice | — |
+| Source files | Streamlit uploads are copied to `data_dir`. CLI ingest indexes files **in place** (absolute paths) | your corpus | ignored |
+| Index database | `index_dir/qwn.db` (single SQLite file, WAL mode) | ~4 KB per chunk for vectors + text | ignored |
+| Page renders | `index_dir/pages/<doc_id>/<page>.webp` (WebP q85, 150 dpi) | ~50–150 KB per page | ignored |
+| Eval runs | `eval/results/*.json`; `eval/baseline.json` is committed | KB | results ignored |
+
+Back up or move the index by copying `index_dir/`. Delete it to start fresh.
+
+## Data model (SQLite + sqlite-vec at `index_dir/qwn.db`)
+
+```sql
+PRAGMA journal_mode = WAL;      -- CLI and Streamlit can read while one writes
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE documents (
+  doc_id      TEXT PRIMARY KEY,           -- sha256(abs path)
+  path        TEXT NOT NULL UNIQUE,       -- absolute path
+  sha256      TEXT NOT NULL,              -- content hash
+  mtime       REAL NOT NULL,
+  kind        TEXT NOT NULL CHECK (kind IN ('pdf','image','text')),
+  n_chunks    INTEGER NOT NULL,
+  indexed_at  TEXT NOT NULL               -- ISO-8601
+);
+
+CREATE TABLE chunks (
+  rowid       INTEGER PRIMARY KEY,        -- joins to vec_chunks.rowid
+  chunk_id    TEXT NOT NULL UNIQUE,       -- sha256(f"{doc_id}:{page}:{chunk_idx}")
+  doc_id      TEXT NOT NULL REFERENCES documents(doc_id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('pdf_page','image','text')),
+  page        INTEGER,                    -- 1-based for PDF pages, else NULL
+  chunk_idx   INTEGER NOT NULL,           -- 0 for pages/images
+  text        TEXT NOT NULL DEFAULT '',   -- page text / chunk text / '' for images
+  image_path  TEXT                        -- index_dir/pages/<doc_id>/<page>.webp
+);
+CREATE INDEX chunks_doc ON chunks(doc_id);
+
+CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[1024]);   -- rowid = chunks.rowid
+
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- keys: embed_model, embed_dim, schema_version
+
+-- Later (hybrid search): CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='rowid');
 ```
-documents  doc_id      str   sha256(abs path)                     primary key
-           path        str   absolute path
-           sha256      str   content hash
-           mtime       float
-           kind        str   "pdf" | "image" | "text"
-           n_chunks    int
-           indexed_at  str   ISO-8601
 
-chunks     chunk_id    str   sha256(f"{doc_id}:{page}:{chunk_idx}")
-           doc_id      str
-           kind        str   "pdf_page" | "image" | "text"
-           page        int?  1-based for PDF pages
-           chunk_idx   int   0 for pages/images
-           text        str   page text / chunk text / "" for images
-           image_path  str?  index_dir/pages/<doc_id>/<page>.png (or copied image)
-           vector      float32[embed_dim]
-
-meta       key/value   embed_model, embed_dim, schema_version
-```
-
+- **Library**: `sqlite-vec>=0.1.9`. Load it with `sqlite_vec.load(conn)` after
+  `conn.enable_load_extension(True)`. Checked: the uv Python 3.12 build has SQLite 3.53 with
+  extension loading enabled. The `vec0` dimension comes from `meta.embed_dim` when the schema is
+  created.
+- **Virtual tables don't cascade.** `ON DELETE CASCADE` cleans up `chunks`, but `vec_chunks` rows
+  must be deleted explicitly (`DELETE FROM vec_chunks WHERE rowid IN (SELECT rowid FROM chunks
+  WHERE doc_id = ?)`) **before** the chunks are deleted.
+- **Re-indexing one document is a single transaction**: render and embed *outside* the transaction
+  (slow), then `BEGIN; delete vec rows; delete chunks; insert chunks + vec rows; upsert documents;
+  COMMIT;`. A crash leaves either the old or the new version, never a mix. Write the page renders to
+  a temporary folder and rename it into place after the commit.
 - **Ingest algorithm**: walk the paths, skipping anything not in {pdf, png, jpg, jpeg, webp, md,
-  txt}. For each file, compute sha256. If it matches `documents`, skip. Otherwise delete its
-  chunks, render/chunk, embed in batches (8 images or 32 texts), and insert. Update `documents`
-  last, so a crash midway leaves a document marked as "not indexed".
-- **Removed files**: `qwn ingest --prune` deletes rows for files that no longer exist.
+  txt}. For each file, compute sha256. If it matches `documents.sha256`, skip. Otherwise render or
+  chunk it, embed in batches (8 images or 32 texts), and commit as above.
+- **Images**: re-encode each image to WebP q85 in `index_dir/pages/<doc_id>/0.webp`, keeping the
+  aspect ratio, capped at `max_pixels`. PDF pages: PyMuPDF `get_pixmap(dpi=pdf_dpi)` → Pillow →
+  WebP q85.
+- **Removed files**: `qwn ingest --prune` deletes rows and render folders for files that no longer
+  exist.
 - **Rebuild trigger**: if `meta.embed_model`, `meta.embed_dim` or `meta.schema_version` differs
-  from the settings, stop with a message suggesting `--reindex`.
-- **Search**: brute-force cosine (dot product on normalised vectors) for `top_k`. Add an ANN
-  index only if the corpus goes over ~100k chunks.
+  from the settings, stop with a message suggesting `--reindex` (drops and recreates all tables
+  and `pages/`).
+- **Search**:
+  `SELECT rowid, distance FROM vec_chunks WHERE embedding MATCH ? AND k = ?` (brute-force KNN),
+  then join `chunks`. Vectors are L2-normalised, so the default L2 distance ranks exactly like
+  cosine. Report `cosine = 1 - distance**2 / 2`. Brute force is fine to ~100k chunks.
+- **Maintenance**: run `VACUUM` after `--reindex` or a large `--prune`.
+- **Fallback** (if sqlite-vec is a problem): store the embedding as a float32 BLOB column on
+  `chunks` and search with an in-memory numpy matrix. Reload it when `meta.index_version` (bumped
+  on every commit) changes. Only `index.py` changes.
 
 ## CLI (`src/qwn/cli.py`, Typer, entry point `qwn`)
 
@@ -291,8 +338,9 @@ tests/fakes.py       FakeEmbedder (hash-seeded unit vectors), FakeReranker (word
 tests/unit/          chunking, IDs/hashing, guard regex parsing (incl. unparseable),
                      citation parsing (incl. invented labels), prompt building,
                      MRL truncate + renorm, settings precedence
-tests/integration/   tmp_path LanceDB; PyMuPDF-generated 2-page PDF; PIL image; markdown file
-                     ingest → re-ingest skips → modify one file → only it re-indexes → --prune
+tests/integration/   tmp_path SQLite index (real sqlite-vec); PyMuPDF-generated 2-page PDF; PIL image; markdown file
+                     ingest → re-ingest skips → modify one file → only it re-indexes → --prune;
+                     crash between embed and commit leaves the old version intact
 tests/ui/            streamlit.testing.v1.AppTest smoke test per page, with fakes injected
 tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms, determinism,
                      guard on known safe/unsafe prompts, mlx-vlm vs reference embedding (cos ≥ 0.99)
@@ -322,7 +370,7 @@ tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms,
 | # | Phase | Deliverable | Exit criterion |
 |---|---|---|---|
 | 0 | Env + checks | Add runtime deps; `interfaces.py`; adapters; `scripts/smoke_test.py`; `tests/slow/` contract tests | `uv lock` resolves; 4 core models loaded together under 24 GB; VL-8B ≥ 35 tok/s; slow tests pass (or the fallback library is adopted) |
-| 1 | Retrieval | `config`, `ingest`, `index`, `retrieve`; `qwn ingest/search/status`; unit + integration tests | recall@5 ≥ 0.8 on 20 queries; rerank beats embedding alone |
+| 1 | Retrieval | `config`, `ingest`, `index` (SQLite schema + sqlite-vec), `retrieve`; `qwn ingest/search/status`; unit + integration tests | recall@5 ≥ 0.8 on 20 queries; rerank beats embedding alone |
 | 2 | Answering | `prompts`, `answer`; `qwn ask`; `qwn eval` with citation_hit | Correct page cited in most of the 20 queries |
 | 3 | Safety | `guard` wired into ask/chat; controversial policy | Known unsafe prompts blocked; normal prompts pass; unparseable output → warn |
 | 4 | Voice | ASR/TTS adapters (mlx-audio already installed via mlx-vlm); `st.audio_input` + playback | About 3 s or less from end of speech to first audio |
@@ -371,5 +419,6 @@ uv run qwn ui                    # launch Streamlit
 - **mlx-embeddings / mlx-vlm embedding numbers may drift from the reference.** The `slow` test
   compares against the PyTorch reference (cos ≥ 0.99) on 5 samples.
 - **Long contexts eat memory.** `max_context=16384`, `max_images=4`, `max_pixels` cap.
+- **sqlite-vec is pre-1.0 (0.1.9).** Pin it in `uv.lock`. The numpy-BLOB fallback is described under Data model.
 - **Libraries change fast.** Pin the exact versions in `uv.lock` after phase 0. All library calls
   live in `adapters/`.
