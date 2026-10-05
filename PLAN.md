@@ -737,8 +737,8 @@ checked in a scratch copy: format and lint both pass.
    intentional, update `eval/baseline.json` with `--update-baseline` in the same PR.
 4. The version is bumped with `uv version --bump minor` when the PR completes a phase (merging it
    triggers the release).
-5. After the first push to GitHub, protect `main`: require the `Lint, types, fast tests (macOS arm64)`
-   check, and require branches to be up to date before merging.
+5. `main` is protected by the ruleset in Repository setup step 3 (required CI check, PRs only,
+   up to date before merging).
 
 ## Automatic releases
 
@@ -892,6 +892,82 @@ jobs:
     `qwn-0.2.0-py3-none-any.whl` and `qwn-0.2.0.tar.gz`.
 - **Optional later:** add `.github/release.yml` to group generated notes by PR label, and a `pypi`
   job (Trusted Publishing, `environment: pypi`) between `ci` and `release`.
+
+## Repository setup (after first push)
+
+The repo has no GitHub remote yet. Do this once, in order. Commands were checked against
+`gh` 2.95 on 2026-10-04; `$OWNER` is your GitHub user (`darylalim`).
+
+### 1. Create the repo and push
+
+```bash
+gh repo create qwn --public --source=. --remote=origin --disable-wiki \
+  --description "Private multimodal RAG on Apple Silicon: ask questions about your PDFs, slides and images with Qwen3-VL, running fully on-device with MLX."
+git push -u origin main
+git push -u origin plan/mlx-multimodal-rag
+gh pr create --base main --head plan/mlx-multimodal-rag --title "Project plan and dev tooling" --fill
+```
+
+- **Visibility:** `--public` is the default choice. GitHub-hosted macOS minutes are free for public
+  repos, and the project is Apache-2.0. Use `--private` instead if you want it private; CI then
+  costs ~30 billed minutes per run (10× macOS multiplier).
+- No release is triggered by merging this PR: `release.yml` doesn't exist on `main` until phase 0.
+
+### 2. Topics and merge settings
+
+```bash
+gh repo edit "$OWNER/qwn" \
+  --add-topic mlx,apple-silicon,on-device-ai,local-llm \
+  --add-topic qwen,qwen3,qwen3-vl,vision-language-model \
+  --add-topic rag,retrieval-augmented-generation,multimodal-rag,semantic-search,embeddings,reranker,document-qa \
+  --add-topic streamlit,sqlite-vec \
+  --enable-squash-merge --enable-merge-commit=false --enable-rebase-merge=false \
+  --delete-branch-on-merge --allow-update-branch
+```
+
+- **Topics (17 of 20)** were chosen by checking how many repos use each one (2026-10-04): broad
+  ones people browse (`rag` 52k, `streamlit` 54k, `local-llm` 7.8k) plus exact ones where this
+  project stands out (`qwen3-vl` 148, `multimodal-rag` 173, `sqlite-vec` 235, `reranker` 263).
+  Use the common spelling only (`vision-language-model`, not `vlm`; no `visual-rag`, 12 repos).
+- **Phase 4:** add `speech-recognition` and `text-to-speech` (`gh repo edit --add-topic …`).
+- **Website:** empty for now. Later set `--homepage https://github.com/$OWNER/qwn/releases/latest`
+  or a docs page.
+- **Squash-only merges** give one commit per PR on `main`, which keeps phase history readable.
+  Tag-based release detection works with squash merges.
+
+### 3. Protect `main` (after phase 0's first CI run)
+
+A required check can only be selected after it has reported once, so run this after the phase 0
+PR's CI has finished:
+
+```bash
+gh api -X POST "repos/$OWNER/qwn/rulesets" --input - <<'JSON'
+{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    { "type": "pull_request",
+      "parameters": { "required_approving_review_count": 0, "dismiss_stale_reviews_on_push": false,
+                      "require_code_owner_review": false, "require_last_push_approval": false,
+                      "required_review_thread_resolution": false } },
+    { "type": "required_status_checks",
+      "parameters": { "strict_required_status_checks_policy": true,
+                      "required_status_checks": [ { "context": "Lint, types, fast tests (macOS arm64)" } ] } }
+  ]
+}
+JSON
+gh ruleset list --repo "$OWNER/qwn"
+```
+
+- Changes reach `main` only through PRs with green CI, and branches must be up to date (`strict`).
+  Force-pushes and deleting `main` are blocked. Zero approvals are required, since this is a solo
+  project.
+- The release workflow only creates **tags**, so the branch rules don't block it.
+- The `context` must match the CI job's `name:` exactly. If you rename the job, update the ruleset.
 
 ## Development workflow
 
