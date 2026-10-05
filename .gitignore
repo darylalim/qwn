@@ -17,6 +17,7 @@ htmlcov/
 /data/
 /index/
 /eval/results/
+/eval/private/
 
 # Local config and secrets (examples are committed)
 /qwn.toml
