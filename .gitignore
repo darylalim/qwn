@@ -1,27 +1,37 @@
 # Python
 __pycache__/
 *.py[cod]
-.venv/
 *.egg-info/
-dist/
-build/
+/.venv/
+/dist/
+/build/
 
-# Tooling caches
+# Tooling caches and reports
 .pytest_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-# Local data and indexes
-data/
-index/
+# Local corpus, index (SQLite db + WAL/SHM, page renders) and eval runs
+/data/
+/index/
+/eval/results/
 
-# Streamlit secrets
+# Local config and secrets (examples are committed)
+/qwn.toml
+.env
+.env.*
+!.env.example
 .streamlit/secrets.toml
+
+# Claude Code: personal files (shared .claude/settings.json and hooks are committed)
+.claude/settings.local.json
+CLAUDE.local.md
 
 # macOS
 .DS_Store
+._*
 
-# Local config (qwn.example.toml is committed)
-qwn.toml
-
-# Eval run outputs (eval/baseline.json is committed)
-eval/results/
+# Logs
+*.log
