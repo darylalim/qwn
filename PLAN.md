@@ -41,20 +41,20 @@ around the plan. Agreed changes go into `PLAN.md` in the same PR.
 
 ## Goal
 
-Ask questions, typed (v1) or spoken (phase 4), over your own PDFs, slides, screenshots, images and
-markdown. Answers come from **Qwen3-VL-8B**, which reads the actual page images and cites the source
-file and page. Prompts and answers pass through Qwen3Guard. Everything runs locally on Apple Silicon
+Ask questions, typed (v1) or spoken (phase 4), over your own PDFs, slides (exported as PDF),
+screenshots, images and markdown. Answers come from **Qwen3-VL-8B**, which reads the actual page
+images and cites the source file and page. Prompts and answers pass through Qwen3Guard. Everything runs locally on Apple Silicon
 with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qwn.*` core.
 
 ## Decisions
 
 | Topic | Decision |
 |---|---|
-| Corpus | PDFs/slides (page images + text), images/screenshots, markdown/text. **No video.** |
+| Corpus | PDFs and slides exported as PDF (page images + text), images/screenshots, markdown/text. **No video, and no native `.pptx`/`.key`**: export slides to PDF first (PowerPoint and Keynote both do this, and PDFium renders the result faithfully). |
 | Voice | Deferred to phase 4. v1 is text-only. Click-to-record (`st.audio_input`) → **Silero VAD** (trim, reject silence, split long recordings) → ASR. Hands-free is out of scope. |
 | Interface | Typer CLI (ingest/eval/scripting) **and** Streamlit (daily use). Both are thin layers over `qwn.*`. |
 | Model I/O | Our own `Protocol` interfaces with exact types; library calls hidden behind adapters. |
-| Robustness | Memory policy (resident core, lazy/evictable voice, pre-load memory check), one MLX lock, one SQLite writer, background ingest, explicit bad-input handling. |
+| Robustness | Memory policy (resident core, lazy/evictable voice, pre-load memory check), one MLX lock, one PDFium lock, one SQLite writer, background ingest, explicit bad-input handling. |
 | Security | Source text is untrusted data, fenced and labelled in the prompt; injection cases in eval. Models pinned to revision SHAs, fetched by `qwn models pull`, then `HF_HUB_OFFLINE=1`. |
 | Libraries | `mlx-vlm` for generation, embedding **and** reranking; `mlx-lm` for Guard; `mlx-embeddings` as fallback (**GPL-3.0**: needs a license decision before it's adopted). PDF via **pypdfium2** (not PyMuPDF, which is AGPL). |
 | License | **Apache-2.0** (`LICENSE` + `license`/`license-files` in `pyproject.toml`, already applied). Runtime dependencies must be permissive (see License). |
@@ -728,6 +728,12 @@ it ad hoc. MLX APIs below were checked against `mlx` 0.32.3 on 2026-10-04: `mx.d
   (ingest, delete, prune) go through one writer, behind a `threading.Lock` in-process. Across
   processes, set `PRAGMA busy_timeout = 5000` and catch `sqlite3.OperationalError: database is
   locked` with a clear message.
+- **One PDFium lock:** PDFium (and so pypdfium2) isn't thread-safe; concurrent calls from
+  different threads can crash the process, not just raise. Every pypdfium2 call stays in
+  `adapters/pdf.py` behind a module-level `threading.Lock`, held from opening a document until it
+  is closed. Only the ingest worker uses it today, so the lock never contends. It protects any
+  future caller (e.g. re-rendering a page for the UI). The UI shows the stored WebP renders and
+  never calls pypdfium2.
 - **Background ingest:** ingest can take minutes, so it runs in a worker thread owned by a
   `JobRegistry` (an `st.cache_resource` object), which records progress (`done/total`, current
   file, errors). The Library page polls it with `@st.fragment(run_every="1s")`, so only the
@@ -749,7 +755,7 @@ shown in the Library page and `qwn ingest` output, and the run continues with th
 | Page with no text layer | Normal: indexed as image only (the visual path), `text = ''` |
 | Image over `max_image_pixels`, 0-byte or unreadable | Set `Image.MAX_IMAGE_PIXELS = max_image_pixels` **and** `warnings.simplefilter("error", Image.DecompressionBombWarning)` in the ingest worker. Pillow only *warns* between 1× and 2× the limit and raises only above 2× (checked 2026-10-04, Pillow 12.3). `DecompressionBombWarning` / `DecompressionBombError` / `UnidentifiedImageError` → skipped with the reason |
 | Text/markdown over `max_text_bytes` or not UTF-8 | Decode with `errors="replace"` and log it; skip if over the size limit |
-| Unsupported extension | Skipped quietly in directory walks; reported if named explicitly |
+| Unsupported extension | Skipped quietly in directory walks; reported if named explicitly. A named `.pptx`/`.key` is reported as "slides: export to PDF first" |
 | Upload over 100 MB | Streamlit rejects it (`server.maxUploadSize = 100`); use `qwn ingest` for big files |
 | File disappears or is modified mid-ingest | Hash before and after rendering; if it changed, skip with "changed during ingest" |
 
