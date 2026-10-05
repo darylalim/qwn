@@ -6,7 +6,7 @@
 
 ## Start here
 
-**Already done on `plan/mlx-multimodal-rag`:** uv project (Python 3.12) with the ruff/ty/pytest dev
+**Already done on `main`** (planning commits, fast-forwarded from `plan/mlx-multimodal-rag` on 2026-10-04): uv project (Python 3.12) with the ruff/ty/pytest dev
 group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*.md`; `CLAUDE.md`.
 **Not done:** everything in the Phases table, starting with phase 0.
 
@@ -24,8 +24,8 @@ group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*
 
 **Workflow for each phase:**
 
-1. Start from an up-to-date `main` (before the GitHub remote exists: merge
-   `plan/mlx-multimodal-rag` into `main` locally first) and branch `phase-<N>-<short-name>`.
+1. Start from an up-to-date `main` and branch `phase-<N>-<short-name>`. Before the GitHub remote
+   exists, phases merge into `main` locally; afterwards, through PRs.
 2. Re-read that phase's row in the Phases table and its exit criteria. List the deliverables as
    tasks.
 3. Build behind the interfaces, writing tests as you go (fakes first, then `slow` tests for real
@@ -1506,14 +1506,15 @@ The repo has no GitHub remote yet. Do this once, in order. Commands were checked
 gh repo create qwn --public --source=. --remote=origin --disable-wiki \
   --description "Private multimodal RAG on Apple Silicon: ask questions about your PDFs, slides and images with Qwen3-VL, running fully on-device with MLX."
 git push -u origin main
-git push -u origin plan/mlx-multimodal-rag
-gh pr create --base main --head plan/mlx-multimodal-rag --title "Project plan and dev tooling" --fill
+# push any phase branches that aren't merged yet with: git push -u origin phase-<N>-<name>
 ```
 
 - **Visibility:** `--public` is the default choice. GitHub-hosted macOS minutes are free for public
   repos, and the project is Apache-2.0. Use `--private` instead if you want it private; CI then
   costs ~30 billed minutes per run (10× macOS multiplier).
-- No release is triggered by merging this PR: `release.yml` doesn't exist on `main` until phase 0.
+- **What the first push triggers:** if it happens before phase 0 is merged, nothing runs (there
+  are no workflows yet). If phase 0 is already merged, the push runs CI and may run `release.yml`,
+  which would publish `v0.1.0`. That's intended (phase 0 = `0.1.0`); check the Actions tab afterwards.
 
 ### 2. Topics and merge settings
 
