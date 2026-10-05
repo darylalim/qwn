@@ -22,17 +22,17 @@ uv run pytest                         # everything incl. slow real-model tests (
 uv run qwn models pull                # the ONLY command that may use the network
 uv run qwn eval --set public          # phase exit criteria (from phase 1)
 uv run qwn ui                         # Streamlit (localhost only)
-uv version --bump minor               # one minor release per completed phase
+uv version --bump minor               # one minor release per completed phase (from phase 1)
 ```
 
 ## Rules that always apply
 
 - **Dependencies:** `uv add` / `uv add --dev` only. Never pip, never edit `uv.lock`. Check the
   license first: copyleft (GPL/AGPL/LGPL-static/SSPL) needs the user's OK (see PLAN.md → License).
-- **Architecture:** app code depends on the `Protocol`s in `src/qwn/interfaces.py`. Library calls
-  (mlx-vlm, mlx-lm, mlx-audio, pypdfium2, sqlite-vec) live only in `src/qwn/adapters/` and
-  `src/qwn/index.py`. The UI and CLI are thin layers over `qwn.*`, with no model or retrieval logic
-  of their own.
+- **Architecture:** app code depends on the `Protocol`s in `src/qwn/interfaces.py`. Third-party
+  library calls (mlx-vlm, mlx-lm, mlx-audio, pypdfium2, Pillow, huggingface_hub) live only in
+  `src/qwn/adapters/`; sqlite-vec/SQLite only in `src/qwn/index.py`. The UI and CLI are thin
+  layers over `qwn.*`, with no model or retrieval logic of their own.
 - **Tests:** unit tests use `tests/fakes.py` and never import MLX or load models. Anything that
   loads a real model is `@pytest.mark.slow`. Write the test with the code, not after.
 - **Privacy:** the app is localhost-only and offline at runtime (`HF_HUB_OFFLINE=1`; models pinned
