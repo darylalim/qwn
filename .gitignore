@@ -19,3 +19,9 @@ index/
 
 # macOS
 .DS_Store
+
+# Local config (qwn.example.toml is committed)
+qwn.toml
+
+# Eval run outputs (eval/baseline.json is committed)
+eval/results/
