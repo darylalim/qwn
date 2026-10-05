@@ -373,7 +373,7 @@ tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms,
 
 | # | Phase | Deliverable | Exit criterion |
 |---|---|---|---|
-| 0 | Env + checks | **Install and test the Claude Code hooks first**; add `ci.yml`, the `pyproject.toml` CI changes (`extend-exclude` for `*.md`, `required-version`) and `tests/hooks/`; add runtime deps; `interfaces.py`; adapters; `scripts/smoke_test.py`; `tests/slow/` contract tests | `uv lock` resolves; 4 core models loaded together under 24 GB; VL-8B ≥ 35 tok/s; slow tests pass (or the fallback library is adopted) |
+| 0 | Env + checks | **Install and test the Claude Code hooks first**; add `ci.yml`, `[tool.uv] required-version` and `tests/hooks/` (`extend-exclude` for `*.md` is already done); add runtime deps; `interfaces.py`; adapters; `scripts/smoke_test.py`; `tests/slow/` contract tests | `uv lock` resolves; 4 core models loaded together under 24 GB; VL-8B ≥ 35 tok/s; slow tests pass (or the fallback library is adopted) |
 | 1 | Retrieval | `config`, `ingest`, `index` (SQLite schema + sqlite-vec), `retrieve`; `qwn ingest/search/status`; unit + integration tests | recall@5 ≥ 0.8 on 20 queries; rerank beats embedding alone |
 | 2 | Answering | `prompts`, `answer`; `qwn ask`; `qwn eval` with citation_hit | Correct page cited in most of the 20 queries |
 | 3 | Safety | `guard` wired into ask/chat; controversial policy | Known unsafe prompts blocked; normal prompts pass; unparseable output → warn |
@@ -652,7 +652,7 @@ Supporting changes in `pyproject.toml`:
 
 ```toml
 [tool.ruff]
-# (existing settings) plus:
+# already applied (commit ecbaf41):
 extend-exclude = ["*.md"]  # PLAN.md/README.md code blocks are illustrative, not source
 
 [tool.uv]
