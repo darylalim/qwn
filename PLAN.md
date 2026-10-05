@@ -16,7 +16,7 @@ with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qw
 | Topic | Decision |
 |---|---|
 | Corpus | PDFs/slides (page images + text), images/screenshots, markdown/text. **No video.** |
-| Voice | Deferred to phase 4. v1 is text-only. |
+| Voice | Deferred to phase 4. v1 is text-only. Click-to-record (`st.audio_input`) → **Silero VAD** (trim, reject silence, split long recordings) → ASR. Hands-free is out of scope. |
 | Interface | Typer CLI (ingest/eval/scripting) **and** Streamlit (daily use). Both are thin layers over `qwn.*`. |
 | Model I/O | Our own `Protocol` interfaces with exact types; library calls hidden behind adapters. |
 | Libraries | `mlx-vlm` for generation, embedding **and** reranking; `mlx-lm` for Guard; `mlx-embeddings` as fallback (**GPL-3.0**: needs a license decision before it's adopted). PDF via **pypdfium2** (not PyMuPDF, which is AGPL). |
@@ -44,6 +44,7 @@ with MLX, through a **Typer CLI** and a **Streamlit UI** that share the same `qw
 | Guard | `Qwen3Guard-Gen-0.6B-MLX` | `mlx-lm` | 1.2 GB |
 | ASR (phase 4) | `Qwen3-ASR-1.7B-8bit` | `mlx-audio` | 2.5 GB |
 | TTS (phase 4) | `Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit` | `mlx-audio` | 2.9 GB |
+| VAD (phase 4) | `silero-vad` (Silero VAD) | `mlx-audio` (`mlx_audio.vad`) | 2.2 MB |
 | **Total** | | | **≈ 18 GB weights + 3–5 GB activations/KV ≈ 22 GB** |
 
 - Text-only v1 is about 13 GB. ASR/TTS are lazy-loaded in phase 4.
@@ -137,6 +138,12 @@ class Guard(Protocol):
     model_id: str
     def check_prompt(self, text: str) -> Verdict: ...
     def check_response(self, prompt: str, response: str) -> Verdict: ...
+
+# Phase 4 (voice). Audio is mono float32 at 16 kHz everywhere inside qwn.
+class Vad(Protocol):
+    model_id: str
+    def speech_segments(self, audio: NDArray[np.float32]) -> list[tuple[float, float]]: ...
+    # (start_s, end_s) of detected speech, sorted, non-overlapping; [] = no speech
 ```
 
 ### Adapter notes (verified 2026-10-04; re-check in phase 0)
@@ -323,6 +330,41 @@ around `qwn.models`. The UI has no model or retrieval logic of its own.
   - Sliders for `top_k`, `rerank_k`, `max_images`, plus guard toggles. Values live in
     `st.session_state` and are applied per request (they don't persist).
 - **State**: `st.session_state.messages`, `st.session_state.settings`. Single local user.
+
+### Voice input pipeline (phase 4)
+
+```
+st.audio_input (click start / stop, browser WAV)
+  └─ decode → mono float32 → resample to 16 kHz        (qwn.voice.load_audio)
+  └─ Vad.speech_segments                                (Silero VAD via mlx-audio)
+       ├─ total speech < vad_min_speech_ms  → "Didn't catch that, try again" (no models run)
+       ├─ trim to first..last segment ± vad_pad_ms
+       └─ trimmed > asr_max_seconds         → split at the longest pauses into chunks ≤ asr_max_seconds
+  └─ Qwen3-ASR per chunk → join → Guard → retrieve → rerank → VL-8B → TTS
+```
+
+- **Why VAD, when the user already marks the end with "stop":** speech recognisers tend to *invent*
+  text for silence or background noise, and a blank or accidental recording would otherwise run the
+  whole ~13 GB pipeline on a question nobody asked. Trimming also cuts ASR time.
+- **Model:** `mlx-community/silero-vad` (2.2 MB, runs on the CPU in milliseconds), through
+  `from mlx_audio.vad import load` and `model.get_speech_timestamps(audio, return_seconds=True)`
+  (from mlx-audio's VAD docs, checked 2026-10-04). Phase 4 must check the exact parameter names for
+  threshold, minimum speech and minimum silence, and whether it accepts arrays or only file paths,
+  then pin them in the adapter. mlx-audio is already installed via mlx-vlm, so there's **no new
+  package**.
+- **Rejected:** the `silero-vad` PyPI package (needs PyTorch, several GB), `onnxruntime` (a 24 MB
+  runtime for a 2 MB model), `webrtcvad` (tiny but older and less accurate).
+- **Pure logic in `qwn.voice`, with unit tests and a fake `Vad`:** silence rejection, trimming
+  with padding (clamped to the recording's bounds), splitting at the longest pauses so every chunk
+  is ≤ `asr_max_seconds`, and resampling. Test audio is synthetic: sine bursts separated by silence.
+- **Slow test round trip:** Qwen3-TTS says a known sentence, the test adds 1 s of silence on each
+  side and some low noise, and then VAD should find one segment within ±150 ms of the speech. ASR on
+  the trimmed audio should match the sentence (word error rate ≤ 10%). All-silence and noise-only
+  inputs should return `[]`.
+- **Out of scope:** **hands-free mode** (stopping automatically when you stop talking).
+  `st.audio_input` records in the browser and only sends audio after you click stop, so the server
+  can't end the recording. Hands-free would need a custom browser component doing live VAD plus
+  end-of-turn detection (e.g. Smart Turn v3, 64 MB, BSD-2-Clause, also in mlx-audio).
 
 ### Theme (`.streamlit/config.toml`, committed)
 
@@ -569,6 +611,12 @@ class Settings(BaseSettings):
     chunk_tokens: int = 800
     guard_enabled: bool = True
     controversial: Literal["warn", "block"] = "warn"
+    # phase 4 (voice)
+    vad_threshold: float = 0.5
+    vad_min_speech_ms: int = 250
+    vad_min_silence_ms: int = 300
+    vad_pad_ms: int = 200
+    asr_max_seconds: int = 120
     model_config = SettingsConfigDict(env_prefix="QWN_", toml_file="qwn.toml")
     # Override settings_customise_sources to include TomlConfigSettingsSource. Setting
     # toml_file alone doesn't load the TOML file.
@@ -594,7 +642,8 @@ tests/ui/            streamlit.testing.v1.AppTest smoke test per page, with fake
 tests/hooks/         run each .claude/hooks/*.sh via subprocess with JSON payloads; assert the
                      allow/deny/ask decisions and exit codes from the hooks section's test list
 tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms, determinism,
-                     guard on known safe/unsafe prompts, mlx-vlm vs reference embedding (cos ≥ 0.99)
+                     guard on known safe/unsafe prompts, mlx-vlm vs reference embedding (cos ≥ 0.99),
+                     phase 4: TTS → padded/noisy audio → VAD (±150 ms) → ASR (WER ≤ 10%); silence → []
 ```
 
 - Default `uv run pytest -m "not slow"`: runs in under 10 s with no downloads. `uv run pytest`
@@ -624,7 +673,7 @@ tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms,
 | 1 | Retrieval | `config`, `ingest`, `index` (SQLite schema + sqlite-vec), `retrieve`; `qwn ingest/search/status`; unit + integration tests | recall@5 ≥ 0.8 on 20 queries; rerank beats embedding alone |
 | 2 | Answering | `prompts`, `answer`; `qwn ask`; `qwn eval` with citation_hit | Correct page cited in most of the 20 queries |
 | 3 | Safety | `guard` wired into ask/chat; controversial policy | Known unsafe prompts blocked; normal prompts pass; unparseable output → warn |
-| 4 | Voice | ASR/TTS adapters (mlx-audio already installed via mlx-vlm); `st.audio_input` + playback | About 3 s or less from end of speech to first audio |
+| 4 | Voice | ASR/TTS/VAD adapters (mlx-audio already installed via mlx-vlm); `qwn.voice` pipeline (decode, resample, VAD trim/reject/split); `st.audio_input` + playback | About 3 s or less from end of speech to first audio; silent or noise-only recordings are rejected before ASR; VAD round-trip slow test passes |
 | 5 | Streamlit UI | 3-page app; AppTest smoke tests; `qwn ui` | Full flow usable from the browser |
 
 Phase 5 may begin once phase 2 is done; the Chat page doesn't need Guard or voice.
@@ -666,6 +715,7 @@ carries `License-Expression: Apache-2.0`).
   |---|---|
   | MIT | mlx, mlx-lm, mlx-vlm, mlx-audio, typer, pydantic-settings |
   | Apache-2.0 | streamlit, transformers, all Qwen models used (VL-8B, Embedding, Reranker, Guard, ASR, TTS) |
+  | MIT (upstream; **confirm in phase 4**, as the HF repo has no licence tag) | Silero VAD model (`mlx-community/silero-vad`) |
   | MIT or Apache-2.0 | sqlite-vec |
   | BSD-3 / Apache-2.0 | pypdfium2 |
   | Apache-2.0 (dev only) | playwright (responsive UI tests; uses the installed Chrome) |
