@@ -21,7 +21,9 @@ group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*
 4. **Phase 4:** Voice input pipeline, plus Memory policy (evictable voice models). CLI only; the
    Chat page gets voice in whichever of phases 4 and 5 merges second.
 5. **Phase 5:** Streamlit UI incl. Theme and Responsive layout.
-6. **Once, at any point:** Repository setup (after first push).
+6. **Phase 6:** Streamlit UI → Answer highlighting, Model interfaces (`locate`, `Box`),
+   Evaluation (regions, `--locate`).
+7. **Once, at any point:** Repository setup (after first push).
 
 **Workflow for each phase:**
 
@@ -60,7 +62,7 @@ that share the same `qwn.*` core.
 | Security | Source text is untrusted data, fenced and labelled in the prompt; injection cases in eval. Models pinned to revision SHAs, fetched by `qwn models pull`, then `HF_HUB_OFFLINE=1`. |
 | Libraries | `mlx-vlm` for generation, embedding **and** reranking; `mlx-lm` for Guard; `mlx-embeddings` as fallback (**GPL-3.0**: needs a license decision before it's adopted). PDF via **pypdfium2** (not PyMuPDF, which is AGPL). |
 | License | **Apache-2.0** (`LICENSE` + `license`/`license-files` in `pyproject.toml`, already applied). Runtime dependencies must be permissive (see License). |
-| Index | SQLite + `sqlite-vec` in one file (`index/qwn.db`, WAL), tables `documents`/`chunks`/`vec_chunks`/`meta`; each file re-indexed in one transaction, keyed by content hash. |
+| Index | SQLite + `sqlite-vec` in one file (`index/qwn.db`, WAL), tables `documents`/`chunks`/`vec_chunks`/`chunks_fts`/`meta`; hybrid search (vector + FTS5 keyword, fused with RRF); optional scope to chosen documents/folders; each file re-indexed in one transaction, keyed by content hash. |
 | Page renders | WebP q85 at 150 dpi on disk under `index/pages/`. |
 | UI | Streamlit app with 3 pages: Chat, Library, System. |
 | UI theme | "Paper & Ink" / "Lamplight": warm paper + deep-teal accent, complementary light/dark (same hues, only lightness changes), built-in fonts, localhost-only server, viewer toolbar. Validated for contrast, colour-blindness and by rendering. |
@@ -118,8 +120,10 @@ INGEST   PDF ─► pypdfium2 ─► page WebP (150 dpi) + page text ─┐
          image / screenshot ─► normalised WebP copy ─────────┼─► Embedder ─► 1024-d, L2-norm ─► SQLite + sqlite-vec
          .md / .txt ─► ~800-token chunks (heading-aware) ───┘
 
-QUERY    question ─► Guard.check_prompt ─► Embedder(is_query) ─► top_k=50
+QUERY    question ─► Guard.check_prompt ─┬─► Embedder(is_query) ─► vector top_k=50 ─┐
+                                         └─► FTS5 keyword (bm25) top fts_k=50 ──────┴─► RRF fuse ─► top_k=50
                     ─► Reranker ─► rerank_k=5 ─► Generator (≤ max_images page images + text)
+         (optional scope: --in PATH / Chat "Search in" limits both searches to those documents)
                     ─► answer with [S#] citations ─► Guard.check_response ─► rendered "[file p.N]"
 ```
 
@@ -129,7 +133,15 @@ QUERY    question ─► Guard.check_prompt ─► Embedder(is_query) ─► top
 |---|---|---|
 | `pdf_page` | `Item(image_path=page.webp, text=page_text[:2000])`, i.e. image **and** text in one input. A page with no text layer sends the image alone | The image carries layout, charts and scans; the text layer makes exact terms (names, numbers) searchable. Qwen3-VL-Embedding accepts both in one input |
 | `image` | `Item(image_path=…)` | No text layer; the visual path does the work |
-| `text` | `Item(text=chunk)` | Markdown/text chunks |
+| `text` | `Item(text=header + chunk)` (see Contextual chunk headers below) | Markdown/text chunks |
+
+**Contextual chunk headers (phase 1, md/txt):** a chunk cut from the middle of a document loses
+its context ("Included in all plans" — which plans?). So each md/txt chunk is embedded as
+`"{file name} › {heading path}\n\n{chunk}"`, e.g. `pricing.md › Enterprise › SSO`. Only the
+embedder and reranker see the prefix: `chunks.text` stores the chunk alone (for FTS and the
+`<source>` excerpt), and `chunks.heading_path` stores the path (also used by eval's `heading`
+match and shown on source cards). `chunk_context=False` turns it off, and phase 1 reports
+`markdown` recall@5 with and without it; it's in `ingest_hash`, since it changes the vectors.
 
 The 2000-character cap keeps a dense page from crowding out the image in the embedder's context.
 **Phase 1 ablation:** run the public eval once with `pdf_page` embedded as image-only and once as
@@ -191,6 +203,15 @@ class Generator(Protocol):
     model_id: str
     def answer(self, question: str, sources: list[Source], *, greedy: bool = False) -> Answer: ...
     # greedy=True: temperature 0, for reproducible eval runs
+    def locate(self, image_path: Path, claim: str) -> "Box | None": ...
+    # phase 6: region of the page that supports `claim`; None if the model can't say (greedy)
+
+@dataclass(frozen=True)
+class Box:                         # phase 6; relative coordinates, 0..1, origin top-left
+    x0: float
+    y0: float
+    x1: float
+    y1: float
 
 class Guard(Protocol):
     model_id: str
@@ -336,6 +357,7 @@ CREATE TABLE chunks (
   kind        TEXT NOT NULL CHECK (kind IN ('pdf_page','image','text')),
   page        INTEGER,                    -- 1-based for PDF pages, else NULL
   chunk_idx   INTEGER NOT NULL,           -- 0 for pages/images
+  heading_path TEXT NOT NULL DEFAULT '',  -- md/txt: "Pricing › Enterprise › SSO"; '' otherwise
   text        TEXT NOT NULL DEFAULT '',   -- page text / chunk text / '' for images
   image_path  TEXT                        -- index_dir/pages/<doc_id>/<page>.webp
 );
@@ -346,7 +368,16 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[1024]);   -- rowid = 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 -- keys: embed_model, embed_revision, embed_dim, ingest_hash, schema_version
 
--- Later (hybrid search): CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='rowid');
+-- Keyword index for hybrid search (phase 1). External content: the text lives once, in chunks.
+CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='rowid',
+                                           tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+  INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text); END;
+CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+  INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.rowid, old.text); END;
+CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
+  INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+  INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text); END;
 ```
 
 - **PDF text**: `page.get_textpage().get_text_range()` (pypdfium2). Checked on 2026-10-04 with a
@@ -384,13 +415,41 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   - `embed_revision` is the pinned SHA from `models_lock.py`. A repo name alone isn't enough:
     `qwn models pull --update` can change the vectors under the same name.
   - `ingest_hash` hashes every setting that changes what's stored: `pdf_dpi`, `max_pixels`,
-    `chunk_tokens`, `pdf_embed`, `embed_dim`. Without it, changing `pdf_dpi` would silently mix
-    old and new chunks in one index.
+    `chunk_tokens`, `chunk_context`, `pdf_embed`, `embed_dim`. Without it, changing `pdf_dpi`
+    would silently mix old and new chunks in one index.
   - Eval's `corpus_hash` includes `embed_revision` and `ingest_hash`, so baselines notice too.
-- **Search**:
-  `SELECT rowid, distance FROM vec_chunks WHERE embedding MATCH ? AND k = ?` (brute-force KNN),
-  then join `chunks`. Vectors are L2-normalised, so the default L2 distance ranks exactly like
-  cosine. Report `cosine = 1 - distance**2 / 2`. Brute force is fine to ~100k chunks.
+- **Search** (hybrid by default; `hybrid=False` / `--no-hybrid` gives vector only):
+  1. **Vector:** `SELECT rowid, distance FROM vec_chunks WHERE embedding MATCH ? AND k = ?`
+     (brute-force KNN, `k = top_k`), then join `chunks`. Vectors are L2-normalised, so the
+     default L2 distance ranks exactly like cosine. Report `cosine = 1 - distance**2 / 2`. Brute
+     force is fine to ~100k chunks.
+  2. **Keyword:** `SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts)
+     LIMIT fts_k`. The question is turned into an FTS query by `index.fts_query`: split into
+     words, drop the ones under 2 characters, wrap each in double quotes (doubling any `"` inside)
+     and join with `OR`. Quoting every term means FTS operators in a question (`NEAR`, `*`, `-`,
+     `:`) are treated as plain words and can never cause a syntax error. A question with no usable
+     words skips this step.
+  3. **Fuse** with reciprocal rank fusion: `score = Σ 1 / (rrf_k + rank)` over the lists a chunk
+     appears in (`rrf_k = 60`, ranks from 1), keep the best `top_k`, and pass them to the
+     reranker. Image chunks have no text, so they come only from the vector list; that's expected.
+  - **Why:** embeddings match meaning well but exact strings (codes, IDs, names, figures like
+    "PO-48213" or "18.4M") poorly, and personal documents are full of them. FTS5 is built into
+    SQLite: no model, no new dependency, and the text isn't stored twice.
+  - **Deletes:** the `chunks_ad` trigger keeps `chunks_fts` in step, including rows removed by
+    `ON DELETE CASCADE` (SQLite fires row triggers for cascaded deletes; an integration test
+    checks it). Unlike `vec_chunks`, no explicit delete is needed.
+- **Scoped search** (phase 2; `--in PATH` on `search`/`ask`, "Search in" on the Chat page): the
+  scope is a list of files and folders, resolved to the `doc_id`s whose `path` equals a file or
+  starts with a folder + `/`. An empty result is an error ("nothing indexed under …"), not an empty
+  answer.
+  - **Vector side:** filtering a `MATCH … AND k = ?` query *after* the KNN would return fewer than
+    `k` hits when out-of-scope chunks are nearer. So a scoped query computes exact distances over
+    the scope only: `SELECT rowid, vec_distance_l2(embedding, ?) AS distance FROM vec_chunks WHERE
+    rowid IN (SELECT rowid FROM chunks WHERE doc_id IN (…)) ORDER BY distance LIMIT ?`. Same
+    brute-force cost as the unscoped search, never more.
+  - **Keyword side:** join `chunks_fts` to `chunks` and filter on `doc_id`.
+  - Phase 2 may switch the vector side to a `vec0` metadata column if the installed sqlite-vec
+    supports filtering by `doc_id` inside KNN and it's faster; only `index.py` changes.
 - **Maintenance**: run `VACUUM` after `--reindex` or a large `--prune`.
 - **Fallback** (if sqlite-vec is a problem): store the embedding as a float32 BLOB column on
   `chunks` and search with an in-memory numpy matrix. Reload it when `meta.index_version` (bumped
@@ -400,10 +459,11 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 ```
 qwn ingest PATH... [--reindex] [--prune] [--dry-run]
-qwn search QUERY [--rerank-k 5] [--no-rerank] [--json]   # shows rerank_k results
-qwn ask QUESTION [--sources] [--no-guard] [--json]
+qwn search QUERY [--rerank-k 5] [--no-rerank] [--no-hybrid] [--in PATH]... [--json]   # shows rerank_k results
+qwn ask QUESTION [--sources] [--no-guard] [--in PATH]... [--json]   # --in: only these files/folders (repeatable)
 qwn ask --audio IN.wav [--speak OUT.wav]   # phase 4: voice question in, optional spoken answer out
-qwn eval [--set public|private (default: public)] [--no-rerank] [--no-generate] [--guard] [--update-baseline] [--force]
+qwn eval [--set public|private (default: public)] [--no-rerank] [--no-hybrid] [--no-generate] [--guard] [--locate] [--update-baseline] [--force]
+qwn eval review       # phase 5: turn 👍/👎 drafts from the Chat page into private eval queries
 qwn status            # index stats, embed model/dim, loaded models, MLX memory, model cache state
 qwn models pull [--voice] [--update]   # download every model at its pinned revision (the only
                             # command that needs the network); --update re-pins to the current
@@ -426,6 +486,13 @@ around `qwn.models`. The UI has no model or retrieval logic of its own.
   - Sources appear as compact **cards** (96 px page thumbnail, `file · p.N`, rerank-score badge,
     "Open page" button). The button opens the full page in an `st.dialog` (see Responsive layout).
   - Guard results: Controversial → `st.warning`, Unsafe → a blocked-message bubble.
+  - **Search in** (scope): an `st.multiselect` above the input listing indexed folders and files
+    (folders first). Empty means everything. The choice stays for the session and is shown on
+    each answer ("Searched in: 2 folders"), so a scoped answer is never mistaken for a full one.
+  - **Rating:** `st.feedback("thumbs")` under each answer (not on blocked or abstained-by-Guard
+    answers). A click appends a draft to `eval/private/candidates.jsonl`; see Evaluation → Growing
+    the private set. The rating is stored in `st.session_state` with the message so a rerun doesn't
+    write it twice; changing your mind rewrites that draft.
 - **Library**
   - `st.file_uploader` (pdf/png/jpg/jpeg/webp/md/txt) saves files into `data_dir`, then ingests
     them with `st.progress`. Name clash: identical content is "already in your library"; different
@@ -439,6 +506,31 @@ around `qwn.models`. The UI has no model or retrieval logic of its own.
   - Sliders for `top_k`, `rerank_k`, `max_images`, plus guard toggles. Values live in
     `st.session_state` and are applied per request (they don't persist).
 - **State**: `st.session_state.messages`, `st.session_state.settings`. Single local user.
+
+### Answer highlighting (phase 6)
+
+When you open a cited page, the dialog outlines the passage that supports the answer, so you can
+check a claim without reading the whole page.
+
+- **What's located:** for source `S#`, the answer sentences that cite `[S#]` (split by
+  `qwn.answer`), joined as the `claim`. Only page and image sources; text chunks have no image.
+- **How:** `Generator.locate(image_path, claim)` asks VL-8B, greedily, for the region of the page
+  that supports the claim, as JSON with a `bbox_2d`. Qwen3-VL reports boxes on a relative
+  **0–1000** scale (Qwen2.5-VL used absolute pixels; check in phase 6). The adapter converts to
+  `Box` (0..1).
+- **Lazy:** it runs only when you click "Open page" (one extra generation, ~1–3 s, under the MLX
+  lock), never for every answer. The result is cached in `st.session_state` per (message, source).
+- **Strict parsing:** the model's output is untrusted (the page may contain injected text). Accept
+  only one well-formed box inside the page, with non-zero area and covering ≤ 60% of the page;
+  otherwise return `None`. The worst case is a wrong outline, never an action.
+- **Drawing:** Pillow, in `adapters/images.py`, draws the outline on a copy of the render in the
+  theme's primary teal, with the area outside slightly dimmed. Under the image, an
+  `st.caption(":material/highlight: Supporting passage (approximate)")`; when `locate` returns
+  `None`, "Couldn't pinpoint the passage" and the plain page. No custom CSS.
+- **Eval (`qwn eval --locate`):** `build_corpus.py` knows where it drew each fact, so public
+  queries can carry `"region": [x0, y0, x1, y1]` (0..1). `locate_hit` = the box contains the
+  centre of the expected region; also reported: the share of `None` / rejected boxes. Text PDFs
+  from the fixture writer get regions too (one known line per page).
 
 ### Voice input pipeline (phase 4)
 
@@ -722,6 +814,9 @@ class Settings(BaseSettings):
     guard_model: str = "mlx-community/Qwen3Guard-Gen-0.6B-MLX"
     embed_dim: int = 1024
     top_k: int = 50
+    hybrid: bool = True                  # vector + FTS5 keyword search, fused with RRF
+    fts_k: int = 50
+    rrf_k: int = 60
     rerank_k: int = 5
     max_images: int = 4
     max_pixels: int = 1_310_720          # 1280 * 32 * 32 (Qwen3-VL: 32 px per visual token)
@@ -730,6 +825,8 @@ class Settings(BaseSettings):
     max_tokens: int = 1024
     pdf_dpi: int = 150
     chunk_tokens: int = 800
+    chunk_context: bool = True           # "file › heading path" prefix on md/txt chunks
+    warm_load: bool = True               # qwn ui loads the core models in the background at start
     guard_enabled: bool = True
     controversial: Literal["warn", "block"] = "warn"
     # phase 4 (voice)
@@ -765,9 +862,17 @@ it ad hoc. MLX APIs below were checked against `mlx` 0.32.3 on 2026-10-04: `mx.d
 
 | Group | Models | Policy |
 |---|---|---|
-| **Core** | Generator, Embedder, Reranker, Guard (~12.4 GB) | Loaded on first use, then **kept loaded** for the process |
+| **Core** | Generator, Embedder, Reranker, Guard (~12.4 GB) | CLI: loaded on first use. UI: **warm-loaded** at start (below). Then **kept loaded** for the process |
 | **Voice** | ASR, TTS (~5.4 GB), VAD (2 MB) | Loaded on first voice use; **evictable**: unloaded after `voice_idle_minutes` (default 10) or when memory is needed |
 
+- **Warm load (UI, phase 5):** with `warm_load=True`, `qwn ui` starts one background thread that
+  loads the core models through the Registry (memory check included) in pipeline order: Guard,
+  Embedder, Reranker, Generator. Otherwise the first question would wait 10–20 s for ~13 GB of
+  weights. The thread is owned by an `st.cache_resource` object, so reruns and extra tabs don't
+  start a second one. The sidebar status line shows "Loading models (2/4)…" until done. A question
+  asked meanwhile simply waits for the model it needs, as with the MLX lock. A failed load
+  (e.g. `InsufficientMemory`) shows on the System page and falls back to loading on first use.
+  CLI commands stay lazy: `qwn search` shouldn't pay for the generator.
 - **Check before loading:** the registry knows each model's expected size (from the Stack table)
   and checks `active + expected + memory_headroom_gb ≤ max_recommended_working_set_size` (25.0 GiB
   here). If the check fails, it first evicts voice models (drop references, `gc.collect()`,
@@ -912,13 +1017,22 @@ tests/fakes.py       FakeEmbedder (hash-seeded unit vectors), FakeReranker (word
                      FakeGenerator (cites S1), FakeGuard (keyword rules)
 tests/unit/          chunking, IDs/hashing, guard regex parsing (incl. unparseable),
                      citation parsing (incl. invented labels), prompt building,
-                     MRL truncate + renorm, settings precedence
+                     MRL truncate + renorm, settings precedence,
+                     fts_query escaping (quotes, NEAR, *, -, :, empty), RRF fusion order,
+                     scope resolution (file vs folder prefix, "nothing indexed under …"),
+                     eval review accept/edit/unanswerable/discard (Typer CliRunner),
+                     contextual header built from file + heading path (not stored in chunks.text),
+                     warm load: one thread across reruns, failure falls back to lazy,
+                     bbox parsing: 0–1000 → Box, malformed/out-of-page/oversized → None
 tests/integration/   tmp_path SQLite index (real sqlite-vec); 2-page text PDF from `tests/pdf_fixture.py` (dependency-free writer, see License); PIL image; markdown file
                      ingest → re-ingest skips → modify one file → only it re-indexes → --prune;
                      crash between embed and commit leaves the old version intact;
                      moved file → path updated, no re-embed; duplicate copies → one search hit;
                      changed pdf_dpi or embed revision → rebuild trigger names the key;
-                     upload name clash → "name (2)"; Delete never removes files outside data_dir
+                     upload name clash → "name (2)"; Delete never removes files outside data_dir;
+                     an exact code the fake embedder misses is found by FTS; cascaded document
+                     delete empties chunks_fts; scoped search returns k in-scope hits even when
+                     out-of-scope chunks are nearer
 tests/ui/            streamlit.testing.v1.AppTest smoke test per page, with fakes injected
                      + test_responsive.py (slow): Playwright matrix of 6 widths × light/dark,
                        no horizontal overflow, Chat width ≤ 736 px, sidebar collapse, dialog fit
@@ -948,11 +1062,31 @@ isn't in CI. The scoring code itself is unit-tested with fakes.
 | Documents | Synthetic, generated by `eval/public/build_corpus.py` into `data/eval-public/` (gitignored), deterministic from a fixed seed | Your real documents in `data_dir` |
 | Questions | `eval/public/queries.jsonl`, written to match the generator's known facts | `eval/private/queries.jsonl`, hand-written by you |
 | Purpose | Regression testing anyone can reproduce; exit criteria for phases 1–3 | True quality on what you actually use |
-| Size | ~60 answerable (**≥ 10 each** for `scan`, `chart`, `table`, which have their own thresholds) + ~10 unanswerable + 3 injection | Start at 20 and grow to ~50 |
+| Size | ~60 answerable (**≥ 10 each** for `scan`, `chart`, `table` and `exact`, which have their own thresholds) + ~10 unanswerable + 3 injection | Start at 20; grow it from Chat ratings with `qwn eval review` (see below) |
 
 **Privacy:** questions, file names and expected pages reveal what your documents contain, and the
 repo is public. So private questions, results and baselines never leave `eval/private/`
 (gitignored). `eval/public/` contains only generated, licence-free material.
+
+**Growing the private set (phase 5).** Writing questions with expected pages by hand is tedious, so
+the private set would otherwise stall near 20. Daily use produces them instead:
+
+- **Drafts:** each 👍/👎 in Chat appends one line to `eval/private/candidates.jsonl` (gitignored
+  with the rest of `eval/private/`, never logged):
+  `{"draft_id", "created", "query", "rating": "up"|"down", "scope", "cited": [{"path", "page"|"heading"}], "abstained"}`.
+  The answer text isn't stored; review shows the cited pages, which is what an eval query needs.
+- **`qwn eval review`** walks the drafts one at a time, showing the question, rating and cited
+  pages, and offers:
+  - **accept**: 👍 drafts become a query with `expected` = the cited items;
+  - **edit**: change `expected`, add `answer_contains` and `tags` (👎 drafts need this, since the
+    citations were wrong);
+  - **unanswerable**: `expected: []`, for questions the documents really can't answer;
+  - **skip** (keep for later) / **discard**.
+  Accepted queries get the next `priv-NNN` id and are appended to `queries.jsonl`; the draft is
+  removed. This changes `eval_set_hash`, so the report says to re-run `qwn eval --set private
+  --update-baseline` once you're done.
+- **Why review instead of auto-adding:** a 👍 only means the answer looked right. A person still
+  confirms the expected pages, so eval measures truth rather than the model agreeing with itself.
 
 **The public corpus generator** (`build_corpus.py`, no new dependencies) writes about 12 documents
 with known facts on known pages, one group for each kind of content qwn has to handle:
@@ -964,6 +1098,10 @@ with known facts on known pages, one group for each kind of content qwn has to h
 - `table`: PNG tables.
 - `screenshot`: UI-like PNG panels.
 - `markdown`: markdown files with headings.
+- `exact`: facts identified by an exact string: order and invoice codes (`PO-48213`), part
+  numbers, people's names, precise figures. They're spread across the other kinds of content, and
+  the questions name the string ("What did PO-48213 cost?"). This is the group hybrid search is
+  for.
 
 Text in images uses `ImageFont.load_default(size=...)` (Pillow's built-in scalable font). Each fact
 is unique and checkable (e.g. "Q3 APAC revenue: 18.4M"), so the questions have exact expected pages
@@ -991,10 +1129,13 @@ hash in every result confirms.
   absolute path as given) equals the chunk's absolute `documents.path`. `qwn eval` fails up
   front, listing them, if any expected path isn't in the index, so a typo can't pass as recall 0.
 - `page` is 1-based and used for PDFs. Images match on `path` alone.
-- Markdown and text match on `path`, optionally narrowed by `heading` (the chunk's nearest heading).
+- Markdown and text match on `path`, optionally narrowed by `heading`, which matches the last
+  element of the chunk's `heading_path` (its nearest heading).
 - `expected: []` means **unanswerable**: the right behaviour is to abstain.
 - `tags` drive the per-tag breakdown: `text`, `scan`, `chart`, `table`, `screenshot`, `markdown`,
-  `unanswerable`, `injection`.
+  `exact`, `unanswerable`, `injection`. A query can carry more than one (`exact` usually sits on
+  top of a content tag).
+- `in` (optional): a scope, as a list of paths, for queries that test scoped search.
 - `answer_must_not_contain` (optional): strings that must **not** appear in the answer, used by
   `injection` queries (see Security).
 
@@ -1005,6 +1146,7 @@ hash in every result confirms.
 | Retrieval (answerable only) | recall@1/5/10 | A correct item is in the top k |
 | | MRR | Mean of 1 / rank of the first correct item (0 if none in the top 50) |
 | | rerank effect | Per query: did reranking move the first correct item up (win), down (loss) or not at all (tie)? Reported as W/L/T |
+| | hybrid effect | Same W/L/T, comparing hybrid with vector-only retrieval (both before reranking), plus recall@5 for each |
 | Answer (generation on, **greedy**) | citation_hit | Answerable: cites ≥ 1 expected item |
 | | answer_contains | Answerable with `answer_contains`: every string appears (case-insensitive, numbers normalised) |
 | | abstention | Unanswerable: abstained correctly (no citations + `ABSTAIN_TEXT`). Also **false abstention** on answerable questions |
@@ -1061,9 +1203,10 @@ Each run writes `eval/results/<UTC timestamp>-<set>.json` (gitignored):
 
 | Phase | Criterion |
 |---|---|
-| 1 Retrieval | recall@5 ≥ 0.80 overall **and** ≥ 0.70 for each of `scan` / `chart` / `table`; rerank W/L/T shows more wins than losses and MRR doesn't drop |
+| 1 Retrieval | recall@5 ≥ 0.80 overall **and** ≥ 0.70 for each of `scan` / `chart` / `table` / `exact`; rerank W/L/T shows more wins than losses and MRR doesn't drop; hybrid's recall@5 is higher than vector-only on `exact` and no lower overall |
 | 2 Answering | citation_hit ≥ 0.80; answer_contains ≥ 0.80; abstention ≥ 0.75 on unanswerable; false abstention ≤ 0.10; invented citations = 0; **all `injection` queries pass** |
 | 3 Safety | false-allow = 0 of 10; false-block ≤ 1 of 20 |
+| 6 Highlighting | `locate_hit` ≥ 0.70 on answerable queries with a `region`; rejected or `None` boxes ≤ 0.15 |
 
 Each criterion is checked against the point estimate, and the report also shows the interval. When
 the interval's lower bound is under the threshold, the PR notes that the result is borderline.
@@ -1073,16 +1216,18 @@ the interval's lower bound is under the threshold, the PR notes that the result 
 | # | Phase | Deliverable | Exit criterion |
 |---|---|---|---|
 | 0 | Env + checks | **Install and test the Claude Code hooks first**; minimal `config.py`; `models_lock.py` + `qwn models pull/status` (point `[project.scripts] qwn` at `qwn.cli:app`); README "Models and licenses" section; `scripts/make_embedding_reference.py` + fixture; add `ci.yml`, `release.yml`, `[tool.uv] required-version` and `tests/hooks/` (`extend-exclude` for `*.md` is already done); add runtime deps; `interfaces.py`; adapters; `scripts/smoke_test.py`; `tests/slow/` contract tests | `uv lock` resolves; the 4 core models load together and pass the Registry memory check (≈13 GB active); works offline after `qwn models pull`; VL-8B ≥ 35 tok/s; slow tests pass (or the fallback library is adopted) |
-| 1 | Retrieval | `config`, `ingest`, `index` (SQLite schema + sqlite-vec), `retrieve`; `qwn ingest/search/status`; `eval/public/build_corpus.py` + public queries; `qwn eval --no-generate`; unit + integration tests | Evaluation → Exit criteria, phase 1 (public set) |
-| 2 | Answering | `prompts` (incl. `ABSTAIN_TEXT`), `answer`; `qwn ask`; full `qwn eval` (greedy) | Evaluation → Exit criteria, phase 2 |
+| 1 | Retrieval | `config`, `ingest`, `index` (SQLite schema + sqlite-vec + FTS5), `retrieve` (hybrid: vector + keyword, RRF); `qwn ingest/search/status`; `eval/public/build_corpus.py` + public queries; `qwn eval --no-generate`; unit + integration tests | Evaluation → Exit criteria, phase 1 (public set) |
+| 2 | Answering | `prompts` (incl. `ABSTAIN_TEXT`), `answer`; `qwn ask`; scoped search (`--in PATH` on `search`/`ask`); full `qwn eval` (greedy) | Evaluation → Exit criteria, phase 2 |
 | 3 | Safety | `guard` wired into ask/chat; controversial policy; `eval/public/guard.jsonl`; `qwn eval --guard` | Evaluation → Exit criteria, phase 3; unparseable output → warn |
 | 4 | Voice | ASR/TTS/VAD adapters (mlx-audio already installed via mlx-vlm); `qwn.voice` pipeline (decode, resample, VAD trim/reject/split); `qwn ask --audio IN.wav [--speak OUT.wav]` | Per-stage targets (see Voice input pipeline → Latency): end of speech → transcript ≤ 2 s for a 10 s question; TTS real-time factor ≤ 0.5; silent or noise-only recordings are rejected before ASR; VAD round-trip slow test passes |
-| 5 | Streamlit UI | 3-page app; `.streamlit/config.toml`; `uv add --dev playwright`; AppTest smoke tests + `test_responsive.py`; `qwn ui`; voice in Chat (`st.audio_input` + `st.audio` playback) if phase 4 is merged | Full flow usable from the browser |
+| 5 | Streamlit UI | 3-page app; `.streamlit/config.toml`; `uv add --dev playwright`; AppTest smoke tests + `test_responsive.py`; `qwn ui` with background warm load of the core models; Chat "Search in" scope picker; 👍/👎 ratings → `eval/private/candidates.jsonl` + `qwn eval review`; voice in Chat (`st.audio_input` + `st.audio` playback) if phase 4 is merged | Full flow usable from the browser; a rating round-trips into `queries.jsonl` via `qwn eval review` |
+| 6 | Highlighting | `Generator.locate` + `Box`; strict bbox parsing; outline drawing in `adapters/images.py`; "Open page" dialog shows the highlight; `region` in public queries + `qwn eval --locate` | Evaluation → Exit criteria, phase 6 |
 
 Phase 5 may begin once phase 2 is done; the Chat page doesn't need Guard or voice. Phase 4 has no
 UI of its own: it ships the voice pipeline behind the CLI, and whichever of phases 4 and 5 merges
 second wires voice into the Chat page. Phase 2 also reports `qwn ask` latency (p50/p95, per stage)
-on the public set, and its PR proposes a latency target from that measurement.
+on the public set, and its PR proposes a latency target from that measurement. Phase 6 needs
+phase 5 (the source dialog it draws in).
 
 ## Repo layout (target)
 
@@ -1448,7 +1593,7 @@ job.
   hand-edit the version: `uv.lock` records it, so `uv sync --locked` in CI fails on a hand-edit
   (H2 also blocks `uv.lock` edits).
 - **Policy: each completed phase is a minor release.** Phase 0 → `0.1.0` (the current version, not
-  yet tagged), phase 1 → `0.2.0`, … phase 5 → `0.6.0`, then `1.0.0` once you use it daily. Fixes
+  yet tagged), phase 1 → `0.2.0`, … phase 6 → `0.7.0`, then `1.0.0` once you use it daily. Fixes
   between phases → patch. **Phase 0 does not bump:** its merge releases the existing `0.1.0`.
   Bumping (`uv version --bump minor`) starts with phase 1.
 - **Flow:** bump on the phase branch → PR (CI) → merge to `main` → `release.yml` → tag `vX.Y.Z` +
