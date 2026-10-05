@@ -20,7 +20,8 @@ group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*
    Security → Prompt injection, Testing, Evaluation.
 4. **Phase 4:** Voice input pipeline, plus Memory policy (evictable voice models). CLI only; the
    Chat page gets voice in whichever of phases 4 and 5 merges second.
-5. **Phase 5:** Streamlit UI incl. Theme and Responsive layout.
+5. **Phase 5:** Streamlit UI incl. Theme and Responsive layout; Memory policy (warm load); Data
+   model → Search (scoped search); Evaluation → Growing the private set.
 6. **Phase 6:** Streamlit UI → Answer highlighting, Model interfaces (`locate`, `Box`),
    Evaluation (regions, `--locate`).
 7. **Once, at any point:** Repository setup (after first push).
@@ -410,6 +411,11 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
   WebP q85.
 - **Removed files**: `qwn ingest --prune` deletes rows and render folders for files that no longer
   exist.
+  - **Unmounted drives are not "deleted":** a document under `/Volumes/<name>/…` is skipped when
+    `/Volumes/<name>` isn't mounted, and the summary says "N files on <name> skipped (not
+    mounted)". Same for any missing parent folder you passed to `qwn ingest` earlier.
+  - It prints what it will remove (count + first 10 paths) and asks for confirmation; `--yes`
+    skips the prompt for scripts. `--dry-run` only prints.
 - **Rebuild trigger**: if any `meta` key differs from the current settings, stop with a message
   naming the key and suggesting `--reindex` (drops and recreates all tables and `pages/`).
   - `embed_revision` is the pinned SHA from `models_lock.py`. A repo name alone isn't enough:
@@ -458,11 +464,12 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
 ## CLI (`src/qwn/cli.py`, Typer, entry point `qwn`)
 
 ```
-qwn ingest PATH... [--reindex] [--prune] [--dry-run]
+qwn ingest PATH... [--reindex] [--prune [--yes]] [--dry-run]
 qwn search QUERY [--rerank-k 5] [--no-rerank] [--no-hybrid] [--in PATH]... [--json]   # shows rerank_k results
 qwn ask QUESTION [--sources] [--no-guard] [--in PATH]... [--json]   # --in: only these files/folders (repeatable)
 qwn ask --audio IN.wav [--speak OUT.wav]   # phase 4: voice question in, optional spoken answer out
-qwn eval [--set public|private (default: public)] [--no-rerank] [--no-hybrid] [--no-generate] [--guard] [--locate] [--update-baseline] [--force]
+                                           # (QUESTION is optional; give exactly one of QUESTION / --audio)
+qwn eval [--set public|private (default: public)] [--no-rerank] [--no-hybrid] [--no-generate] [--guard] [--locate] [--update-baseline] [--force] [--clean]
 qwn eval review       # phase 5: turn 👍/👎 drafts from the Chat page into private eval queries
 qwn status            # index stats, embed model/dim, loaded models, MLX memory, model cache state
 qwn models pull [--voice] [--update]   # download every model at its pinned revision (the only
@@ -489,10 +496,12 @@ around `qwn.models`. The UI has no model or retrieval logic of its own.
   - **Search in** (scope): an `st.multiselect` above the input listing indexed folders and files
     (folders first). Empty means everything. The choice stays for the session and is shown on
     each answer ("Searched in: 2 folders"), so a scoped answer is never mistaken for a full one.
-  - **Rating:** `st.feedback("thumbs")` under each answer (not on blocked or abstained-by-Guard
-    answers). A click appends a draft to `eval/private/candidates.jsonl`; see Evaluation → Growing
-    the private set. The rating is stored in `st.session_state` with the message so a rerun doesn't
-    write it twice; changing your mind rewrites that draft.
+  - **Rating:** `st.feedback("thumbs")` under each answer, except answers blocked by Guard.
+    "I couldn't find this" answers can be rated too: a 👍 there becomes an `unanswerable` draft,
+    which is exactly the kind of question the eval needs. A click appends a draft to
+    `eval/private/candidates.jsonl`; see Evaluation → Growing the private set. The rating is
+    stored in `st.session_state` with the message so a rerun doesn't write it twice; changing
+    your mind rewrites that draft.
 - **Library**
   - `st.file_uploader` (pdf/png/jpg/jpeg/webp/md/txt) saves files into `data_dir`, then ingests
     them with `st.progress`. Name clash: identical content is "already in your library"; different
@@ -852,6 +861,14 @@ class Settings(BaseSettings):
 Precedence: CLI flags / UI sliders (passed as init kwargs) > `QWN_*` env > `qwn.toml` > defaults.
 Commit an example `qwn.example.toml`; `qwn.toml` is gitignored.
 
+**Home directory (where relative paths point):** relative paths (`data_dir`, `index_dir`, `eval/`,
+`qwn.toml` itself) resolve against the qwn home, never the current directory, so running `qwn` from
+another folder can't silently start a new, empty index there. The home is `QWN_HOME` if set,
+otherwise the nearest folder at or above the current directory that contains `qwn.toml` or
+`qwn.example.toml` (the repo has the latter). If neither is found, every command except
+`--help` stops with "Run qwn from its folder or set QWN_HOME". `qwn status` and the System page
+print the home and the resolved paths. `log_dir` is absolute and unaffected.
+
 ## Runtime robustness
 
 What happens when things go wrong on a 32 GB Mac, decided up front so phase code doesn't invent
@@ -880,9 +897,18 @@ it ad hoc. MLX APIs below were checked against `mlx` 0.32.3 on 2026-10-04: `mx.d
   numbers. The UI shows an `st.error` suggesting closing other apps; it never loads anyway and
   risks swapping.
 - **One process owns the models.** `qwn ui` and CLI commands that need models (`ask`, `search`,
-  `eval`, `ingest`) are separate processes. Running both at once would load two copies (~25 GB),
-  so a CLI command that needs models checks memory the same way and refuses with a clear message
-  while the UI holds the core models.
+  `eval`, `ingest`) are separate processes. Running both at once would load two copies (~25 GB).
+  The memory check above can't catch this: MLX's counters (`mx.get_active_memory()`) only see the
+  current process, so a CLI started beside the UI sees 0 GB in use. Instead:
+  - Before loading its first model, a process takes an exclusive, non-blocking
+    `fcntl.flock` on `index_dir/models.lock` and holds it until exit. The OS releases it if the
+    process crashes, so a stale lock can't block you (unlike a PID file).
+  - If the lock is taken, the command stops before loading anything: "Models are in use by
+    another qwn process (pid N, probably `qwn ui`). Close it, or use the UI." The pid is written
+    into the file for this message only; the lock, not the pid, decides.
+  - `qwn ui` takes the lock at start (it warm-loads anyway). Commands that load no model
+    (`status`, `models status/pull`, `eval review`, `ingest --dry-run`) never take it.
+  - Tests: two processes with fakes; the second gets the message; killing the first frees it.
 - `qwn status` and the System page show active, peak and recommended memory, and which models are
   loaded.
 
@@ -1077,7 +1103,8 @@ the private set would otherwise stall near 20. Daily use produces them instead:
   The answer text isn't stored; review shows the cited pages, which is what an eval query needs.
 - **`qwn eval review`** walks the drafts one at a time, showing the question, rating and cited
   pages, and offers:
-  - **accept**: 👍 drafts become a query with `expected` = the cited items;
+  - **accept**: 👍 drafts become a query with `expected` = the cited items (`expected: []` if the
+    answer abstained), and the draft's `scope` carried over as the query's `in`;
   - **edit**: change `expected`, add `answer_contains` and `tags` (👎 drafts need this, since the
     citations were wrong);
   - **unanswerable**: `expected: []`, for questions the documents really can't answer;
@@ -1119,9 +1146,14 @@ hash in every result confirms.
 ```
 
 - **Paths are relative to the set's corpus root**, and each set has its own index:
-  - public: root `data/eval-public/`, index `index/eval-public/`. `qwn eval --set public` runs
-    `build_corpus.py` and ingests into that index if it's missing or its `corpus_hash` changed, so
-    your own documents never affect public scores;
+  - public: root `data/eval-public/`, index `index/eval-public/<ingest_hash[:8]>/`.
+    `qwn eval --set public` runs `build_corpus.py` and ingests into that index if it's missing or
+    its `corpus_hash` changed, so your own documents never affect public scores. The public index
+    is **disposable**: the rebuild trigger's "stop and suggest `--reindex`" doesn't apply to it;
+    eval rebuilds it automatically. Keying the folder by `ingest_hash` means the phase 1
+    comparisons (`pdf_embed`, `chunk_context`) each keep their own index, so switching back and
+    forth doesn't re-embed every time. (`hybrid` is a query-time setting and needs no re-index.)
+    `qwn eval --clean` deletes the variants that aren't current;
   - private: root `data_dir`, using your normal index (it measures what you actually use).
     Since `qwn ingest` indexes files in place, private queries may also use **absolute** paths
     for files outside `data_dir`.
@@ -1136,6 +1168,8 @@ hash in every result confirms.
   `exact`, `unanswerable`, `injection`. A query can carry more than one (`exact` usually sits on
   top of a content tag).
 - `in` (optional): a scope, as a list of paths, for queries that test scoped search.
+- `region` (optional, phase 6): `[x0, y0, x1, y1]` (0..1, top-left origin) where the answer sits
+  on the expected page or image; used by `qwn eval --locate`.
 - `answer_must_not_contain` (optional): strings that must **not** appear in the answer, used by
   `injection` queries (see Security).
 
@@ -1248,6 +1282,7 @@ qwn/
 │  │                        #   mlx_audio_asr.py, mlx_audio_tts.py, mlx_audio_vad.py (phase 4),
 │  │                        #   pdf.py (pypdfium2), images.py (Pillow), hub.py (huggingface_hub)
 │  ├─ prompts.py  ingest.py  index.py  retrieve.py  answer.py  guard.py  voice.py  eval.py  jobs.py
+│  ├─ logging_setup.py      # one-time logging config (see Runtime robustness → Logging)
 │  ├─ cli.py
 │  └─ ui/                   # app.py, pages/chat.py, pages/library.py, pages/system.py
 ├─ scripts/                # smoke_test.py, make_embedding_reference.py

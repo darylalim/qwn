@@ -53,5 +53,5 @@ uv version --bump minor               # one minor release per completed phase (f
 ## Layout
 
 `src/qwn/` (interfaces, config, models registry, adapters/, ingest, index, retrieve, prompts,
-answer, guard, voice, eval, cli, ui/) · `tests/` (fakes, unit, integration, ui, hooks, slow) ·
+answer, guard, voice, eval, jobs, logging_setup, cli, ui/) · `tests/` (fakes, unit, integration, ui, hooks, slow) ·
 `eval/public/` (committed) · `eval/private/` (gitignored) · `.claude/` (hooks) · `.github/workflows/`
