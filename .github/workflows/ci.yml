@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:                 # reused by release.yml as its gate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Lint, types, fast tests (macOS arm64)
+    runs-on: macos-15            # Apple Silicon
+    timeout-minutes: 15
+    env:
+      HF_HUB_OFFLINE: "1"        # no model downloads in CI; anything that tries fails fast
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10   # caches uv's package downloads automatically on GitHub runners
+        with:
+          version-file: pyproject.toml # reads [tool.uv] required-version
+
+      - name: Install (fails if uv.lock is out of date)
+        run: uv sync --locked
+
+      - name: Ruff format
+        run: uv run --frozen ruff format --check .
+
+      - name: Ruff lint
+        run: uv run --frozen ruff check --output-format=github .
+
+      - name: Type check
+        run: uv run --frozen ty check
+
+      - name: Fast tests (unit, integration, UI, hooks)
+        run: uv run --frozen pytest -m "not slow" -ra

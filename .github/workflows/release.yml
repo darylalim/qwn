@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [pyproject.toml]
+  workflow_dispatch:             # re-run a release that failed after the fix is merged
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release                 # one release at a time, never cancelled mid-way
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect version bump
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0         # need all tags
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version-file: pyproject.toml
+      - id: check
+        name: Compare pyproject version with existing tags (PEP 440)
+        run: |
+          set -euo pipefail
+          version=$(uv version --short)
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Tag $tag already exists; nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # PEP 440 comparison against every existing v* tag (git's version sort mis-orders rc tags).
+          read -r newer pre latest < <(git tag --list 'v*' | uv run --no-project --quiet --with packaging python -c '
+          import sys
+          from packaging.version import InvalidVersion, Version
+          new = Version(sys.argv[1])
+          tags = []
+          for line in sys.stdin:
+              try:
+                  tags.append(Version(line.strip().removeprefix("v")))
+              except InvalidVersion:
+                  pass
+          latest = max(tags, default=None)
+          print(str(latest is None or new > latest).lower(), str(new.is_prerelease).lower(), latest or "none")
+          ' "$version")
+          if [ "$newer" != "true" ]; then
+            echo "::error file=pyproject.toml::Version $version is not greater than the latest released v$latest"
+            exit 1
+          fi
+          { echo "release=true"; echo "version=$version"; echo "tag=$tag"; echo "prerelease=$pre"; } >> "$GITHUB_OUTPUT"
+          echo "Will release $tag (prerelease=$pre, previous: $latest)"
+
+  ci:
+    name: CI gate
+    needs: detect
+    if: needs.detect.outputs.release == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Build and publish GitHub Release
+    needs: [detect, ci]
+    if: needs.detect.outputs.release == 'true'
+    runs-on: ubuntu-latest       # pure-Python wheel (uv_build): platform-independent, cheap
+    permissions:
+      contents: write            # create tag + release; only this job can write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version-file: pyproject.toml
+      - name: Build wheel and sdist
+        run: uv build --out-dir dist
+      - name: Check artifact versions
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          ls dist
+          test -f "dist/qwn-${VERSION}-py3-none-any.whl"
+          test -f "dist/qwn-${VERSION}.tar.gz"
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          PRERELEASE: ${{ needs.detect.outputs.prerelease }}
+        run: |
+          flags=(--repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --generate-notes)
+          [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* "${flags[@]}"
