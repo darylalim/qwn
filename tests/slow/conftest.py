@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw, ImageFont
-from samples import PAGE
+from samples import CAKE, PAGE
 
 from qwn.config import Settings
 from qwn.models import Registry
@@ -29,13 +29,21 @@ def registry():
     reg.process_lock.release()
 
 
-@pytest.fixture(scope="session")
-def page_image(tmp_path_factory) -> Path:
-    img = Image.new("RGB", (1240, 1754), "white")
+def _text_image(path: Path, text: str) -> Path:
+    img = Image.new("RGB", (1240, 1754), "white")  # A4 at 150 dpi
     font = ImageFont.load_default(size=36)
     ImageDraw.Draw(img).multiline_text(
-        (100, 150), PAGE.replace(". ", ".\n"), fill="black", font=font, spacing=16
+        (100, 150), text.replace(". ", ".\n"), fill="black", font=font, spacing=16
     )
-    path = tmp_path_factory.mktemp("pages") / "page.png"
     img.save(path)
     return path
+
+
+@pytest.fixture(scope="session")
+def page_image(tmp_path_factory) -> Path:
+    return _text_image(tmp_path_factory.mktemp("pages") / "page.png", PAGE)
+
+
+@pytest.fixture(scope="session")
+def cake_image(tmp_path_factory) -> Path:
+    return _text_image(tmp_path_factory.mktemp("pages") / "cake.png", CAKE)

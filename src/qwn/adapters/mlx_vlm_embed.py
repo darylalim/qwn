@@ -47,14 +47,17 @@ class MlxVlmEmbedder:
 
     @classmethod
     def load(cls, settings: Settings) -> "MlxVlmEmbedder":
-        from mlx_vlm.embedding_loader import load_embedding_model
+        from mlx_vlm.encoder_loader import load_encoder_model
         from mlx_vlm.utils import load_processor
 
         from qwn.adapters.hub import pinned_snapshot
 
         repo = settings.embed_model
         path = pinned_snapshot(repo)
-        model = load_embedding_model(path)
+        # The checkpoint says model_type "qwen3_vl", and mlx-vlm 0.7.6's embedding loader has no
+        # remap for it, so it would build the generation model (logits, no embeddings). Ask for
+        # mlx-vlm's Qwen3-VL embedding class (last-token pooling + L2 norm) explicitly.
+        model = load_encoder_model(path, model_remapping={"qwen3_vl": "qwen3_vl_embedding"})
         processor = load_processor(path, add_detokenizer=False)
         processor.image_processor.max_pixels = settings.max_pixels
         return cls(model, processor, f"{repo}@{pinned(repo).revision}", settings.embed_dim)
@@ -75,6 +78,10 @@ class MlxVlmEmbedder:
             self.processor, messages(item, instruction), add_generation_prompt=True
         )
         images = [load_image(str(item.image_path))] if item.image_path is not None else None
+        # mlx-vlm caches rope position ids on the language model and only resets them for image
+        # inputs, so a text input after an image would reuse the image's positions. Reset always.
+        self.model.language_model._position_ids = None
+        self.model.language_model._rope_deltas = None
         inputs = prepare_inputs(
             self.processor,
             images=images,

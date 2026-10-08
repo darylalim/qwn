@@ -40,14 +40,28 @@ def test_embed_is_deterministic(registry, page_image):
     np.testing.assert_allclose(a, b, atol=1e-5)
 
 
-def test_embed_ranks_relevant_text_and_page_above_unrelated(registry, page_image):
+@pytest.mark.parametrize("kind", ["text", "image", "image+text"])
+def test_embed_ranks_relevant_above_unrelated_within_a_modality(
+    registry, page_image, cake_image, kind
+):
+    # Like with like: text-text and image-text similarities sit on different scales.
+    text = kind != "image"
+    image = kind != "text"
+    docs = [
+        Item(PAGE if text else None, page_image if image else None),
+        Item(CAKE if text else None, cake_image if image else None),
+    ]
     q = registry.embedder().embed([Item(text=QUESTION)], is_query=True)[0]
-    docs = registry.embedder().embed(
-        [Item(text=PAGE), Item(image_path=page_image), Item(text=CAKE)], is_query=False
-    )
-    text_sim, image_sim, cake_sim = docs @ q
-    assert text_sim > cake_sim
-    assert image_sim > cake_sim  # the visual path reads the rendered page
+    page_sim, cake_sim = registry.embedder().embed(docs, is_query=False) @ q
+    assert page_sim > cake_sim
+
+
+def test_embed_text_after_image_is_unaffected(registry, page_image):
+    # mlx-vlm caches rope positions across calls; the adapter must reset them.
+    before = registry.embedder().embed([Item(text=CAKE)], is_query=False)
+    registry.embedder().embed([Item(image_path=page_image)], is_query=False)
+    after = registry.embedder().embed([Item(text=CAKE)], is_query=False)
+    np.testing.assert_allclose(before, after, atol=1e-5)
 
 
 # Reranker

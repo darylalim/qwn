@@ -94,5 +94,6 @@ def models_status(ctx: typer.Context) -> None:
             size = _gb(hub.size_on_disk(hub.local_snapshot(m.repo, m.revision)))
             state = typer.style(f"✓ downloaded ({size})", fg="green")
         except hub.ModelNotDownloaded:
-            state = typer.style("✗ missing: run `qwn models pull`", fg="red")
+            cmd = "qwn models pull" + (" --voice" if m.group == "voice" else "")
+            state = typer.style(f"✗ missing: run `{cmd}`", fg="red")
         typer.echo(f"{m.group:5}  {m.repo}@{m.revision[:7]}  {state}")
