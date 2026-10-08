@@ -9,10 +9,21 @@ authors = [
     { name = "Daryl Lim", email = "73304404+darylalim@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "huggingface-hub>=1.33.0",
+    "mlx-audio>=0.5.2",
+    "mlx-lm>=0.32.0",
+    "mlx-vlm>=0.7.4",
+    "pillow>=12.3.0",
+    "pydantic-settings>=2.15.0",
+    "pypdfium2>=5.14",
+    "sqlite-vec>=0.1.9",
+    "streamlit>=1.65",
+    "typer>=0.27",
+]
 
 [project.scripts]
-qwn = "qwn:main"
+qwn = "qwn.cli:app"
 
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13.0"]
@@ -24,6 +35,9 @@ dev = [
     "ruff>=0.16.10",
     "ty>=0.0.84",
 ]
+
+[tool.uv]
+required-version = ">=0.12.22,<0.13"   # CI and your machine use the same uv
 
 [tool.ruff]
 line-length = 100

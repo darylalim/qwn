@@ -1,0 +1,18 @@
+# Copy to qwn.toml (gitignored) and change what you need. Every key is optional; the values
+# below are the defaults. Precedence: CLI flags / UI sliders > QWN_* env > qwn.toml > defaults.
+# Relative paths resolve against this folder (the qwn home), never the current directory.
+
+data_dir = "data"
+index_dir = "index"
+# log_dir = "~/Library/Logs/qwn"
+
+embed_dim = 1024
+top_k = 50
+rerank_k = 5
+max_images = 4
+max_tokens = 1024
+
+guard_enabled = true
+controversial = "warn"   # or "block"
+
+memory_headroom_gb = 2.0

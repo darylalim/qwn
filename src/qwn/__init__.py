@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from qwn!")
+"""qwn: private multimodal RAG on Apple Silicon."""
