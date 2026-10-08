@@ -8,9 +8,18 @@ index_dir = "index"
 
 embed_dim = 1024
 top_k = 50
+hybrid = true            # vector + keyword search fused with RRF (false: vector only)
+fts_k = 50
+rrf_k = 60
 rerank_k = 5
 max_images = 4
 max_tokens = 1024
+
+# Changing any of these means `qwn ingest --reindex` (the index records them).
+pdf_dpi = 150
+pdf_embed = "image+text" # or "image": embed PDF pages from the render alone
+chunk_tokens = 800
+chunk_context = true     # prefix md/txt chunks with "file > heading path" for the models
 
 guard_enabled = true
 controversial = "warn"   # or "block"

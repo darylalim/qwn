@@ -297,7 +297,8 @@ def status(ctx: typer.Context) -> None:
         index = Index(settings.index_dir, settings.embed_dim)
         counts = index.counts()
         kinds = ", ".join(f"{counts.get(k, 0)} {k}" for k in ("pdf", "image", "text"))
-        size = _dir_size(settings.index_dir)
+        size = sum(f.stat().st_size for f in settings.index_dir.glob(f"{DB_NAME}*"))
+        size += _dir_size(settings.index_dir / "pages")  # eval-public/ indexes not counted
         typer.echo(
             f"index:  {counts['documents']} documents ({kinds}), {counts['chunks']} chunks, "
             f"{size / 1e6:.1f} MB on disk"
@@ -331,4 +332,80 @@ def status(ctx: typer.Context) -> None:
 
 
 def _dir_size(path: Path) -> int:
-    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) if path.exists() else 0
+
+
+@app.command("eval")
+def eval_(
+    ctx: typer.Context,
+    set_: Annotated[str, typer.Option("--set", help="public or private.")] = "public",
+    rerank: Annotated[bool, typer.Option(help="Score after reranking.")] = True,
+    hybrid: Annotated[bool, typer.Option(help="Hybrid (on) or vector-only (off).")] = True,
+    generate: Annotated[bool, typer.Option(help="Answer metrics (phase 2).")] = True,
+    guard: Annotated[bool, typer.Option("--guard", help="Guard metrics (phase 3).")] = False,
+    locate: Annotated[bool, typer.Option("--locate", help="Highlight metrics (phase 6).")] = False,
+    update_baseline: Annotated[
+        bool, typer.Option("--update-baseline", help="Save this run as the set's baseline.")
+    ] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Report even when not comparable with the baseline.")
+    ] = False,
+    clean: Annotated[
+        bool, typer.Option("--clean", help="Delete public eval indexes for other settings.")
+    ] = False,
+) -> None:
+    """Score retrieval on the public or private eval set and check the exit criteria."""
+    from qwn import eval as ev
+    from qwn.index import IndexMismatch
+
+    settings: Settings = ctx.obj
+    if set_ not in ("public", "private"):
+        raise _fail("--set must be public or private.")
+    if guard or locate:
+        raise _fail("--guard arrives in phase 3 and --locate in phase 6.")
+    if clean:
+        for path in ev.clean_public(settings):
+            typer.echo(f"removed {path}")
+    if generate:
+        typer.echo("Answer metrics arrive in phase 2; scoring retrieval only (--no-generate).")
+    es = ev.eval_set(settings, "public" if set_ == "public" else "private")
+    registry = make_registry(settings)
+
+    def progress(i: int, n: int) -> None:
+        if i % 10 == 0 or i == n:
+            typer.echo(f"  {i}/{n} queries", err=True)
+
+    try:
+        index = ev.prepare(settings, es, registry, say=typer.echo)
+        result = ev.run(
+            settings,
+            es,
+            index,
+            registry,
+            ev.Options(rerank=rerank, hybrid=hybrid),
+            progress=progress,
+        )
+    except (ev.EvalError, IndexMismatch, *EXPECTED_ERRORS) as e:
+        raise _fail(str(e)) from None
+
+    path = ev.write_result(settings.home, result)
+    typer.echo(ev.format_report(result))
+    typer.echo(f"\nResults: {path}")
+
+    baseline = ev.load_baseline(es)
+    comparable = True
+    if baseline is None:
+        typer.echo("No baseline yet" + ("." if update_baseline else " (--update-baseline)."))
+    elif diff := ev.differences(baseline["meta"], result["meta"]):
+        comparable = False
+        typer.secho(f"Not comparable with the baseline: {', '.join(diff)} differ.", fg="yellow")
+    else:
+        changed = ev.changes(baseline, result)
+        typer.echo("Changes vs baseline:" if changed else "No per-query changes vs baseline.")
+        for line in changed:
+            typer.echo(f"  {line}")
+    if update_baseline:
+        ev.write_baseline(es, result)
+        typer.secho(f"Baseline updated: {es.baseline}", fg="green")
+    elif not comparable and not force:
+        raise typer.Exit(1)

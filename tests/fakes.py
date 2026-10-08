@@ -79,3 +79,27 @@ class FakeGuard:
 
     def check_response(self, prompt: str, response: str) -> Verdict:
         return self._verdict(response, refusal=True)
+
+
+GB = 10**9
+
+
+class FakeMemory:
+    """MLX memory counters without MLX."""
+
+    def __init__(self, active_gb=0.0, recommended_gb=26.8):
+        self.active = int(active_gb * GB)
+        self.recommended = int(recommended_gb * GB)
+        self.cleared = 0
+
+    def active_bytes(self):
+        return self.active
+
+    def peak_bytes(self):
+        return self.active
+
+    def recommended_bytes(self):
+        return self.recommended
+
+    def clear_cache(self):
+        self.cleared += 1
