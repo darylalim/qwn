@@ -87,6 +87,9 @@ class MlxVlmEmbedder:
             images=images,
             prompts=prompt,
             image_token_index=getattr(self.model.config, "image_token_index", None),
+            # The model pools the final <|endoftext|>, which only the tokenizer's special tokens
+            # add; prepare_inputs defaults to False (text-only inputs then drift to cos ~0.5).
+            add_special_tokens=True,
         )
         out = self.model(**inputs)
         mx.eval(out.text_embeds)

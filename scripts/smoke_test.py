@@ -59,8 +59,7 @@ def main() -> int:
         image = page_image(Path(tmp))
         cake_image = text_image(Path(tmp), "cake", CAKE)
 
-        # Compare like with like: text-text and image-image similarities sit on different
-        # scales (modality gap), so a page image vs unrelated text isn't a fair ranking check.
+        # The relevant page must win in every input mode the index uses.
         q = "How much did revenue grow in Q3?"
         query_vec = reg.embedder().embed([Item(text=q)], is_query=True)[0]
         for kind, docs in [

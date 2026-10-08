@@ -3,7 +3,7 @@
 The slow test `tests/slow/test_embedding_reference.py` checks that qwn's mlx-vlm embedder agrees
 with these (cosine ≥ 0.99). torch never becomes a project dependency; run this in a throwaway env:
 
-    uv run --no-project --with sentence-transformers --with torch --with pillow \
+    uv run --no-project --python 3.12 --with "sentence-transformers[image]" --with torch \
         python scripts/make_embedding_reference.py
 
 It downloads Qwen/Qwen3-VL-Embedding-2B (~4.5 GB, bf16) and writes

@@ -41,10 +41,8 @@ def test_embed_is_deterministic(registry, page_image):
 
 
 @pytest.mark.parametrize("kind", ["text", "image", "image+text"])
-def test_embed_ranks_relevant_above_unrelated_within_a_modality(
-    registry, page_image, cake_image, kind
-):
-    # Like with like: text-text and image-text similarities sit on different scales.
+def test_embed_ranks_relevant_above_unrelated(registry, page_image, cake_image, kind):
+    # The relevant page must win in every input mode the index uses.
     text = kind != "image"
     image = kind != "text"
     docs = [
