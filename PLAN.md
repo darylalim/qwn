@@ -1578,7 +1578,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v10   # caches uv's package downloads automatically on GitHub runners
+      - uses: astral-sh/setup-uv@v10.2.0   # caches uv's package downloads automatically on GitHub runners
         with:
           version-file: pyproject.toml # reads [tool.uv] required-version
 
@@ -1619,6 +1619,9 @@ checked in a scratch copy: format and lint both pass.
 - **Same checks as the H4 Stop hook.** The local gate and CI run the same four commands, so
   "passes locally" means "passes in CI". CI adds `uv sync --locked`, which catches a `uv.lock` that
   doesn't match `pyproject.toml`.
+- **`setup-uv` is pinned to an exact release (`v10.2.0`).** setup-uv no longer publishes floating
+  major tags, so `@v10` fails with "unable to find version" (found on the first real CI run,
+  2026-10-08). `actions/checkout@v7` does have a major tag.
 - **Hook scripts are tested in CI** through `tests/hooks/` (see Testing), so a broken hook is
   caught before it can affect an implementation session.
 - **Least privilege:** `contents: read`; the checkout doesn't keep the token
@@ -1696,7 +1699,7 @@ jobs:
         with:
           fetch-depth: 0         # need all tags
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           version-file: pyproject.toml
       - id: check
@@ -1748,7 +1751,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           version-file: pyproject.toml
       - name: Build wheel and sdist

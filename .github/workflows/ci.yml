@@ -26,7 +26,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v10   # caches uv's package downloads automatically on GitHub runners
+      - uses: astral-sh/setup-uv@v10.2.0   # caches uv's package downloads automatically on GitHub runners
         with:
           version-file: pyproject.toml # reads [tool.uv] required-version
 
