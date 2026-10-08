@@ -8,7 +8,7 @@
 
 **Already done on `main`** (planning commits, fast-forwarded from `plan/mlx-multimodal-rag` on 2026-10-04): uv project (Python 3.12) with the ruff/ty/pytest dev
 group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*.md`; `CLAUDE.md`.
-**Not done:** everything in the Phases table, starting with phase 0.
+**Phase 0** (env + checks) is done on branch `phase-0-env`. **Not done:** phases 1–6.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -99,7 +99,7 @@ that share the same `qwn.*` core.
 
 | Package | Version floor | Notes |
 |---|---|---|
-| `mlx-vlm` | `>=0.7.4` | Pulls `mlx>=0.32.2`, `transformers>=5.14`, **and `mlx-audio>=0.5.2`** |
+| `mlx-vlm` | `>=0.7.4` | Pulls `mlx>=0.32.2`, `transformers>=5.14`, **and `mlx-audio>=0.5.2`**. Locked at 0.7.6 in phase 0 |
 | `mlx-lm` | `>=0.32.0` | `transformers>=5.7`, compatible with the above |
 | `sqlite-vec` | `>=0.1.9` | Vector search inside SQLite (0.2 MB wheel). SQLite itself ships with Python |
 | `pypdfium2` | `>=5.14` | PDF → page image + text (BSD-3/Apache-2.0; PDFium, Chrome's PDF engine) |
@@ -253,6 +253,34 @@ class Vad(Protocol):
   with L2. This happens in the adapter, so `Embedder.dim` is what callers see.
 - **Determinism**: Reranker and Guard must give the same output for the same input (single scoring
   pass / greedy decoding). The `slow` contract tests check this.
+
+**Phase 0 findings (re-checked 2026-10-08 against mlx-vlm 0.7.6, mlx-lm 0.32.0, mlx 0.32.3):**
+
+- **Embedder:** load with `mlx_vlm.encoder_loader.load_encoder_model(path,
+  model_remapping={"qwen3_vl": "qwen3_vl_embedding"})`. The checkpoint's `model_type` is
+  `qwen3_vl`, so `load_embedding_model` silently builds the *generation* class (logits, no
+  `text_embeds`). Input = the official format (system instruction; image and text in one user
+  turn; chat template with generation prompt), built in the adapter. Two silent pitfalls, both
+  fixed and covered by slow tests: `prepare_inputs` needs `add_special_tokens=True` (the model
+  pools the trailing `<|endoftext|>`; without it text-only inputs score cos ≈ 0.5 vs official),
+  and the language model's cached `_position_ids`/`_rope_deltas` must be reset before every call
+  (mlx-vlm resets them only for image inputs). Result vs the official bf16 model: cos 0.996–0.999
+  on all 5 reference samples.
+- **Reranker:** `mlx_vlm.reranker_loader.load_reranker(path)`, then
+  `mlx_vlm.server.reranking.score_documents(model, processor, model.config, query, docs,
+  instruction)` with `RerankItem(text=, image=)`: sigmoid(yes − no) at the last token.
+- **Generator:** `mlx_vlm.load(path)`; prompt via `mlx_vlm.prompt_utils.get_chat_template` with
+  `{"type": "image"}` content entries; `mlx_vlm.generate(..., image=[paths], max_tokens=,
+  temperature=, top_p=, top_k=)` returns a `GenerationResult` (`text`, `prompt_tokens`,
+  `generation_tokens`, `generation_tps`). `generation_config.json` confirms 0.7 / 0.8 / 20.
+- **Image size:** all three Qwen3-VL processors are mlx-vlm's own `Qwen3VLImageProcessor`
+  (`patch_size` 16, `merge_size` 2); set `processor.image_processor.max_pixels`. The generator's
+  default is 16.7 M pixels; with `max_pixels` an A4 page at 150 dpi is 1,260 visual tokens.
+- **Guard:** `mlx_lm.load(path)`; `mlx_lm.generate` is greedy by default.
+- **Loading offline:** all loaders take a local path; `qwn.adapters.hub.pinned_snapshot` resolves
+  `repo@sha` with `snapshot_download(local_files_only=True)`.
+- **Measured (smoke test, M2 Max):** 4 core models load in ≈ 6 s, 12.2 GB active / 13.3 GB peak;
+  VL-8B decodes at 59 tok/s.
 
 ### Prompts and parameters (`src/qwn/prompts.py`)
 
