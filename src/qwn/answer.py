@@ -1,16 +1,18 @@
 """Answering: retrieved hits → labelled sources → Generator → checked, rendered answer.
 
-See PLAN.md → Prompts and parameters. Guard is wired in phase 3. Nothing here logs question,
-source or answer text: only lengths, labels, counts and timings.
+See PLAN.md → Prompts and parameters. `ask` screens the question and the answer with Guard
+(qwn.guard). Nothing here logs question, source or answer text: only lengths, labels, counts and
+timings.
 """
 
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from qwn.config import Settings
+from qwn.guard import Check, Screen
 from qwn.ingest import HEADING_SEP
 from qwn.interfaces import Answer, Source
 from qwn.models import Registry
@@ -116,6 +118,16 @@ class Response:
     prompt_tokens: int
     completion_tokens: int
     timings: dict[str, float] = field(default_factory=dict)  # seconds per stage
+    checks: list[Check] = field(default_factory=list)  # Guard: prompt, then response
+
+    @property
+    def blocked(self) -> Check | None:
+        """The Guard check that blocked this question or answer, if any."""
+        return next((c for c in self.checks if c.action == "block"), None)
+
+    @property
+    def warnings(self) -> list[Check]:
+        return [c for c in self.checks if c.action == "warn"]
 
     def cited_sources(self) -> list[tuple[Source, Hit]]:
         by_label = {s.label: (s, h) for s, h in zip(self.sources, self.hits, strict=True)}
@@ -213,8 +225,54 @@ class Answerer:
         return response
 
     def ask(
-        self, question: str, *, doc_ids: list[str] | None = None, greedy: bool = False
+        self,
+        question: str,
+        *,
+        doc_ids: list[str] | None = None,
+        greedy: bool = False,
+        guard: bool | None = None,
     ) -> Response:
+        """Guard the question, retrieve, answer, then guard the answer.
+
+        A blocked question is never retrieved or answered; a blocked answer is withheld (its text
+        and sources are dropped). `guard=None` follows `Settings.guard_enabled`.
+        """
         timings: dict[str, float] = {}
+        screen = None
+        if self.settings.guard_enabled if guard is None else guard:
+            screen = Screen(self.registry.guard, self.settings.controversial)
+        checks: list[Check] = []
+        if screen is not None:
+            start = time.perf_counter()
+            checks.append(screen.prompt(question))
+            timings["guard_prompt"] = time.perf_counter() - start
+            if checks[-1].action == "block":
+                return _withheld(checks, timings)
         hits = self.retrieve(question, doc_ids=doc_ids, timings=timings)
-        return self.answer(question, hits, greedy=greedy, timings=timings)
+        response = self.answer(question, hits, greedy=greedy, timings=timings)
+        if screen is None:
+            return response
+        start = time.perf_counter()
+        checks.append(screen.response(question, strip_citations(response.text)))
+        timings = {**response.timings, "guard_response": time.perf_counter() - start}
+        if checks[-1].action == "block":
+            return _withheld(checks, timings, response)
+        return replace(response, checks=checks, timings=timings)
+
+
+def _withheld(
+    checks: list[Check], timings: dict[str, float], response: Response | None = None
+) -> Response:
+    """A Response that carries Guard's block instead of an answer."""
+    return Response(
+        text=checks[-1].message(),
+        sources=[],
+        hits=[],
+        cited=[],
+        invented=[],
+        abstained=False,
+        prompt_tokens=response.prompt_tokens if response else 0,
+        completion_tokens=response.completion_tokens if response else 0,
+        timings=timings,
+        checks=checks,
+    )

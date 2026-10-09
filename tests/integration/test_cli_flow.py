@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from fakes import FakeEmbedder, FakeGenerator, FakeMemory, FakeReranker
+from fakes import FakeEmbedder, FakeGenerator, FakeGuard, FakeMemory, FakeReranker
 from sample_corpus import make_corpus
 from typer.testing import CliRunner
 
@@ -22,6 +22,7 @@ def cli(home, monkeypatch):
                 "embedder": FakeEmbedder(settings.embed_dim),
                 "reranker": FakeReranker(),
                 "generator": FakeGenerator(),
+                "guard": FakeGuard(),
             },
             memory=FakeMemory(),
         )
@@ -163,4 +164,4 @@ def test_eval_fails_up_front_on_unindexed_expected_paths(cli, home):
 
 
 def test_eval_rejects_later_phase_flags(cli, home):
-    assert "phase 3" in cli("eval", "--guard").output
+    assert "phase 6" in cli("eval", "--locate").output

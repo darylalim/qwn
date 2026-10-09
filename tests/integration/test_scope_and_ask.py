@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 import pytest
-from fakes import FakeEmbedder, FakeGenerator, FakeMemory, FakeReranker
+from fakes import FakeEmbedder, FakeGenerator, FakeGuard, FakeMemory, FakeReranker
 from sample_corpus import make_corpus
 from typer.testing import CliRunner
 
@@ -90,6 +90,7 @@ def cli(home, monkeypatch):
                 "embedder": FakeEmbedder(settings.embed_dim),
                 "reranker": FakeReranker(),
                 "generator": FakeGenerator(),
+                "guard": FakeGuard(),
             },
             memory=FakeMemory(),
         )
@@ -120,7 +121,16 @@ def test_ask_json_and_scope(cli, home):
     assert {s["path"] for s in out["sources"]} == {str(docs / "report.pdf")}
     assert out["cited"][0]["cite"] == "report.pdf p.1"
     assert out["answer"].endswith("[report.pdf p.1]")
-    assert set(out["timings_s"]) == {"embed", "search", "rerank", "generate"}
+    assert set(out["timings_s"]) == {
+        "guard_prompt",
+        "embed",
+        "search",
+        "rerank",
+        "generate",
+        "guard_response",
+    }
+    assert out["blocked"] is False
+    assert [c["stage"] for c in out["guard"]] == ["prompt", "response"]
 
 
 def test_ask_abstains_when_nothing_matches(cli, home):
