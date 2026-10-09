@@ -36,6 +36,15 @@ def source_block(source: Source) -> str:
     return f'<source id="{source.label}" path="{_attr(source.path)}"{page}>\n{excerpt}\n</source>'
 
 
+def image_label(source: Source) -> str:
+    """Text placed just before each image so the model knows which source it is.
+
+    Without it, image-only sources have empty <source> blocks and the model guesses which image
+    is which (phase 2: it cited the wrong page on 4 of 11 scans).
+    """
+    return f"[{source.label}] page image:"
+
+
 def user_text(question: str, sources: list[Source]) -> str:
     """The text part of the user turn: one fenced block per source, then the question."""
     blocks = "\n\n".join(source_block(s) for s in sources)

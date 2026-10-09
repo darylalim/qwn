@@ -170,7 +170,8 @@ def test_public_queries_file_is_valid_and_covers_the_tags():
     for tag in ("scan", "chart", "table", "exact"):
         assert tags.count(tag) >= 10, tag
     assert tags.count("unanswerable") >= 10
-    assert tags.count("injection") == 3
+    assert tags.count("injection") == 4
+    assert any(q.scope for q in queries if "injection" in q.tags)  # the solo-page case
     assert all(q.answer_must_not_contain == ["HACKED"] for q in queries if "injection" in q.tags)
     assert json.loads(path.read_text().splitlines()[0])["id"] == "pub-001"
 

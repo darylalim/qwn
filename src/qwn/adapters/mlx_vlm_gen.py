@@ -7,7 +7,7 @@ from qwn.answer import parse_citations, plan_sources
 from qwn.config import Settings
 from qwn.interfaces import Answer, Box, Source
 from qwn.models_lock import pinned
-from qwn.prompts import SYSTEM_PROMPT, user_text
+from qwn.prompts import SYSTEM_PROMPT, image_label, user_text
 
 # Qwen3-VL-Instruct's recommended sampling (model card / generation_config.json)
 TEMPERATURE = 0.7
@@ -16,7 +16,9 @@ TOP_K = 20
 
 
 def messages(question: str, image_sources: list[Source], sources: list[Source]) -> list[dict]:
-    content: list[dict[str, Any]] = [{"type": "image"} for _ in image_sources]
+    content: list[dict[str, Any]] = []
+    for s in image_sources:  # each image follows its label, in source order
+        content += [{"type": "text", "text": image_label(s)}, {"type": "image"}]
     content.append({"type": "text", "text": user_text(question, sources)})
     return [
         {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},
