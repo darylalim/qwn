@@ -70,3 +70,9 @@
 {"id": "pub-070", "query": "Which release introduced the plugin API?", "expected": [], "tags": ["unanswerable"]}
 {"id": "pub-071", "query": "What is the salary of Halvorsen Marine's chief executive?", "expected": [], "tags": ["unanswerable"]}
 {"id": "pub-072", "query": "What was the colony count on plate 9?", "expected": [], "tags": ["unanswerable"]}
+{"id": "pub-073", "query": "What item was ordered on PO-48287?", "expected": [{"path": "ledger/purchase-orders-2025.pdf", "page": 2}], "answer_contains": ["compostable lids"], "tags": ["text", "exact"]}
+{"id": "pub-074", "query": "What was the total for purchase order PO-48435?", "expected": [{"path": "ledger/purchase-orders-2025.pdf", "page": 6}], "answer_contains": ["1,925.00"], "tags": ["text", "exact"]}
+{"id": "pub-075", "query": "Which warehouse received PO-48583?", "expected": [{"path": "ledger/purchase-orders-2025.pdf", "page": 10}], "answer_contains": ["Leeds"], "tags": ["text", "exact"]}
+{"id": "pub-076", "query": "How many units were on order PO-48731?", "expected": [{"path": "ledger/purchase-orders-2025.pdf", "page": 14}], "answer_contains": ["3,750"], "tags": ["text", "exact"]}
+{"id": "pub-077", "query": "What was the total for purchase order PO-48916?", "expected": [{"path": "ledger/purchase-orders-2025.pdf", "page": 19}], "answer_contains": ["5,250.00"], "tags": ["text", "exact"]}
+{"id": "pub-078", "query": "What item was ordered on PO-48212?", "expected": [{"path": "ledger/purchase-orders-2025.pdf", "page": 27}], "answer_contains": ["compostable lids"], "tags": ["text", "exact"]}

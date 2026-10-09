@@ -112,6 +112,39 @@ TEXT_PDFS: dict[str, list[list[str]]] = {
     ],
 }
 
+# A ledger of near-identical purchase orders: same layout and wording on every page, only the codes
+# and figures differ. Embeddings can't tell PO-48250 from PO-48205; keyword search can.
+LEDGER_ITEMS = [
+    "recyclable trays",
+    "compostable lids",
+    "paper labels",
+    "cardboard boxes",
+    "pallet wrap",
+]
+LEDGER_SITES = ["Leeds", "Bristol", "Glasgow"]
+LEDGER_CODES = [f"PO-48{(213 + 37 * i) % 1000:03d}" for i in range(1, 31)]
+LEDGER: list[tuple[str, str, int, str, str]] = [  # code, item, quantity, total, warehouse
+    (
+        code,
+        LEDGER_ITEMS[i % len(LEDGER_ITEMS)],
+        500 + 250 * i,
+        f"{(500 + 250 * i) * (0.85 + 0.05 * (i % 7)):,.2f}",
+        LEDGER_SITES[i % len(LEDGER_SITES)],
+    )
+    for i, code in enumerate(LEDGER_CODES)
+]
+TEXT_PDFS["ledger/purchase-orders-2025.pdf"] = [
+    [
+        f"Purchase order {code}",
+        "Supplier: Kestrel Packaging",
+        f"Item: {item}",
+        f"Quantity: {qty:,} units",
+        f"Total: {total} euros",
+        f"Delivery: {site} warehouse",
+    ]
+    for code, item, qty, total, site in LEDGER
+]
+
 # scanned PDFs (image-only pages: no text layer)
 SCAN_PDFS: dict[str, list[list[str]]] = {
     "scans/meeting-minutes.pdf": [

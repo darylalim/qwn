@@ -388,7 +388,7 @@ CREATE TABLE chunks (
   chunk_idx   INTEGER NOT NULL,           -- 0 for pages/images
   heading_path TEXT NOT NULL DEFAULT '',  -- md/txt: "Pricing › Enterprise › SSO"; '' otherwise
   text        TEXT NOT NULL DEFAULT '',   -- page text / chunk text / '' for images
-  image_path  TEXT                        -- index_dir/pages/<doc_id>/<page>.webp
+  image_path  TEXT                        -- pages/<doc_id>/<page>.webp, relative to index_dir
 );
 CREATE INDEX chunks_doc ON chunks(doc_id);
 
@@ -425,6 +425,10 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
 - **Ingest algorithm**: walk the paths, skipping anything not in {pdf, png, jpg, jpeg, webp, md,
   txt}. For each file, compute sha256. If it matches `documents.sha256`, skip. Otherwise render or
   chunk it, embed in batches (8 images or 32 texts), and commit as above.
+  - *(phase 1)* `chunk_tokens` is approximate: 4 characters per token, so chunking needs no
+    tokenizer or model. Sections split at paragraphs, long paragraphs at sentence ends.
+  - *(phase 1)* `image_path` is stored relative to `index_dir`, so a copied or moved index folder
+    keeps working. Files and folders whose name starts with `.` are skipped in folder walks.
 - **Moved files**: if a new path's sha256 matches a document whose path no longer exists, re-key
   it instead of re-embedding: in one transaction, update `documents.path`/`doc_id` and each chunk's
   `doc_id`, `chunk_id` and `image_path` (the foreign key has no `ON UPDATE CASCADE`, and
@@ -436,12 +440,17 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
   top 5.
 - **Images**: re-encode each image to WebP q85 in `index_dir/pages/<doc_id>/0.webp`, keeping the
   aspect ratio, capped at `max_pixels`. PDF pages: pypdfium2 `page.render(scale=pdf_dpi / 72).to_pil()` → Pillow →
-  WebP q85.
+  WebP q85. *(phase 1)* An oversized page (posters) renders at a lower scale so it stays under
+  `max_image_pixels`.
 - **Removed files**: `qwn ingest --prune` deletes rows and render folders for files that no longer
   exist.
   - **Unmounted drives are not "deleted":** a document under `/Volumes/<name>/…` is skipped when
     `/Volumes/<name>` isn't mounted, and the summary says "N files on <name> skipped (not
     mounted)". Same for any missing parent folder you passed to `qwn ingest` earlier.
+  - *(phase 1)* The PATHs scope the prune: only documents under them are checked, and a named
+    folder that's missing entirely is skipped ("N files under X skipped (folder missing)"), not
+    emptied. `qwn ingest --prune` with no PATH checks the whole index. Ingest runs first, so a
+    moved file is re-keyed before prune could delete it.
   - It prints what it will remove (count + first 10 paths) and asks for confirmation; `--yes`
     skips the prompt for scripts. `--dry-run` only prints.
 - **Rebuild trigger**: if any `meta` key differs from the current settings, stop with a message
@@ -459,10 +468,19 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
      force is fine to ~100k chunks.
   2. **Keyword:** `SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts)
      LIMIT fts_k`. The question is turned into an FTS query by `index.fts_query`: split into
-     words, drop the ones under 2 characters, wrap each in double quotes (doubling any `"` inside)
-     and join with `OR`. Quoting every term means FTS operators in a question (`NEAR`, `*`, `-`,
-     `:`) are treated as plain words and can never cause a syntax error. A question with no usable
-     words skips this step.
+     words, keep only **identifier-like** ones (`index.is_identifier`: at least 2 letters or
+     digits, and a digit, a hyphen, or all capitals: `PO-48213`, `Q3`, `18.4M`, `AES-256`, `SSO`),
+     drop repeats, wrap each in double quotes (doubling any `"` inside) and join with `OR`.
+     Quoting every term means FTS operators in a question (`NEAR`, `*`, `-`, `:`) are treated as
+     plain words and can never cause a syntax error. A question with no identifiers skips this
+     step, so ordinary questions are vector search + rerank.
+     - *Why identifiers only (phase 1 finding, agreed 2026-10-09):* with every word in the query,
+       FTS matched nearly every text chunk, and RRF (which sums over lists) then ranked any chunk
+       found by both searches above image-only pages (scans, charts, tables, screenshots), which
+       only the vector list can contain. Public recall@5 before rerank fell from 1.000
+       (vector only) to 0.484, and 0.129 on scan/chart/table. Dropping stopwords gave 0.935;
+       identifiers only gave 1.000, the same as vector-only, while keeping FTS for the exact
+       strings it exists for.
   3. **Fuse** with reciprocal rank fusion: `score = Σ 1 / (rrf_k + rank)` over the lists a chunk
      appears in (`rrf_k = 60`, ranks from 1), keep the best `top_k`, and pass them to the
      reranker. Image chunks have no text, so they come only from the vector list; that's expected.
@@ -1116,7 +1134,7 @@ isn't in CI. The scoring code itself is unit-tested with fakes.
 | Documents | Synthetic, generated by `eval/public/build_corpus.py` into `data/eval-public/` (gitignored), deterministic from a fixed seed | Your real documents in `data_dir` |
 | Questions | `eval/public/queries.jsonl`, written to match the generator's known facts | `eval/private/queries.jsonl`, hand-written by you |
 | Purpose | Regression testing anyone can reproduce; exit criteria for phases 1–3 | True quality on what you actually use |
-| Size | ~60 answerable (**≥ 10 each** for `scan`, `chart`, `table` and `exact`, which have their own thresholds) + ~10 unanswerable + 3 injection | Start at 20; grow it from Chat ratings with `qwn eval review` (see below) |
+| Size | ~60 answerable (phase 1: 68) (**≥ 10 each** for `scan`, `chart`, `table` and `exact`, which have their own thresholds) + ~10 unanswerable + 3 injection | Start at 20; grow it from Chat ratings with `qwn eval review` (see below) |
 
 **Privacy:** questions, file names and expected pages reveal what your documents contain, and the
 repo is public. So private questions, results and baselines never leave `eval/private/`
@@ -1143,7 +1161,8 @@ the private set would otherwise stall near 20. Daily use produces them instead:
 - **Why review instead of auto-adding:** a 👍 only means the answer looked right. A person still
   confirms the expected pages, so eval measures truth rather than the model agreeing with itself.
 
-**The public corpus generator** (`build_corpus.py`, no new dependencies) writes about 12 documents
+**The public corpus generator** (`build_corpus.py`, no new dependencies) writes 27 documents
+(phase 1: 6 text PDFs, 4 scanned PDFs, 5 charts, 4 tables, 4 screenshots, 4 markdown files)
 with known facts on known pages, one group for each kind of content qwn has to handle:
 
 - `text`: multi-page text PDFs from the fixture writer (`tests/pdf_fixture.py`).
@@ -1156,7 +1175,10 @@ with known facts on known pages, one group for each kind of content qwn has to h
 - `exact`: facts identified by an exact string: order and invoice codes (`PO-48213`), part
   numbers, people's names, precise figures. They're spread across the other kinds of content, and
   the questions name the string ("What did PO-48213 cost?"). This is the group hybrid search is
-  for.
+  for. *(phase 1, agreed 2026-10-09)* It includes a 30-page ledger of near-identical purchase
+  orders (`ledger/purchase-orders-2025.pdf`: same layout and wording, only the codes and figures
+  differ, e.g. `PO-48212` next to `PO-48213` elsewhere). Without it vector search alone scored
+  1.000 on `exact`, so "hybrid beats vector on exact" couldn't be tested.
 
 Text in images uses `ImageFont.load_default(size=...)` (Pillow's built-in scalable font). Each fact
 is unique and checkable (e.g. "Q3 APAC revenue: 18.4M"), so the questions have exact expected pages

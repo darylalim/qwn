@@ -4,17 +4,31 @@ import sqlite3
 
 import pytest
 
-from qwn.index import Chunk, chunk_id_for, doc_id_for, fts_query
+from qwn.index import Chunk, chunk_id_for, doc_id_for, fts_query, is_identifier
 from qwn.retrieve import Hit, collapse_duplicates, cosine, rrf
 
 
-def test_fts_query_quotes_and_ors_terms():
-    assert fts_query("What did PO-48213 cost?") == '"What" OR "did" OR "PO-48213" OR "cost?"'
+def test_fts_query_keeps_only_identifiers():
+    assert fts_query("What did PO-48213 cost?") == '"PO-48213"'
+    assert (
+        fts_query("Is SSO in Q3 or AES-256 (E-4031)?")
+        == '"SSO" OR "Q3" OR "AES-256" OR "(E-4031)?"'
+    )
+    assert fts_query("How many days of annual leave do I get?") is None
+
+
+@pytest.mark.parametrize(
+    "word, expected",
+    [("PO-48213", True), ("18.4M", True), ("2025", True), ("SSO", True), ("I", False),
+     ("A", False), ("What", False), ("well-known", True), ("-", False), ("x", False)],
+)  # fmt: skip
+def test_is_identifier(word, expected):
+    assert is_identifier(word) is expected
 
 
 @pytest.mark.parametrize(
     "question",
-    ['say "hi" NEAR(a b)', "foo* -bar", "col:value", "AND OR NOT", '"""', "a ( ) ^"],
+    ['say "HI-2" NEAR(A1 B2)', "FOO-1* -BAR2", "COL:9", "AND OR NOT", '"""', "a ( ) ^", 'X"1'],
 )
 def test_fts_query_never_breaks_fts5(question):
     conn = sqlite3.connect(":memory:")
@@ -26,11 +40,11 @@ def test_fts_query_never_breaks_fts5(question):
 
 
 def test_fts_query_doubles_inner_quotes():
-    assert fts_query('ab"cd') == '"ab""cd"'
+    assert fts_query('AB"12') == '"AB""12"'
 
 
-def test_fts_query_drops_short_and_duplicate_words():
-    assert fts_query("a I ? to to To") == '"to"'
+def test_fts_query_drops_duplicates_and_empty():
+    assert fts_query("PO-1 po-1 PO-1") == '"PO-1"'
     assert fts_query("") is None
     assert fts_query("? ! a") is None
 

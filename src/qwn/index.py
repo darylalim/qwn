@@ -132,15 +132,25 @@ def page_dir(doc_id: str) -> str:
     return f"pages/{doc_id}"
 
 
-def fts_query(text: str) -> str | None:
-    """Question → FTS5 query: every word quoted (so FTS operators are plain words), OR-joined.
+def is_identifier(word: str) -> bool:
+    """Code-like words keyword search is for: PO-48213, E-4031, Q3, 18.4M, AES-256, SSO."""
+    core = word.strip("\"'()[]{}<>.,;:!?*")
+    return len(re.sub(r"\W", "", core)) >= 2 and (
+        any(c.isdigit() for c in core) or "-" in core or (core.isupper() and core.isalpha())
+    )
 
-    Words with fewer than 2 letters or digits are dropped; None if nothing usable is left.
+
+def fts_query(text: str) -> str | None:
+    """Question → FTS5 query over its identifier-like words, each quoted, OR-joined.
+
+    Only identifiers: ordinary words would match almost every text chunk and, through RRF, push
+    image-only pages (scans, charts) out of the results (PLAN.md → Search, phase 1 finding).
+    Quoting makes FTS operators plain words. None if the question has no identifiers.
     """
     terms: list[str] = []
     seen: set[str] = set()
     for word in text.split():
-        if len(re.sub(r"\W", "", word)) < 2 or word.lower() in seen:
+        if not is_identifier(word) or word.lower() in seen:
             continue
         seen.add(word.lower())
         terms.append('"' + word.replace('"', '""') + '"')
