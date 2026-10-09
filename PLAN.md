@@ -8,7 +8,9 @@
 
 **Already done on `main`** (planning commits, fast-forwarded from `plan/mlx-multimodal-rag` on 2026-10-04): uv project (Python 3.12) with the ruff/ty/pytest dev
 group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*.md`; `CLAUDE.md`.
-**Phase 0** (env + checks) is merged into `main` (2026-10-08). **Not done:** phases 1–6, starting with phase 1.
+**Phase 0** (env + checks) is merged into `main` (2026-10-08). **Phase 1** (retrieval) is done on
+`phase-1-retrieval` (2026-10-09; results under Evaluation → Phase 1 results). **Not done:**
+phases 2–6, starting with phase 2.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -1294,6 +1296,25 @@ Each run writes `eval/results/<UTC timestamp>-<set>.json` (gitignored):
 
 Each criterion is checked against the point estimate, and the report also shows the interval. When
 the interval's lower bound is under the threshold, the PR notes that the result is borderline.
+
+### Phase 1 results (public set, 2026-10-09, M2 Max)
+
+- **All 9 criteria pass** (68 answerable queries, rerank on, hybrid on): recall@1/5/10 = 1.000,
+  MRR 1.000; every tag at recall@5 1.000 (scan/chart/table lower CI bounds 0.72–0.74, not
+  borderline). Before rerank: recall@5 1.000, MRR 0.946; rerank W/L/T 7/0/61. Vector only vs
+  hybrid recall@5: 0.985 → 1.000 overall, 0.950 → 1.000 on `exact` (hybrid W/L/T 4/5/59: a few
+  hits move down within the top 5).
+- **The public set is close to saturated.** Its pages are clean renders that the 2-B models read
+  easily, so it catches regressions but can't show small gains. The private set is the place for
+  those, e.g. the `chunk_context` effect.
+- **Ablations** (rerank off, hybrid on): `pdf_embed` image-only vs image+text, and `chunk_context`
+  off vs on, both give recall@5 1.000; MRR 0.941 (image-only) vs 0.946. No evidence for changing
+  either default.
+- **Latency** (models loaded): query embed p50 0.65 s; search 2 ms; **rerank p50 56 s, p95 61 s**
+  for 50 candidates (page images dominate); embedder + reranker load 3.6 s; MLX peak 6.5 GB.
+  Reranking all `top_k = 50` candidates is far too slow for `qwn ask`. **Phase 2 decides**
+  (agreed 2026-10-09): it measures recall and latency with fewer rerank candidates (e.g. 10–20)
+  and proposes the setting together with its latency target.
 
 ## Phases
 

@@ -1,6 +1,6 @@
 [project]
 name = "qwn"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local multimodal RAG and voice assistant using Qwen models on Apple Silicon with MLX"
 readme = "README.md"
 license = "Apache-2.0"
