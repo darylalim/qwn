@@ -9,8 +9,10 @@
 **Already done on `main`** (planning commits, fast-forwarded from `plan/mlx-multimodal-rag` on 2026-10-04): uv project (Python 3.12) with the ruff/ty/pytest dev
 group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*.md`; `CLAUDE.md`.
 **Phase 0** (env + checks) is merged into `main` (2026-10-08). **Phase 1** (retrieval) is merged into
-`main` (2026-10-09, PR #1, v0.2.0; results under Evaluation → Phase 1 results). **Not done:**
-phases 2–6, starting with phase 2.
+`main` (2026-10-09, PR #1, v0.2.0; results under Evaluation → Phase 1 results). **Phase 2**
+(answering) is merged into `main` (2026-10-09, PR #3, v0.3.0; results under Evaluation → Phase 2
+results; one accepted known gap, see Security → Prompt injection). **Not done:** phases 3–6,
+starting with phase 3.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
