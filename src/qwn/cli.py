@@ -313,6 +313,13 @@ def ask(
     top_k: Annotated[int | None, typer.Option(help="Candidates before reranking.")] = None,
     rerank_k: Annotated[int | None, typer.Option(help="Sources given to the model.")] = None,
     max_images: Annotated[int | None, typer.Option(help="Page images sent to the model.")] = None,
+    guard: Annotated[
+        bool | None,
+        typer.Option(
+            "--guard/--no-guard",
+            help="Check the question and answer with Guard (default: the guard_enabled setting).",
+        ),
+    ] = None,
     as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
 ) -> None:
     """Answer QUESTION from your documents, citing the pages it used."""
@@ -322,7 +329,7 @@ def ask(
     retriever, doc_ids = _retriever(settings, scope)
     answerer = Answerer(settings, retriever, retriever.registry)
     try:
-        response = answerer.ask(question, doc_ids=doc_ids)
+        response = answerer.ask(question, doc_ids=doc_ids, guard=guard)
     except EXPECTED_ERRORS as e:
         raise _fail(str(e)) from None
     except Exception as e:  # a model error: report it, keep the traceback in the log
@@ -346,6 +353,8 @@ def ask(
             "answer": response.rendered(),
             "raw": response.text,
             "abstained": response.abstained,
+            "blocked": response.blocked is not None,
+            "guard": [c.as_dict() for c in response.checks],
             "cited": [row(s, h) for s, h in response.cited_sources()],
             "sources": [row(s, h) for s, h in pairs],
             "invented_citations": len(response.invented),
@@ -353,6 +362,11 @@ def ask(
             "timings_s": {k: round(v, 3) for k, v in response.timings.items()},
         }
         typer.echo(json.dumps(out, indent=2, ensure_ascii=False))
+        return
+    for check in response.warnings:
+        typer.secho(f"⚠ {check.message()}", fg="yellow", err=True)
+    if (block := response.blocked) is not None:
+        typer.secho(f"⛔ {block.message()}", fg="red")
         return
     typer.echo(response.rendered())
     listed = pairs if show_sources else response.cited_sources()
@@ -432,7 +446,9 @@ def eval_(
     generate: Annotated[
         bool, typer.Option(help="Answer every query (greedy) and score the answers.")
     ] = True,
-    guard: Annotated[bool, typer.Option("--guard", help="Guard metrics (phase 3).")] = False,
+    guard: Annotated[
+        bool, typer.Option("--guard", help="Also score Guard on eval/public/guard.jsonl.")
+    ] = False,
     locate: Annotated[bool, typer.Option("--locate", help="Highlight metrics (phase 6).")] = False,
     update_baseline: Annotated[
         bool, typer.Option("--update-baseline", help="Save this run as the set's baseline.")
@@ -451,8 +467,8 @@ def eval_(
     settings: Settings = ctx.obj
     if set_ not in ("public", "private"):
         raise _fail("--set must be public or private.")
-    if guard or locate:
-        raise _fail("--guard arrives in phase 3 and --locate in phase 6.")
+    if locate:
+        raise _fail("--locate arrives in phase 6.")
     if clean:
         for path in ev.clean_public(settings):
             typer.echo(f"removed {path}")
@@ -470,7 +486,7 @@ def eval_(
             es,
             index,
             registry,
-            ev.Options(rerank=rerank, hybrid=hybrid, generate=generate),
+            ev.Options(rerank=rerank, hybrid=hybrid, generate=generate, guard=guard),
             progress=progress,
         )
     except (ev.EvalError, IndexMismatch, *EXPECTED_ERRORS) as e:

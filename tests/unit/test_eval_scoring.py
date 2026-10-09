@@ -286,3 +286,72 @@ def test_changes_list_citation_and_abstention_flips():
         "a: no longer cites an expected item",
         "a: now abstains",
     ]
+
+
+# Guard (phase 3)
+
+
+def test_load_guard_set_validates(tmp_path):
+    path = tmp_path / "guard.jsonl"
+    path.write_text('{"id": "g1", "prompt": "hi", "expected": "safe"}\n\n')
+    assert ev.load_guard_set(path) == [ev.GuardPrompt("g1", "hi", "safe")]
+    for bad, message in (
+        ('{"id": "g1", "prompt": "hi", "expected": "maybe"}', "safe or unsafe"),
+        ('{"id": "g1", "prompt": "hi", "expected": "safe"}\n' * 2, "duplicate id g1"),
+        ('{"id": "g1"}', "KeyError"),
+    ):
+        path.write_text(bad)
+        with pytest.raises(ev.EvalError, match=message):
+            ev.load_guard_set(path)
+    with pytest.raises(ev.EvalError, match="No guard prompts"):
+        ev.load_guard_set(tmp_path / "missing.jsonl")
+
+
+def _grow(expected: str, label: str | None, action: str) -> dict:
+    error = (expected == "safe" and action == "block") or (
+        expected == "unsafe" and action == "allow"
+    )
+    return {"id": "g", "expected": expected, "label": label, "action": action, "error": error}
+
+
+def test_guard_summary_and_criteria_use_counts():
+    rows = [_grow("safe", "Safe", "allow")] * 19 + [_grow("safe", "Unsafe", "block")]
+    rows += [_grow("unsafe", "Unsafe", "block")] * 9 + [_grow("unsafe", None, "warn")]
+    s = ev.guard_summary(rows)
+    assert (s["false_block"]["n"], s["false_allow"]["n"]) == (20, 10)
+    assert s["warned"] == 1 and s["unparseable"] == 1
+    assert [c.passed for c in ev.guard_criteria(s)] == [True, True]  # 0/10 allowed, 1/20 blocked
+
+    rows += [_grow("safe", "Controversial", "block"), _grow("unsafe", "Safe", "allow")]
+    assert [c.passed for c in ev.guard_criteria(ev.guard_summary(rows))] == [False, False]
+
+    answers = {"checked": 79, "withheld": [], "warned": ["pub-079"]}
+    assert ev.guard_criteria(s, answers)[-1].passed  # warnings don't fail it
+    c = ev.guard_criteria(s, {**answers, "withheld": ["pub-009"]})[-1]
+    assert (c.name, c.passed, c.detail) == ("guard withholds no answers", False, "1/79 withheld")
+
+
+def test_guard_meta_only_matters_when_both_runs_scored_guard():
+    a = {"set": "public"}
+    b = {"set": "public", "guard": {"set_hash": "x", "controversial": "warn"}}
+    assert ev.differences(a, b) == []
+    c = {"set": "public", "guard": {"set_hash": "x", "controversial": "block"}}
+    assert ev.differences(b, c) == ["guard"]
+
+
+def test_changes_list_guard_flips():
+    before = {"per_query": [], "guard": {"per_prompt": [_grow("safe", "Safe", "allow")]}}
+    after = {"per_query": [], "guard": {"per_prompt": [_grow("safe", "Controversial", "warn")]}}
+    assert ev.changes(before, after) == ["g: guard Safe/allow -> Controversial/warn"]
+    assert ev.changes({"per_query": []}, after) == []
+
+
+def test_public_guard_set_matches_the_plan():
+    from qwn.adapters.mlx_lm_guard import CATEGORIES
+
+    prompts = ev.load_guard_set(Path(__file__).parents[2] / "eval" / "public" / "guard.jsonl")
+    safe = [g for g in prompts if g.expected == "safe"]
+    unsafe = [g for g in prompts if g.expected == "unsafe"]
+    assert (len(safe), len(unsafe)) == (20, 10)
+    assert sum("alarming" in g.tags for g in safe) == 8
+    assert {t for g in unsafe for t in g.tags} == set(CATEGORIES)  # every Guard category
