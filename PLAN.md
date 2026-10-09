@@ -8,7 +8,9 @@
 
 **Already done on `main`** (planning commits, fast-forwarded from `plan/mlx-multimodal-rag` on 2026-10-04): uv project (Python 3.12) with the ruff/ty/pytest dev
 group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*.md`; `CLAUDE.md`.
-**Phase 0** (env + checks) is merged into `main` (2026-10-08). **Not done:** phases 1–6, starting with phase 1.
+**Phase 0** (env + checks) is merged into `main` (2026-10-08). **Phase 1** (retrieval) is done on
+`phase-1-retrieval` (2026-10-09; results under Evaluation → Phase 1 results). **Not done:**
+phases 2–6, starting with phase 2.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -388,7 +390,7 @@ CREATE TABLE chunks (
   chunk_idx   INTEGER NOT NULL,           -- 0 for pages/images
   heading_path TEXT NOT NULL DEFAULT '',  -- md/txt: "Pricing › Enterprise › SSO"; '' otherwise
   text        TEXT NOT NULL DEFAULT '',   -- page text / chunk text / '' for images
-  image_path  TEXT                        -- index_dir/pages/<doc_id>/<page>.webp
+  image_path  TEXT                        -- pages/<doc_id>/<page>.webp, relative to index_dir
 );
 CREATE INDEX chunks_doc ON chunks(doc_id);
 
@@ -413,7 +415,9 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
   generated 2-page PDF: text came back exact; a 150 dpi render is 1275×1651 px, ~8 KB as WebP q85.
 - **Library**: `sqlite-vec>=0.1.9`. Load it with `sqlite_vec.load(conn)` after
   `conn.enable_load_extension(True)`. Checked: the uv Python 3.12 build has SQLite 3.53 with
-  extension loading enabled. The `vec0` dimension comes from `meta.embed_dim` when the schema is
+  extension loading enabled. *(phase 1)* The python.org macOS build (what CI's runner had on its PATH)
+  is compiled without it, so `pyproject.toml` sets `[tool.uv] python-preference = "only-managed"`
+  and `index.py` stops with a clear message if extension loading is missing. The `vec0` dimension comes from `meta.embed_dim` when the schema is
   created.
 - **Virtual tables don't cascade.** `ON DELETE CASCADE` cleans up `chunks`, but `vec_chunks` rows
   must be deleted explicitly (`DELETE FROM vec_chunks WHERE rowid IN (SELECT rowid FROM chunks
@@ -425,6 +429,10 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
 - **Ingest algorithm**: walk the paths, skipping anything not in {pdf, png, jpg, jpeg, webp, md,
   txt}. For each file, compute sha256. If it matches `documents.sha256`, skip. Otherwise render or
   chunk it, embed in batches (8 images or 32 texts), and commit as above.
+  - *(phase 1)* `chunk_tokens` is approximate: 4 characters per token, so chunking needs no
+    tokenizer or model. Sections split at paragraphs, long paragraphs at sentence ends.
+  - *(phase 1)* `image_path` is stored relative to `index_dir`, so a copied or moved index folder
+    keeps working. Files and folders whose name starts with `.` are skipped in folder walks.
 - **Moved files**: if a new path's sha256 matches a document whose path no longer exists, re-key
   it instead of re-embedding: in one transaction, update `documents.path`/`doc_id` and each chunk's
   `doc_id`, `chunk_id` and `image_path` (the foreign key has no `ON UPDATE CASCADE`, and
@@ -436,12 +444,17 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
   top 5.
 - **Images**: re-encode each image to WebP q85 in `index_dir/pages/<doc_id>/0.webp`, keeping the
   aspect ratio, capped at `max_pixels`. PDF pages: pypdfium2 `page.render(scale=pdf_dpi / 72).to_pil()` → Pillow →
-  WebP q85.
+  WebP q85. *(phase 1)* An oversized page (posters) renders at a lower scale so it stays under
+  `max_image_pixels`.
 - **Removed files**: `qwn ingest --prune` deletes rows and render folders for files that no longer
   exist.
   - **Unmounted drives are not "deleted":** a document under `/Volumes/<name>/…` is skipped when
     `/Volumes/<name>` isn't mounted, and the summary says "N files on <name> skipped (not
     mounted)". Same for any missing parent folder you passed to `qwn ingest` earlier.
+  - *(phase 1)* The PATHs scope the prune: only documents under them are checked, and a named
+    folder that's missing entirely is skipped ("N files under X skipped (folder missing)"), not
+    emptied. `qwn ingest --prune` with no PATH checks the whole index. Ingest runs first, so a
+    moved file is re-keyed before prune could delete it.
   - It prints what it will remove (count + first 10 paths) and asks for confirmation; `--yes`
     skips the prompt for scripts. `--dry-run` only prints.
 - **Rebuild trigger**: if any `meta` key differs from the current settings, stop with a message
@@ -459,10 +472,19 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
      force is fine to ~100k chunks.
   2. **Keyword:** `SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts)
      LIMIT fts_k`. The question is turned into an FTS query by `index.fts_query`: split into
-     words, drop the ones under 2 characters, wrap each in double quotes (doubling any `"` inside)
-     and join with `OR`. Quoting every term means FTS operators in a question (`NEAR`, `*`, `-`,
-     `:`) are treated as plain words and can never cause a syntax error. A question with no usable
-     words skips this step.
+     words, keep only **identifier-like** ones (`index.is_identifier`: at least 2 letters or
+     digits, and a digit, a hyphen, or all capitals: `PO-48213`, `Q3`, `18.4M`, `AES-256`, `SSO`),
+     drop repeats, wrap each in double quotes (doubling any `"` inside) and join with `OR`.
+     Quoting every term means FTS operators in a question (`NEAR`, `*`, `-`, `:`) are treated as
+     plain words and can never cause a syntax error. A question with no identifiers skips this
+     step, so ordinary questions are vector search + rerank.
+     - *Why identifiers only (phase 1 finding, agreed 2026-10-09):* with every word in the query,
+       FTS matched nearly every text chunk, and RRF (which sums over lists) then ranked any chunk
+       found by both searches above image-only pages (scans, charts, tables, screenshots), which
+       only the vector list can contain. Public recall@5 before rerank fell from 1.000
+       (vector only) to 0.484, and 0.129 on scan/chart/table. Dropping stopwords gave 0.935;
+       identifiers only gave 1.000, the same as vector-only, while keeping FTS for the exact
+       strings it exists for.
   3. **Fuse** with reciprocal rank fusion: `score = Σ 1 / (rrf_k + rank)` over the lists a chunk
      appears in (`rrf_k = 60`, ranks from 1), keep the best `top_k`, and pass them to the
      reranker. Image chunks have no text, so they come only from the vector list; that's expected.
@@ -1116,7 +1138,7 @@ isn't in CI. The scoring code itself is unit-tested with fakes.
 | Documents | Synthetic, generated by `eval/public/build_corpus.py` into `data/eval-public/` (gitignored), deterministic from a fixed seed | Your real documents in `data_dir` |
 | Questions | `eval/public/queries.jsonl`, written to match the generator's known facts | `eval/private/queries.jsonl`, hand-written by you |
 | Purpose | Regression testing anyone can reproduce; exit criteria for phases 1–3 | True quality on what you actually use |
-| Size | ~60 answerable (**≥ 10 each** for `scan`, `chart`, `table` and `exact`, which have their own thresholds) + ~10 unanswerable + 3 injection | Start at 20; grow it from Chat ratings with `qwn eval review` (see below) |
+| Size | ~60 answerable (phase 1: 68) (**≥ 10 each** for `scan`, `chart`, `table` and `exact`, which have their own thresholds) + ~10 unanswerable + 3 injection | Start at 20; grow it from Chat ratings with `qwn eval review` (see below) |
 
 **Privacy:** questions, file names and expected pages reveal what your documents contain, and the
 repo is public. So private questions, results and baselines never leave `eval/private/`
@@ -1143,7 +1165,8 @@ the private set would otherwise stall near 20. Daily use produces them instead:
 - **Why review instead of auto-adding:** a 👍 only means the answer looked right. A person still
   confirms the expected pages, so eval measures truth rather than the model agreeing with itself.
 
-**The public corpus generator** (`build_corpus.py`, no new dependencies) writes about 12 documents
+**The public corpus generator** (`build_corpus.py`, no new dependencies) writes 27 documents
+(phase 1: 6 text PDFs, 4 scanned PDFs, 5 charts, 4 tables, 4 screenshots, 4 markdown files)
 with known facts on known pages, one group for each kind of content qwn has to handle:
 
 - `text`: multi-page text PDFs from the fixture writer (`tests/pdf_fixture.py`).
@@ -1156,7 +1179,10 @@ with known facts on known pages, one group for each kind of content qwn has to h
 - `exact`: facts identified by an exact string: order and invoice codes (`PO-48213`), part
   numbers, people's names, precise figures. They're spread across the other kinds of content, and
   the questions name the string ("What did PO-48213 cost?"). This is the group hybrid search is
-  for.
+  for. *(phase 1, agreed 2026-10-09)* It includes a 30-page ledger of near-identical purchase
+  orders (`ledger/purchase-orders-2025.pdf`: same layout and wording, only the codes and figures
+  differ, e.g. `PO-48212` next to `PO-48213` elsewhere). Without it vector search alone scored
+  1.000 on `exact`, so "hybrid beats vector on exact" couldn't be tested.
 
 Text in images uses `ImageFont.load_default(size=...)` (Pillow's built-in scalable font). Each fact
 is unique and checkable (e.g. "Q3 APAC revenue: 18.4M"), so the questions have exact expected pages
@@ -1272,6 +1298,25 @@ Each run writes `eval/results/<UTC timestamp>-<set>.json` (gitignored):
 
 Each criterion is checked against the point estimate, and the report also shows the interval. When
 the interval's lower bound is under the threshold, the PR notes that the result is borderline.
+
+### Phase 1 results (public set, 2026-10-09, M2 Max)
+
+- **All 9 criteria pass** (68 answerable queries, rerank on, hybrid on): recall@1/5/10 = 1.000,
+  MRR 1.000; every tag at recall@5 1.000 (scan/chart/table lower CI bounds 0.72–0.74, not
+  borderline). Before rerank: recall@5 1.000, MRR 0.946; rerank W/L/T 7/0/61. Vector only vs
+  hybrid recall@5: 0.985 → 1.000 overall, 0.950 → 1.000 on `exact` (hybrid W/L/T 4/5/59: a few
+  hits move down within the top 5).
+- **The public set is close to saturated.** Its pages are clean renders that the 2-B models read
+  easily, so it catches regressions but can't show small gains. The private set is the place for
+  those, e.g. the `chunk_context` effect.
+- **Ablations** (rerank off, hybrid on): `pdf_embed` image-only vs image+text, and `chunk_context`
+  off vs on, both give recall@5 1.000; MRR 0.941 (image-only) vs 0.946. No evidence for changing
+  either default.
+- **Latency** (models loaded): query embed p50 0.65 s; search 2 ms; **rerank p50 56 s, p95 61 s**
+  for 50 candidates (page images dominate); embedder + reranker load 3.6 s; MLX peak 6.5 GB.
+  Reranking all `top_k = 50` candidates is far too slow for `qwn ask`. **Phase 2 decides**
+  (agreed 2026-10-09): it measures recall and latency with fewer rerank candidates (e.g. 10–20)
+  and proposes the setting together with its latency target.
 
 ## Phases
 

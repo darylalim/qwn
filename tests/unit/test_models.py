@@ -4,32 +4,11 @@ import threading
 import time
 
 import pytest
-from fakes import FakeEmbedder, FakeGenerator, FakeGuard, FakeReranker
+from fakes import GB, FakeEmbedder, FakeGenerator, FakeGuard, FakeMemory, FakeReranker
 
 from qwn.config import Settings
 from qwn.interfaces import Item
 from qwn.models import InsufficientMemory, ModelsInUse, ProcessLock, Registry
-
-GB = 10**9
-
-
-class FakeMemory:
-    def __init__(self, active_gb=0.0, recommended_gb=26.8):
-        self.active = int(active_gb * GB)
-        self.recommended = int(recommended_gb * GB)
-        self.cleared = 0
-
-    def active_bytes(self):
-        return self.active
-
-    def peak_bytes(self):
-        return self.active
-
-    def recommended_bytes(self):
-        return self.recommended
-
-    def clear_cache(self):
-        self.cleared += 1
 
 
 def counting_loaders(memory: FakeMemory, calls: list[str]):
