@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from fakes import FakeEmbedder, FakeMemory, FakeReranker
+from fakes import FakeEmbedder, FakeGenerator, FakeMemory, FakeReranker
 from sample_corpus import make_corpus
 from typer.testing import CliRunner
 
@@ -18,7 +18,11 @@ def cli(home, monkeypatch):
     def make_registry(settings):
         return Registry(
             settings,
-            overrides={"embedder": FakeEmbedder(settings.embed_dim), "reranker": FakeReranker()},
+            overrides={
+                "embedder": FakeEmbedder(settings.embed_dim),
+                "reranker": FakeReranker(),
+                "generator": FakeGenerator(),
+            },
             memory=FakeMemory(),
         )
 
@@ -121,18 +125,28 @@ def test_eval_private_set_and_baseline(cli, home):
     cli("ingest", str(docs))
     r = cli("eval", "--set", "private", "--update-baseline")
     assert r.exit_code == 0, r.output
-    assert "scoring retrieval only" in r.output
-    assert "Phase 1 exit criteria" in r.output and "recall@5 overall" in r.output
+    assert "Exit criteria (phase 1: retrieval, phase 2: answers)" in r.output
+    assert "recall@5 overall" in r.output and "citation_hit" in r.output
     baseline = json.loads((home / "eval" / "private" / "baseline.json").read_text())
     assert baseline["meta"]["set"] == "private"
-    assert baseline["meta"]["options"] == {"rerank": True, "hybrid": True, "generate": False}
+    assert baseline["meta"]["options"] == {"rerank": True, "hybrid": True, "generate": True}
+    rows = {r["id"]: r for r in baseline["per_query"]}
+    assert rows["p1"]["citation_hit"] and not rows["p1"]["abstained"]
+    assert rows["p1"]["cited"] == [{"path": "docs/report.pdf", "page": 1}]
+    assert rows["p4"]["abstained"] and "citation_hit" not in rows["p4"]
+    assert baseline["answer"]["summary"]["abstention"]["value"] == 1.0
     assert {r["id"] for r in baseline["per_query"]} == {"p1", "p2", "p3", "p4"}
     assert set(baseline["by_tag"]) == {"text", "markdown", "exact", "chart"}
     assert list((home / "eval" / "results").glob("*-private.json"))
     assert "Revenue grew" not in json.dumps(baseline["per_query"])  # no document text in results
 
-    r = cli("eval", "--set", "private", "--no-generate")
+    r = cli("eval", "--set", "private")
     assert r.exit_code == 0 and "No per-query changes vs baseline." in r.output
+
+    r = cli("eval", "--set", "private", "--no-generate")
+    assert r.exit_code == 1 and "settings_hash" in r.output  # generate is part of the settings
+    r = cli("eval", "--set", "private", "--no-generate", "--force")
+    assert "citation_hit" not in r.output and "Exit criteria (phase 1: retrieval)" in r.output
 
     r = cli("eval", "--set", "private", "--no-rerank")
     assert r.exit_code == 1 and "Not comparable with the baseline: settings_hash" in r.output

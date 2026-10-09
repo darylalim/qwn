@@ -9,8 +9,7 @@ import pytest
 from qwn.adapters.mlx_lm_guard import parse_verdict
 from qwn.adapters.mlx_vlm_embed import messages as embed_messages
 from qwn.adapters.mlx_vlm_embed import truncate_and_normalize
-from qwn.adapters.mlx_vlm_gen import plan_sources
-from qwn.answer import parse_citations
+from qwn.answer import parse_citations, plan_sources
 from qwn.interfaces import Item, Source
 from qwn.prompts import ABSTAIN_TEXT, SYSTEM_PROMPT, source_block, user_text
 

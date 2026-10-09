@@ -82,3 +82,33 @@ def test_ids_are_stable_and_distinct():
     d = doc_id_for("/a/b.pdf")
     assert d == doc_id_for("/a/b.pdf") and len(d) == 64
     assert chunk_id_for(d, 1, 0) != chunk_id_for(d, 2, 0) != chunk_id_for(d, None, 0)
+
+
+def test_rerank_scores_only_the_head_and_keeps_the_tail_in_order(home):
+    from typing import cast
+
+    from fakes import FakeReranker
+
+    from qwn.config import Settings
+    from qwn.index import Chunk, Index
+    from qwn.models import Registry
+    from qwn.retrieve import Hit, Retriever
+
+    class Counting(FakeReranker):
+        seen = 0
+
+        def score(self, query, docs):
+            Counting.seen += len(docs)
+            return super().score(query, docs)
+
+    def h(n: int, text: str) -> Hit:
+        return Hit(Chunk(n, f"c{n}", "d", "/a.md", "s", "text", None, n, "", text, None), None, 0)
+
+    s = Settings(rerank_candidates=3, chunk_context=False)
+    registry = Registry(s, overrides={"reranker": Counting()})
+    r = Retriever(s, cast(Index, None), registry)  # rerank never touches the index
+    hits = [h(1, "x"), h(2, "x"), h(3, "apple pie"), h(4, "apple pie apple"), h(5, "apple")]
+    out = r.rerank("apple pie", hits)
+    assert Counting.seen == 3
+    assert [x.chunk.rowid for x in out] == [3, 1, 2, 4, 5]  # head re-sorted, tail untouched
+    assert out[3].rerank_score is None

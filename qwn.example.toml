@@ -11,6 +11,7 @@ top_k = 50
 hybrid = true            # vector + keyword search fused with RRF (false: vector only)
 fts_k = 50
 rrf_k = 60
+rerank_candidates = 20   # top fused candidates the reranker re-scores (~1 s each)
 rerank_k = 5
 max_images = 4
 max_tokens = 1024

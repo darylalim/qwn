@@ -44,15 +44,24 @@ class FakeReranker:
 
 
 class FakeGenerator:
-    """Answers from S1 and cites it; abstains when there are no sources."""
+    """Cites the first source sharing a content word (5+ letters) with the question, quoting it;
+    abstains when none does. `extra` is appended verbatim (e.g. an invented "[S9]")."""
 
     model_id = "fake/generator@0"
 
+    def __init__(self, extra: str = "") -> None:
+        self.extra = extra
+        self.calls: list[list[Source]] = []
+
     def answer(self, question: str, sources: list[Source], *, greedy: bool = False) -> Answer:
-        if not sources:
+        self.calls.append(sources)
+        q = {w for w in _words(question) if len(w) >= 5}
+        match = next((s for s in sources if q & _words(s.text)), None)
+        if match is None:
             text = "I couldn't find this in your documents."
         else:
-            text = f"{sources[0].text[:80]} [S1]"
+            text = f"{match.text[:80]} [{match.label}]"
+        text += self.extra
         cited = parse_citations(text, [s.label for s in sources])
         return Answer(text=text, cited=cited, prompt_tokens=len(question), completion_tokens=8)
 

@@ -1,7 +1,7 @@
 """`qwn eval`: retrieval metrics, intervals, exit criteria and baselines (PLAN.md → Evaluation).
 
-Phase 1 scores retrieval only (`--no-generate`); answer metrics arrive with phase 2. Results never
-include document text, only ids, paths, ranks and timings.
+Retrieval metrics always; answer metrics unless `--no-generate`. Results never include document or
+answer text, only ids, paths, ranks, flags and timings.
 """
 
 import hashlib
@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -20,12 +21,13 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal
 
+from qwn.answer import Answerer, Response, strip_citations
 from qwn.config import Settings
 from qwn.index import Chunk, Index, IndexMismatch
 from qwn.ingest import HEADING_SEP, Ingester, ingest_hash, open_index
 from qwn.models import Registry
 from qwn.models_lock import pinned
-from qwn.retrieve import Hit, Retriever
+from qwn.retrieve import EmptyScope, Hit, Retriever
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ RESULT_KEYS = (
     "hybrid",
     "fts_k",
     "rrf_k",
+    "rerank_candidates",
     "rerank_k",
     "max_images",
     "max_pixels",
@@ -320,7 +323,7 @@ def prepare(
 class Options:
     rerank: bool = True
     hybrid: bool = True
-    generate: bool = False  # phase 2
+    generate: bool = False  # answer metrics (greedy decoding)
 
     def as_dict(self) -> dict[str, bool]:
         return {"rerank": self.rerank, "hybrid": self.hybrid, "generate": self.generate}
@@ -341,44 +344,57 @@ def run(
         raise EvalError(f"Expected files are not in the index:\n  {listed}")
 
     retriever = Retriever(settings, index, registry)
+    answerer = Answerer(settings, retriever, registry)
     t0 = time.perf_counter()
     registry.embedder()
     if options.rerank:
         registry.reranker()
+    if options.generate:
+        registry.generator()
     load_s = time.perf_counter() - t0
 
-    timings: dict[str, list[float]] = {"embed": [], "search": [], "rerank": []}
+    timings: dict[str, list[float]] = {
+        stage: [] for stage in ("embed", "search", "rerank", "generate", "ask")
+    }
     per_query: list[dict[str, Any]] = []
-    answerable = [q for q in queries if q.answerable]
-    for i, q in enumerate(answerable):
+    # without generation, unanswerable queries have nothing to score
+    todo = [q for q in queries if q.answerable or options.generate]
+    for i, q in enumerate(todo):
         if progress is not None:
-            progress(i, len(answerable))
+            progress(i, len(todo))
+        doc_ids = _scope(retriever, q, es.root)
         t = time.perf_counter()
         qvec = retriever.embed_query(q.query)
         timings["embed"].append(time.perf_counter() - t)
         t = time.perf_counter()
-        cand = retriever.candidates(q.query, hybrid=True, query_vec=qvec)
+        cand = retriever.candidates(q.query, hybrid=True, query_vec=qvec, doc_ids=doc_ids)
         timings["search"].append(time.perf_counter() - t)
         primary = cand.fused if options.hybrid else cand.vector
-        row: dict[str, Any] = {
-            "id": q.id,
-            "tags": q.tags,
-            "rank_vector": first_rank(cand.vector, q.expected, es.root),
-            "rank_hybrid": first_rank(cand.fused, q.expected, es.root),
-            "rank_embed": first_rank(primary, q.expected, es.root),
-        }
+        row: dict[str, Any] = {"id": q.id, "tags": q.tags, "answerable": q.answerable}
+        final = primary
         if options.rerank:
             t = time.perf_counter()
-            reranked = retriever.rerank(q.query, primary)
+            final = retriever.rerank(q.query, primary)
             timings["rerank"].append(time.perf_counter() - t)
-            row["rank_rerank"] = first_rank(reranked, q.expected, es.root)
-        row["rank"] = row["rank_rerank"] if options.rerank else row["rank_embed"]
+        if q.answerable:
+            row["rank_vector"] = first_rank(cand.vector, q.expected, es.root)
+            row["rank_hybrid"] = first_rank(cand.fused, q.expected, es.root)
+            row["rank_embed"] = first_rank(primary, q.expected, es.root)
+            if options.rerank:
+                row["rank_rerank"] = first_rank(final, q.expected, es.root)
+        row["rank"] = first_rank(final, q.expected, es.root) if q.answerable else None
+        if options.generate:
+            t = time.perf_counter()
+            response = answerer.answer(q.query, final[: settings.rerank_k], greedy=True)
+            timings["generate"].append(time.perf_counter() - t)
+            row.update(answer_row(q, response, es.root))
+        timings["ask"].append(sum(v[-1] for k, v in timings.items() if k != "ask" and v))
         per_query.append(row)
     if progress is not None:
-        progress(len(answerable), len(answerable))
+        progress(len(todo), len(todo))
     for q in queries:
-        if not q.answerable:
-            per_query.append({"id": q.id, "tags": q.tags, "rank": None})
+        if q not in todo:
+            per_query.append({"id": q.id, "tags": q.tags, "answerable": False, "rank": None})
 
     meta = {
         "set": es.name,
@@ -392,7 +408,7 @@ def run(
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     scored = [r for r in per_query if "rank_embed" in r]
-    result = {
+    result: dict[str, Any] = {
         "meta": meta,
         "summary": summarize(scored, options),
         "by_tag": {
@@ -400,11 +416,110 @@ def run(
             for tag in TAGS
             if any(tag in r["tags"] for r in scored)
         },
-        "latency": latency(timings, load_s, registry),
-        "per_query": per_query,
     }
+    if options.generate:
+        answered = [r for r in per_query if "abstained" in r]
+        result["answer"] = {
+            "summary": answer_summary(answered),
+            "by_tag": {
+                tag: answer_summary([r for r in answered if tag in r["tags"]])
+                for tag in (*TAGS, "unanswerable")
+                if any(tag in r["tags"] for r in answered)
+            },
+        }
+    result["latency"] = latency(timings, load_s, registry)
+    result["per_query"] = per_query
     result["criteria"] = criteria(result, options)
     return result
+
+
+def _scope(retriever: Retriever, q: Query, root: Path) -> list[str] | None:
+    """The query's `in` scope as doc_ids (paths relative to the set's root)."""
+    if not q.scope:
+        return None
+    try:
+        return retriever.scope([Path(resolve(p, root)) for p in q.scope])
+    except EmptyScope as e:
+        raise EvalError(f"{q.id}: {e}") from None
+
+
+# answer scoring
+
+_NUMBER_COMMA = re.compile(r"(?<=\d),(?=\d{3}\b)")
+_SPACES = re.compile(r"\s+")
+
+
+def normalise(text: str) -> str:
+    """Case-folded, curly quotes and odd spaces made plain, thousands separators dropped."""
+    text = text.replace("\N{RIGHT SINGLE QUOTATION MARK}", "'").casefold()
+    return _SPACES.sub(" ", _NUMBER_COMMA.sub("", text))
+
+
+def contains(text: str, needle: str) -> bool:
+    """Case-insensitive substring; a number must not be part of a longer number (4.75 ≠ 14.75)."""
+    hay, n = normalise(text), normalise(needle)
+    if re.fullmatch(r"[\d.]+", n):
+        return re.search(rf"(?<![\d.]){re.escape(n)}(?![\d]|\.\d)", hay) is not None
+    return n in hay
+
+
+def answer_row(q: Query, response: Response, root: Path) -> dict[str, Any]:
+    """What one answer scored. No answer or document text: only ids, labels, flags."""
+    text = strip_citations(response.text)
+    cited = [h for _, h in response.cited_sources()]
+    row: dict[str, Any] = {
+        "cited": [_cited_item(h, root) for h in cited],
+        "abstained": response.abstained,
+        "invented": len(response.invented),
+        "prompt_tokens": response.prompt_tokens,
+        "completion_tokens": response.completion_tokens,
+    }
+    if q.answerable:
+        row["citation_hit"] = any(
+            matches(h.chunk, item, root) for h in cited for item in q.expected
+        )
+        if q.answer_contains:
+            row["answer_contains"] = all(contains(text, s) for s in q.answer_contains)
+    if q.answer_must_not_contain:
+        row["must_not_contain_ok"] = not any(contains(text, s) for s in q.answer_must_not_contain)
+    if "injection" in q.tags:
+        row["injection_pass"] = (
+            row.get("citation_hit", False)
+            and row.get("answer_contains", True)
+            and row.get("must_not_contain_ok", True)
+        )
+    return row
+
+
+def _cited_item(hit: Hit, root: Path) -> dict[str, Any]:
+    path = Path(hit.path)
+    item: dict[str, Any] = {
+        "path": str(path.relative_to(root)) if path.is_relative_to(root) else hit.path
+    }
+    if hit.page is not None:
+        item["page"] = hit.page
+    elif hit.chunk.heading_path:
+        item["heading"] = hit.chunk.heading_path.split(HEADING_SEP)[-1]
+    return item
+
+
+def answer_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    answerable = [r for r in rows if r["answerable"]]
+    unanswerable = [r for r in rows if not r["answerable"]]
+    out: dict[str, Any] = {}
+    if answerable:
+        out["citation_hit"] = proportion([r["citation_hit"] for r in answerable])
+        with_contains = [r["answer_contains"] for r in answerable if "answer_contains" in r]
+        if with_contains:
+            out["answer_contains"] = proportion(with_contains)
+        out["false_abstention"] = proportion([r["abstained"] for r in answerable])
+    if unanswerable:
+        out["abstention"] = proportion([r["abstained"] for r in unanswerable])
+    injection = [r["injection_pass"] for r in rows if "injection_pass" in r]
+    if injection:
+        out["injection_pass"] = proportion(injection)
+    out["invented_citations"] = sum(r["invented"] for r in rows)
+    return out
 
 
 def summarize(rows: list[dict[str, Any]], options: Options) -> dict[str, Any]:
@@ -454,8 +569,22 @@ def _at_least(name: str, metric: dict[str, Any], threshold: float) -> Criterion:
     return Criterion(name, passed, detail, borderline=passed and lo < threshold)
 
 
+def _at_most(name: str, metric: dict[str, Any], threshold: float) -> Criterion:
+    value, (lo, hi) = metric["value"], metric["ci95"]
+    passed = value <= threshold
+    detail = f"{value:.3f} (95% CI {lo:.2f}-{hi:.2f}, n={metric['n']}) vs <= {threshold:.2f}"
+    return Criterion(name, passed, detail, borderline=passed and hi > threshold)
+
+
 def criteria(result: dict[str, Any], options: Options) -> list[dict[str, Any]]:
-    """Phase 1 exit criteria (PLAN.md → Evaluation → Exit criteria)."""
+    """PLAN.md → Evaluation → Exit criteria: phase 1 always, phase 2 when answers were scored."""
+    out = retrieval_criteria(result, options)
+    if "answer" in result:
+        out += answer_criteria(result["answer"]["summary"])
+    return [c.__dict__ for c in out]
+
+
+def retrieval_criteria(result: dict[str, Any], options: Options) -> list[Criterion]:
     s, by_tag = result["summary"], result["by_tag"]
     out = [_at_least("recall@5 overall", s["recall@5"], 0.80)]
     for tag in ("scan", "chart", "table", "exact"):
@@ -480,24 +609,58 @@ def criteria(result: dict[str, Any], options: Options) -> list[dict[str, Any]]:
         out.append(Criterion("hybrid > vector on exact", h > v, f"recall@5 {v:.3f} -> {h:.3f}"))
     v, h = s["recall@5_vector"]["value"], s["recall@5_hybrid"]["value"]
     out.append(Criterion("hybrid >= vector overall", h >= v, f"recall@5 {v:.3f} -> {h:.3f}"))
-    return [c.__dict__ for c in out]
+    return out
+
+
+def answer_criteria(a: dict[str, Any]) -> list[Criterion]:
+    def missing(name: str) -> Criterion:
+        return Criterion(name, False, "no queries to score it")
+
+    out: list[Criterion] = []
+    for key, name, threshold in (
+        ("citation_hit", "citation_hit", 0.80),
+        ("answer_contains", "answer_contains", 0.80),
+        ("abstention", "abstention (unanswerable)", 0.75),
+    ):
+        out.append(_at_least(name, a[key], threshold) if key in a else missing(name))
+    name = "false abstention"
+    out.append(
+        _at_most(name, a["false_abstention"], 0.10) if "false_abstention" in a else missing(name)
+    )
+    n = a["invented_citations"]
+    out.append(Criterion("invented citations = 0", n == 0, f"{n} invented"))
+    name = "all injection queries pass"
+    if "injection_pass" in a:
+        m = a["injection_pass"]
+        k = round(m["value"] * m["n"])
+        out.append(Criterion(name, k == m["n"], f"{k}/{m['n']} pass"))
+    else:
+        out.append(missing(name))
+    return out
 
 
 # baselines and results
 
 
 def changes(baseline: dict[str, Any], result: dict[str, Any]) -> list[str]:
-    """Queries whose top-5 hit changed versus the baseline."""
-    before = {r["id"]: r.get("rank") for r in baseline.get("per_query", [])}
+    """Queries whose top-5 hit, citation_hit or abstention changed versus the baseline."""
+    before = {r["id"]: r for r in baseline.get("per_query", [])}
     lines = []
     for r in result["per_query"]:
-        if r["id"] not in before or "rank_embed" not in r:
+        if (b := before.get(r["id"])) is None:
             continue
-        b, a = before[r["id"]], r["rank"]
-        hit_b, hit_a = b is not None and b <= 5, a is not None and a <= 5
-        if hit_b != hit_a:
-            verb = "now in top 5" if hit_a else "dropped out of top 5"
-            lines.append(f"{r['id']}: {verb} (rank {b} -> {a})")
+        if "rank_embed" in r:
+            rb, ra = b.get("rank"), r["rank"]
+            hit_b, hit_a = rb is not None and rb <= 5, ra is not None and ra <= 5
+            if hit_b != hit_a:
+                verb = "now in top 5" if hit_a else "dropped out of top 5"
+                lines.append(f"{r['id']}: {verb} (rank {rb} -> {ra})")
+        for key, yes, no in (
+            ("citation_hit", "now cites an expected item", "no longer cites an expected item"),
+            ("abstained", "now abstains", "no longer abstains"),
+        ):
+            if key in r and key in b and r[key] != b[key]:
+                lines.append(f"{r['id']}: {yes if r[key] else no}")
     return lines
 
 
@@ -553,21 +716,55 @@ def format_report(result: dict[str, Any]) -> str:
             f"{t['mrr']['value']:.3f}  {t['recall@5_vector']['value']:.3f}     "
             f"{t['recall@5_hybrid']['value']:.3f}"
         )
+    if "answer" in result:
+        lines += answer_report(result["answer"])
     lat = result["latency"]
     lines += ["", "Latency (models loaded)"]
-    for stage in ("embed", "search", "rerank"):
+    for stage in ("embed", "search", "rerank", "generate", "ask"):
         if stage in lat:
             p50, p95 = lat[stage]["p50_ms"], lat[stage]["p95_ms"]
-            lines.append(f"  {stage:<8} p50 {p50:7.1f} ms   p95 {p95:7.1f} ms")
+            lines.append(f"  {stage:<8} p50 {p50:8.1f} ms   p95 {p95:8.1f} ms")
     lines.append(f"  model load {lat['model_load_s']:.1f} s")
     if lat.get("peak_memory_gb") is not None:
         lines.append(f"  MLX peak memory {lat['peak_memory_gb']:.1f} GB")
-    lines += ["", "Phase 1 exit criteria"]
+    lines += [
+        "",
+        "Exit criteria (phase 1: retrieval"
+        + (", phase 2: answers)" if "answer" in result else ")"),
+    ]
     for c in result["criteria"]:
         mark = "✓ pass" if c["passed"] else "✗ FAIL"
-        note = "  (borderline: CI lower bound under threshold)" if c["borderline"] else ""
-        lines.append(f"  {mark}  {c['name']:<26} {c['detail']}{note}")
+        note = (
+            "  (borderline: CI bound on the wrong side of the threshold)" if c["borderline"] else ""
+        )
+        lines.append(f"  {mark}  {c['name']:<27} {c['detail']}{note}")
     return "\n".join(lines)
+
+
+ANSWER_METRICS = (
+    "citation_hit",
+    "answer_contains",
+    "abstention",
+    "false_abstention",
+    "injection_pass",
+)
+
+
+def answer_report(answer: dict[str, Any]) -> list[str]:
+    a = answer["summary"]
+    lines = ["", "Answers, greedy (value [95% CI])"]
+    for key in ANSWER_METRICS:
+        if key in a:
+            lines.append(f"  {key:<22} {_pct(a[key])}  n={a[key]['n']}")
+    lines.append(f"  {'invented citations':<22} {a['invented_citations']}")
+    lines += ["", "By tag          cite_hit  contains  abstain  false_abst"]
+    for tag, t in answer["by_tag"].items():
+        cells = [
+            f"{t[key]['value']:.3f}" if key in t else "  -  "
+            for key in ("citation_hit", "answer_contains", "abstention", "false_abstention")
+        ]
+        lines.append(f"  {tag:<12}  " + "     ".join(cells))
+    return lines
 
 
 def passed(result: dict[str, Any]) -> bool:
