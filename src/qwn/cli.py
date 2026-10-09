@@ -1,6 +1,7 @@
 """`qwn` command line. A thin layer over qwn.*: no model or retrieval logic of its own."""
 
 import json
+import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -14,6 +15,8 @@ from qwn.models_lock import MODELS, PinnedModel
 
 if TYPE_CHECKING:
     from qwn.ingest import Failure, PrunePlan
+    from qwn.interfaces import Source
+    from qwn.retrieve import Hit, Retriever
 
 # Offline unless a command opts in (only `qwn models pull`). huggingface_hub reads this once, at
 # import, so it's set before anything imports it.
@@ -219,6 +222,39 @@ def _print_prune(plan: "PrunePlan", *, verb: str) -> None:
         typer.echo(f"  … and {len(plan.remove) - 10} more")
 
 
+ScopeOption = Annotated[
+    list[Path] | None,
+    typer.Option("--in", help="Only search these files or folders (repeatable)."),
+]
+
+
+def _overrides(settings: Settings, **values: int | None) -> Settings:
+    update = {k: v for k, v in values.items() if v is not None}
+    return settings.model_copy(update=update) if update else settings
+
+
+def _retriever(
+    settings: Settings, scope: list[Path] | None
+) -> "tuple[Retriever, list[str] | None]":
+    """Open the index and resolve `--in`; stop with a message if either is unusable."""
+    from qwn.index import IndexMismatch
+    from qwn.ingest import open_index
+    from qwn.retrieve import EmptyScope, Retriever
+
+    try:
+        index = open_index(settings)
+    except IndexMismatch as e:
+        raise _fail(str(e)) from None
+    if index.counts()["chunks"] == 0:
+        raise _fail("The index is empty. Add documents with `qwn ingest PATH...`.")
+    retriever = Retriever(settings, index, make_registry(settings))
+    try:
+        doc_ids = retriever.scope(scope) if scope else None
+    except EmptyScope as e:
+        raise _fail(str(e)) from None
+    return retriever, doc_ids
+
+
 @app.command()
 def search(
     ctx: typer.Context,
@@ -229,26 +265,14 @@ def search(
     hybrid: Annotated[
         bool, typer.Option(help="Vector + keyword search (off: vector only).")
     ] = True,
+    scope: ScopeOption = None,
     as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
 ) -> None:
     """Show the best-matching pages, images and passages for QUERY."""
-    from qwn.index import IndexMismatch
-    from qwn.ingest import open_index
-    from qwn.retrieve import Retriever
-
-    settings: Settings = ctx.obj
-    overrides = {k: v for k, v in {"rerank_k": rerank_k, "top_k": top_k}.items() if v is not None}
-    if overrides:
-        settings = settings.model_copy(update=overrides)
+    settings = _overrides(ctx.obj, rerank_k=rerank_k, top_k=top_k)
+    retriever, doc_ids = _retriever(settings, scope)
     try:
-        index = open_index(settings)
-    except IndexMismatch as e:
-        raise _fail(str(e)) from None
-    if index.counts()["chunks"] == 0:
-        raise _fail("The index is empty. Add documents with `qwn ingest PATH...`.")
-    retriever = Retriever(settings, index, make_registry(settings))
-    try:
-        hits = retriever.search(query, hybrid=hybrid, rerank=rerank)
+        hits = retriever.search(query, hybrid=hybrid, rerank=rerank, doc_ids=doc_ids)
     except EXPECTED_ERRORS as e:
         raise _fail(str(e)) from None
 
@@ -276,6 +300,70 @@ def search(
         snippet = " ".join(h.chunk.text.split())[:160]
         if snippet:
             typer.echo(f"   {snippet}")
+
+
+@app.command()
+def ask(
+    ctx: typer.Context,
+    question: Annotated[str, typer.Argument(help="Your question.")],
+    show_sources: Annotated[
+        bool, typer.Option("--sources", help="Also list every source the model was given.")
+    ] = False,
+    scope: ScopeOption = None,
+    top_k: Annotated[int | None, typer.Option(help="Candidates before reranking.")] = None,
+    rerank_k: Annotated[int | None, typer.Option(help="Sources given to the model.")] = None,
+    max_images: Annotated[int | None, typer.Option(help="Page images sent to the model.")] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+) -> None:
+    """Answer QUESTION from your documents, citing the pages it used."""
+    from qwn.answer import Answerer, cite_label
+
+    settings = _overrides(ctx.obj, top_k=top_k, rerank_k=rerank_k, max_images=max_images)
+    retriever, doc_ids = _retriever(settings, scope)
+    answerer = Answerer(settings, retriever, retriever.registry)
+    try:
+        response = answerer.ask(question, doc_ids=doc_ids)
+    except EXPECTED_ERRORS as e:
+        raise _fail(str(e)) from None
+    except Exception as e:  # a model error: report it, keep the traceback in the log
+        logging.getLogger(__name__).exception("ask failed")
+        raise _fail(f"The model failed: {type(e).__name__}: {e}") from None
+
+    pairs = list(zip(response.sources, response.hits, strict=True))
+    if as_json:
+
+        def row(source: "Source", hit: "Hit") -> dict[str, object]:
+            return {
+                "label": source.label,
+                "cite": cite_label(source, hit),
+                "path": source.path,
+                "page": source.page,
+                "heading": hit.chunk.heading_path or None,
+                "score": round(source.score, 6),
+            }
+
+        out = {
+            "answer": response.rendered(),
+            "raw": response.text,
+            "abstained": response.abstained,
+            "cited": [row(s, h) for s, h in response.cited_sources()],
+            "sources": [row(s, h) for s, h in pairs],
+            "invented_citations": len(response.invented),
+            "tokens": {"prompt": response.prompt_tokens, "completion": response.completion_tokens},
+            "timings_s": {k: round(v, 3) for k, v in response.timings.items()},
+        }
+        typer.echo(json.dumps(out, indent=2, ensure_ascii=False))
+        return
+    typer.echo(response.rendered())
+    listed = pairs if show_sources else response.cited_sources()
+    if listed:
+        typer.echo("")
+        typer.secho("Sources:" if show_sources else "Cited:", bold=True)
+    cited = set(response.cited)
+    for source, hit in listed:
+        mark = "*" if show_sources and source.label in cited else " "
+        where = f"  p.{source.page}" if source.page is not None else ""
+        typer.echo(f" {mark}[{cite_label(source, hit)}]  {source.path}{where}")
 
 
 @app.command()
@@ -341,7 +429,9 @@ def eval_(
     set_: Annotated[str, typer.Option("--set", help="public or private.")] = "public",
     rerank: Annotated[bool, typer.Option(help="Score after reranking.")] = True,
     hybrid: Annotated[bool, typer.Option(help="Hybrid (on) or vector-only (off).")] = True,
-    generate: Annotated[bool, typer.Option(help="Answer metrics (phase 2).")] = True,
+    generate: Annotated[
+        bool, typer.Option(help="Answer every query (greedy) and score the answers.")
+    ] = True,
     guard: Annotated[bool, typer.Option("--guard", help="Guard metrics (phase 3).")] = False,
     locate: Annotated[bool, typer.Option("--locate", help="Highlight metrics (phase 6).")] = False,
     update_baseline: Annotated[
@@ -354,7 +444,7 @@ def eval_(
         bool, typer.Option("--clean", help="Delete public eval indexes for other settings.")
     ] = False,
 ) -> None:
-    """Score retrieval on the public or private eval set and check the exit criteria."""
+    """Score retrieval and answers on the public or private eval set; check the exit criteria."""
     from qwn import eval as ev
     from qwn.index import IndexMismatch
 
@@ -366,8 +456,6 @@ def eval_(
     if clean:
         for path in ev.clean_public(settings):
             typer.echo(f"removed {path}")
-    if generate:
-        typer.echo("Answer metrics arrive in phase 2; scoring retrieval only (--no-generate).")
     es = ev.eval_set(settings, "public" if set_ == "public" else "private")
     registry = make_registry(settings)
 
@@ -382,7 +470,7 @@ def eval_(
             es,
             index,
             registry,
-            ev.Options(rerank=rerank, hybrid=hybrid),
+            ev.Options(rerank=rerank, hybrid=hybrid, generate=generate),
             progress=progress,
         )
     except (ev.EvalError, IndexMismatch, *EXPECTED_ERRORS) as e:

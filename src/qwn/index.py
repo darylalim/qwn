@@ -5,6 +5,7 @@ readers); writes go through one in-process lock, and each document is replaced i
 """
 
 import hashlib
+import json
 import re
 import sqlite3
 import threading
@@ -335,22 +336,56 @@ class Index:
 
     # search
 
-    def vector_search(self, query: NDArray[np.float32], k: int) -> list[tuple[int, float]]:
-        """(rowid, L2 distance) of the `k` nearest chunks, nearest first."""
-        rows = self.conn.execute(
-            "SELECT rowid, distance FROM vec_chunks WHERE embedding MATCH ? AND k = ? "
-            "ORDER BY distance",
-            (_vec(query), k),
-        ).fetchall()
+    def scope_doc_ids(self, paths: list[str]) -> list[str]:
+        """doc_ids whose path equals one of `paths` (absolute) or lies under it as a folder."""
+        found: set[str] = set()
+        for p in paths:
+            folder = p.rstrip("/") + "/"
+            rows = self.conn.execute(
+                "SELECT doc_id FROM documents WHERE path = ? OR substr(path, 1, ?) = ?",
+                (p, len(folder), folder),
+            ).fetchall()
+            found.update(r for (r,) in rows)
+        return sorted(found)
+
+    def vector_search(
+        self, query: NDArray[np.float32], k: int, doc_ids: list[str] | None = None
+    ) -> list[tuple[int, float]]:
+        """(rowid, L2 distance) of the `k` nearest chunks, nearest first.
+
+        With `doc_ids`, exact distances over those documents only: filtering a KNN result
+        afterwards would return fewer than `k` hits when out-of-scope chunks are nearer.
+        """
+        if doc_ids is None:
+            sql = (
+                "SELECT rowid, distance FROM vec_chunks WHERE embedding MATCH ? AND k = ? "
+                "ORDER BY distance"
+            )
+            rows = self.conn.execute(sql, (_vec(query), k)).fetchall()
+        else:
+            sql = (
+                "SELECT rowid, vec_distance_l2(embedding, ?) AS distance FROM vec_chunks "
+                "WHERE rowid IN (SELECT rowid FROM chunks WHERE doc_id IN "
+                "(SELECT value FROM json_each(?))) ORDER BY distance LIMIT ?"
+            )
+            rows = self.conn.execute(sql, (_vec(query), json.dumps(doc_ids), k)).fetchall()
         return [(int(r), float(d)) for r, d in rows]
 
-    def keyword_search(self, query: str, k: int) -> list[int]:
+    def keyword_search(self, query: str, k: int, doc_ids: list[str] | None = None) -> list[int]:
         """Rowids matching `query` (an FTS5 expression from `fts_query`), best bm25 first."""
-        rows = self.conn.execute(
-            "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) "
-            "LIMIT ?",
-            (query, k),
-        ).fetchall()
+        if doc_ids is None:
+            sql = (
+                "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? "
+                "ORDER BY bm25(chunks_fts) LIMIT ?"
+            )
+            rows = self.conn.execute(sql, (query, k)).fetchall()
+        else:
+            sql = (
+                "SELECT f.rowid FROM chunks_fts f JOIN chunks c ON c.rowid = f.rowid "
+                "WHERE chunks_fts MATCH ? AND c.doc_id IN (SELECT value FROM json_each(?)) "
+                "ORDER BY bm25(chunks_fts) LIMIT ?"
+            )
+            rows = self.conn.execute(sql, (query, json.dumps(doc_ids), k)).fetchall()
         return [int(r) for (r,) in rows]
 
     def chunks(self, rowids: list[int]) -> dict[int, Chunk]:

@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     hybrid: bool = True  # vector + FTS5 keyword search, fused with RRF
     fts_k: int = 50
     rrf_k: int = 60
+    rerank_candidates: int = 10  # fused candidates the reranker scores (~0.8 s each)
     rerank_k: int = 5
     max_images: int = 4
     max_pixels: int = 1_310_720  # 1280 * 32 * 32 (Qwen3-VL: 32 px per visual token)

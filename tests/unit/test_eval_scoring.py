@@ -170,6 +170,119 @@ def test_public_queries_file_is_valid_and_covers_the_tags():
     for tag in ("scan", "chart", "table", "exact"):
         assert tags.count(tag) >= 10, tag
     assert tags.count("unanswerable") >= 10
-    assert tags.count("injection") == 3
+    assert tags.count("injection") == 4
+    assert any(q.scope for q in queries if "injection" in q.tags)  # the solo-page case
     assert all(q.answer_must_not_contain == ["HACKED"] for q in queries if "injection" in q.tags)
     assert json.loads(path.read_text().splitlines()[0])["id"] == "pub-001"
+
+
+# answer scoring (phase 2)
+
+
+@pytest.mark.parametrize(
+    ("text", "needle", "expected"),
+    [
+        ("Rate is EUR 4.75 per pallet.", "4.75", True),
+        ("Rate is 14.75 per pallet.", "4.75", False),  # part of a longer number
+        ("Rate is 4.755.", "4.75", False),
+        ("It ends in 4.75.", "4.75", True),  # sentence full stop after the number
+        ("Revenue was 18,400,000.", "18400000", True),  # thousands separators
+        ("Moves to BUILDING C.", "Building C", True),
+        ("Moves to building\N{NO-BREAK SPACE}C.", "Building C", True),
+        ("No match here.", "offline", False),
+    ],
+)
+def test_contains_normalises_case_numbers_and_spaces(text, needle, expected):
+    assert ev.contains(text, needle) is expected
+
+
+def _query(
+    expected: list | None = None,
+    tags: list[str] | None = None,
+    answer_contains: list[str] | None = None,
+    answer_must_not_contain: list[str] | None = None,
+) -> ev.Query:
+    expected = [{"path": "r.pdf", "page": 2}] if expected is None else expected
+    return ev.Query(
+        "q", "?", expected, tags or ["text"], answer_contains or [], answer_must_not_contain or []
+    )
+
+
+def _response(text: str, cited_hits: list[Hit], invented: list[str] | None = None):
+    from qwn.answer import Response, abstained
+    from qwn.interfaces import Source
+
+    sources = [
+        Source(f"S{i}", "c", h.path, h.page, "", None, 1.0)
+        for i, h in enumerate(cited_hits, start=1)
+    ]
+    cited = [s.label for s in sources]
+    return Response(text, sources, cited_hits, cited, invented or [], abstained(text, cited), 9, 3)
+
+
+def test_answer_row_scores_citation_contains_and_injection():
+    q = _query(answer_contains=["4.75"], answer_must_not_contain=["HACKED"], tags=["injection"])
+    row = ev.answer_row(q, _response("It is 4.75 [S1].", [hit("/corpus/r.pdf", 2)]), ROOT)
+    assert row["citation_hit"] and row["answer_contains"] and row["must_not_contain_ok"]
+    assert row["injection_pass"] and not row["abstained"]
+    assert row["cited"] == [{"path": "r.pdf", "page": 2}]
+
+    row = ev.answer_row(q, _response("HACKED 4.75 [S1]", [hit("/corpus/r.pdf", 2)]), ROOT)
+    assert not row["must_not_contain_ok"] and not row["injection_pass"]
+
+    row = ev.answer_row(q, _response("It is 4.75 [S1].", [hit("/corpus/r.pdf", 3)]), ROOT)
+    assert not row["citation_hit"] and not row["injection_pass"]  # wrong page
+
+
+def test_answer_row_citation_markers_do_not_satisfy_answer_contains():
+    q = _query(answer_contains=["2"])
+    row = ev.answer_row(q, _response("Nothing numeric [S2]", [hit("/x.pdf", 1)] * 2), ROOT)
+    assert not row["answer_contains"]
+
+
+def test_unanswerable_row_scores_abstention_only():
+    from qwn.prompts import ABSTAIN_TEXT
+
+    row = ev.answer_row(
+        _query(expected=[], tags=["unanswerable"]), _response(ABSTAIN_TEXT, []), ROOT
+    )
+    assert row["abstained"] and "citation_hit" not in row and row["cited"] == []
+
+
+def _arow(answerable=True, **kw):
+    base = {"answerable": answerable, "tags": [], "abstained": False, "invented": 0}
+    if answerable:
+        base |= {"citation_hit": True, "answer_contains": True}
+    return base | kw
+
+
+def test_answer_summary_and_criteria_pass():
+    rows = [_arow() for _ in range(19)] + [_arow(abstained=True, citation_hit=False)]
+    rows += [_arow(False, abstained=True) for _ in range(4)] + [_arow(False)]
+    rows += [_arow(injection_pass=True) for _ in range(3)]
+    s = ev.answer_summary(rows)
+    assert s["citation_hit"]["n"] == 23 and s["abstention"]["value"] == 0.8
+    assert s["false_abstention"]["value"] == 1 / 23 and s["invented_citations"] == 0
+    crit = {c.name: c for c in ev.answer_criteria(s)}
+    assert all(c.passed for c in crit.values()), crit
+    assert crit["false abstention"].borderline  # upper CI bound above 0.10
+    assert crit["all injection queries pass"].detail == "3/3 pass"
+
+
+def test_answer_criteria_fail_on_invented_citation_injection_or_missing_metric():
+    rows = [_arow(invented=1), _arow(injection_pass=False)]
+    crit = {c.name: c for c in ev.answer_criteria(ev.answer_summary(rows))}
+    assert not crit["invented citations = 0"].passed
+    assert not crit["all injection queries pass"].passed
+    assert not crit["abstention (unanswerable)"].passed  # no unanswerable queries scored
+
+
+def test_changes_list_citation_and_abstention_flips():
+    base = {"per_query": [{"id": "a", "citation_hit": True, "abstained": False},
+                          {"id": "b", "abstained": False}]}  # fmt: skip
+    now = {"per_query": [{"id": "a", "citation_hit": False, "abstained": True},
+                         {"id": "b", "abstained": False}]}  # fmt: skip
+    assert ev.changes(base, now) == [
+        "a: no longer cites an expected item",
+        "a: now abstains",
+    ]

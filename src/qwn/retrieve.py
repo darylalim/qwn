@@ -16,6 +16,13 @@ from qwn.models import Registry
 logger = logging.getLogger(__name__)
 
 
+class EmptyScope(ValueError):
+    """`--in` / "Search in" named paths with nothing indexed under them."""
+
+    def __init__(self, paths: list[str]) -> None:
+        super().__init__(f"Nothing indexed under {', '.join(paths)}.")
+
+
 @dataclass(frozen=True)
 class Hit:
     chunk: Chunk
@@ -89,15 +96,23 @@ class Retriever:
     def _abs(self, image_path: str | None) -> Path | None:
         return None if image_path is None else self.index.root / image_path
 
-    def vector(self, query_vec: NDArray[np.float32]) -> list[Hit]:
-        found = self.index.vector_search(query_vec, self.settings.top_k)
+    def scope(self, paths: list[Path]) -> list[str]:
+        """doc_ids of the files and folders in `paths`; EmptyScope if none is indexed."""
+        absolute = [str(p.expanduser().resolve()) for p in paths]
+        doc_ids = self.index.scope_doc_ids(absolute)
+        if not doc_ids:
+            raise EmptyScope(absolute)
+        return doc_ids
+
+    def vector(self, query_vec: NDArray[np.float32], doc_ids: list[str] | None = None) -> list[Hit]:
+        found = self.index.vector_search(query_vec, self.settings.top_k, doc_ids)
         return self._hits([(rowid, cosine(d)) for rowid, d in found])
 
-    def keyword(self, query: str) -> list[Hit]:
+    def keyword(self, query: str, doc_ids: list[str] | None = None) -> list[Hit]:
         expr = fts_query(query)
         if expr is None:
             return []
-        rowids = self.index.keyword_search(expr, self.settings.fts_k)
+        rowids = self.index.keyword_search(expr, self.settings.fts_k, doc_ids)
         return self._hits([(rowid, 0.0) for rowid in rowids])
 
     def candidates(
@@ -106,13 +121,15 @@ class Retriever:
         *,
         hybrid: bool | None = None,
         query_vec: NDArray[np.float32] | None = None,
+        doc_ids: list[str] | None = None,
     ) -> Candidates:
+        """`doc_ids` (from `scope`) limits both searches to those documents."""
         hybrid = self.settings.hybrid if hybrid is None else hybrid
         vec = self.embed_query(query) if query_vec is None else query_vec
-        vector = self.vector(vec)
+        vector = self.vector(vec, doc_ids)
         if not hybrid:
             return Candidates(vector, [], vector)
-        keyword = self.keyword(query)
+        keyword = self.keyword(query, doc_ids)
         fused_ids = rrf(
             [[h.chunk.rowid for h in vector], [h.chunk.rowid for h in keyword]],
             self.settings.rrf_k,
@@ -126,15 +143,21 @@ class Retriever:
             c.kind, c.text, hit.image_path, c.heading_path, Path(c.path).name, self.settings
         )
 
-    def rerank(self, query: str, hits: list[Hit]) -> list[Hit]:
-        """All `hits` re-sorted by reranker score (stable for ties)."""
-        if not hits:
-            return []
+    def rerank(self, query: str, hits: list[Hit], n: int | None = None) -> list[Hit]:
+        """The first `n` hits (default `rerank_candidates`) re-sorted by reranker score (stable
+        for ties), followed by the rest in their original order.
+
+        Reranking costs about a second per page image, so only the head of the list is scored.
+        """
+        n = self.settings.rerank_candidates if n is None else n
+        head, tail = hits[:n], hits[n:]
+        if not head:
+            return tail
         scores = self.registry.reranker().score(
-            Item(text=query), [self.rerank_input(h) for h in hits]
+            Item(text=query), [self.rerank_input(h) for h in head]
         )
-        scored = [replace(h, rerank_score=s) for h, s in zip(hits, scores, strict=True)]
-        return sorted(scored, key=lambda h: -(h.rerank_score or 0.0))
+        scored = [replace(h, rerank_score=s) for h, s in zip(head, scores, strict=True)]
+        return sorted(scored, key=lambda h: -(h.rerank_score or 0.0)) + tail
 
     def search(
         self,
@@ -143,9 +166,10 @@ class Retriever:
         hybrid: bool | None = None,
         rerank: bool = True,
         k: int | None = None,
+        doc_ids: list[str] | None = None,
     ) -> list[Hit]:
         k = self.settings.rerank_k if k is None else k
-        hits = self.candidates(query, hybrid=hybrid).fused
+        hits = self.candidates(query, hybrid=hybrid, doc_ids=doc_ids).fused
         if rerank:
             hits = self.rerank(query, hits)
         logger.info("search: query_len=%d candidates=%d", len(query), len(hits))

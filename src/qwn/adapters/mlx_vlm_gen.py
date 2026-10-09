@@ -3,11 +3,11 @@
 from pathlib import Path
 from typing import Any
 
-from qwn.answer import parse_citations
+from qwn.answer import parse_citations, plan_sources
 from qwn.config import Settings
 from qwn.interfaces import Answer, Box, Source
 from qwn.models_lock import pinned
-from qwn.prompts import SYSTEM_PROMPT, user_text
+from qwn.prompts import SYSTEM_PROMPT, image_label, user_text
 
 # Qwen3-VL-Instruct's recommended sampling (model card / generation_config.json)
 TEMPERATURE = 0.7
@@ -15,22 +15,10 @@ TOP_P = 0.8
 TOP_K = 20
 
 
-def plan_sources(sources: list[Source], max_images: int) -> tuple[list[Source], list[Source]]:
-    """(sources that send their image, sources the model may cite), both in label order.
-
-    The top `max_images` sources by score send their image; the rest send text only. A source
-    with neither (an image beyond the limit) is left out, so the model can't cite it.
-    """
-    with_image = sorted(
-        (s for s in sources if s.image_path is not None), key=lambda s: s.score, reverse=True
-    )[:max_images]
-    image_labels = {s.label for s in with_image}
-    included = [s for s in sources if s.label in image_labels or s.text]
-    return [s for s in sources if s.label in image_labels], included
-
-
 def messages(question: str, image_sources: list[Source], sources: list[Source]) -> list[dict]:
-    content: list[dict[str, Any]] = [{"type": "image"} for _ in image_sources]
+    content: list[dict[str, Any]] = []
+    for s in image_sources:  # each image follows its label, in source order
+        content += [{"type": "text", "text": image_label(s)}, {"type": "image"}]
     content.append({"type": "text", "text": user_text(question, sources)})
     return [
         {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},

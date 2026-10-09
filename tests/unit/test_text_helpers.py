@@ -9,8 +9,7 @@ import pytest
 from qwn.adapters.mlx_lm_guard import parse_verdict
 from qwn.adapters.mlx_vlm_embed import messages as embed_messages
 from qwn.adapters.mlx_vlm_embed import truncate_and_normalize
-from qwn.adapters.mlx_vlm_gen import plan_sources
-from qwn.answer import parse_citations
+from qwn.answer import parse_citations, plan_sources
 from qwn.interfaces import Item, Source
 from qwn.prompts import ABSTAIN_TEXT, SYSTEM_PROMPT, source_block, user_text
 
@@ -137,3 +136,13 @@ def test_plan_sources_sends_top_images_and_drops_imageless_overflow():
     images, included = plan_sources(sources, max_images=2)
     assert [s.label for s in images] == ["S1", "S3"]
     assert [s.label for s in included] == ["S1", "S3", "S4"]
+
+
+def test_generator_messages_label_each_image_before_it():
+    from qwn.adapters.mlx_vlm_gen import messages
+
+    img = Path("p.webp")
+    s1, s2 = _src("S1", image=img, text=""), _src("S2", image=None, text="passage")
+    content = messages("why?", [s1], [s1, s2])[1]["content"]
+    assert content[:2] == [{"type": "text", "text": "[S1] page image:"}, {"type": "image"}]
+    assert content[2]["type"] == "text" and content[2]["text"].endswith("Question: why?")
