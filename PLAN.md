@@ -415,7 +415,9 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
   generated 2-page PDF: text came back exact; a 150 dpi render is 1275×1651 px, ~8 KB as WebP q85.
 - **Library**: `sqlite-vec>=0.1.9`. Load it with `sqlite_vec.load(conn)` after
   `conn.enable_load_extension(True)`. Checked: the uv Python 3.12 build has SQLite 3.53 with
-  extension loading enabled. The `vec0` dimension comes from `meta.embed_dim` when the schema is
+  extension loading enabled. *(phase 1)* The python.org macOS build (what CI's runner had on its PATH)
+  is compiled without it, so `pyproject.toml` sets `[tool.uv] python-preference = "only-managed"`
+  and `index.py` stops with a clear message if extension loading is missing. The `vec0` dimension comes from `meta.embed_dim` when the schema is
   created.
 - **Virtual tables don't cascade.** `ON DELETE CASCADE` cleans up `chunks`, but `vec_chunks` rows
   must be deleted explicitly (`DELETE FROM vec_chunks WHERE rowid IN (SELECT rowid FROM chunks

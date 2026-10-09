@@ -183,6 +183,13 @@ class Index:
         if conn is None:
             self.root.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(self.path, isolation_level=None)  # explicit transactions
+            if not hasattr(conn, "enable_load_extension"):
+                conn.close()
+                raise RuntimeError(
+                    "This Python's sqlite3 can't load extensions, which sqlite-vec needs. "
+                    "Use uv's managed Python (pyproject sets python-preference = only-managed): "
+                    "rm -rf .venv && uv sync"
+                )
             conn.enable_load_extension(True)
             sqlite_vec.load(conn)
             conn.enable_load_extension(False)
