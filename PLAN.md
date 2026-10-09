@@ -11,8 +11,10 @@ group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*
 **Phase 0** (env + checks) is merged into `main` (2026-10-08). **Phase 1** (retrieval) is merged into
 `main` (2026-10-09, PR #1, v0.2.0; results under Evaluation → Phase 1 results). **Phase 2**
 (answering) is merged into `main` (2026-10-09, PR #3, v0.3.0; results under Evaluation → Phase 2
-results; one accepted known gap, see Security → Prompt injection). **Not done:** phases 3–6,
-starting with phase 3.
+results; one accepted known gap, see Security → Prompt injection). **Phase 3** (safety) is merged
+into `main` (2026-10-09, PR #5, v0.4.0; results under Evaluation → Phase 3 results; PII-only
+answers allowed, see Prompts and parameters → Guard parsing). **Not done:** phases 4–6, starting
+with phase 4 (phase 5 may go first; see Phases).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
