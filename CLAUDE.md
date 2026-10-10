@@ -12,7 +12,8 @@ unclear, stop and ask; don't improvise around it. When the user agrees to a chan
 `PLAN.md` in the same PR.
 All phases are merged (v0.7.0); new work is the follow-ups listed in "Start here", one PR each.
 After a phase merges, a separate `plan/phase-N-merged` PR updates "Start here". The user merges
-PRs (`gh pr merge N --squash --auto --delete-branch`; `--auto` waits for the required CI check).
+PRs after the required CI check passes (`gh pr checks N --watch`, then `gh pr merge N --squash
+--delete-branch`); the repo has auto-merge off, so `--auto` fails.
 
 ## Commands
 
