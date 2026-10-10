@@ -4,9 +4,13 @@ import math
 import warnings
 from pathlib import Path
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
+
+from qwn.interfaces import Box
 
 WEBP_QUALITY = 85
+HIGHLIGHT = "#0E6B63"  # the theme's primary teal (.streamlit/config.toml, light)
+DIM = 0.25  # how much the area outside the highlight is darkened
 
 
 class ImageRejected(ValueError):
@@ -53,3 +57,21 @@ def normalize(src: Path, dst: Path, *, max_pixels: int, max_image_pixels: int) -
     except OSError as e:  # truncated or corrupt data
         raise ImageRejected(f"unreadable image ({e})") from None
     save_webp(upright, dst, max_pixels=max_pixels)
+
+
+def highlight(src: Path, box: Box) -> Image.Image:
+    """A copy of the page at `src` with `box` outlined in teal and the rest slightly dimmed."""
+    with Image.open(src) as img:
+        page = img.convert("RGB")
+    w, h = page.size
+    rect = (round(box.x0 * w), round(box.y0 * h), round(box.x1 * w), round(box.y1 * h))
+    out = Image.blend(page, Image.new("RGB", page.size, "black"), DIM)
+    out.paste(page.crop(rect), rect[:2])
+    width = max(3, round(min(w, h) / 250))
+    pad = width  # outline just outside the box, so it doesn't cover the text it frames
+    ImageDraw.Draw(out).rectangle(
+        (rect[0] - pad, rect[1] - pad, rect[2] + pad - 1, rect[3] + pad - 1),
+        outline=HIGHLIGHT,
+        width=width,
+    )
+    return out

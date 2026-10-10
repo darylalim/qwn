@@ -40,6 +40,8 @@ uv run qwn eval review                        # turn 👍/👎 Chat ratings into
   Mac, answered like a typed question, and the answer is read aloud. Silent or empty recordings
   are rejected with "Didn't catch that, try again". Voice models load on first use and unload
   after 10 idle minutes.
+- **Check a citation:** under an answer, **Open page** shows the cited page with the passage that
+  supports the answer outlined (approximate; found when you open it, which takes a few seconds).
 - **Supported files:** PDF, PNG, JPEG, WebP, Markdown and plain text. Export slides to PDF first.
 - **One process at a time:** only one qwn process can hold the models. Close the UI before running
   `ingest`, `search`, `ask` or `eval` from the CLI.
@@ -52,7 +54,9 @@ uv run qwn eval review                        # turn 👍/👎 Chat ratings into
    merged, and a reranker keeps the best five.
 3. **Answer:** Qwen3-VL-8B reads the page images and text and answers, citing each source.
 4. **Check:** Qwen3Guard screens the question and the answer.
-5. **Voice (optional):** Silero VAD trims silence and rejects empty recordings, Qwen3-ASR
+5. **Highlight:** when you open a cited page, Qwen3-VL-8B finds where on it the answer is
+   supported, and the page is shown with that passage outlined.
+6. **Voice (optional):** Silero VAD trims silence and rejects empty recordings, Qwen3-ASR
    transcribes the question, and Qwen3-TTS reads the answer aloud.
 
 ## Models and licenses

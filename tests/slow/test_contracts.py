@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from PIL import Image, ImageDraw, ImageFont
 from samples import CAKE, PAGE
 
 from qwn.interfaces import Item, Source
@@ -129,3 +130,24 @@ def test_generator_decodes_at_least_35_tokens_per_second(registry, page_image):
     gen = registry.generator()
     gen.answer("Summarise the page in about 150 words.", [source], greedy=True)
     assert getattr(gen, "last_tps", 0.0) >= 35.0
+
+
+def test_generator_locates_the_supporting_line_on_a_0_to_1000_scale(registry, tmp_path):
+    """Qwen3-VL reports boxes on a relative 0-1000 scale (Qwen2.5-VL used pixels): a box for a
+    line low on the page lands there, whatever the image size."""
+    img = Image.new("RGB", (1240, 1754), "white")
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default(size=36)
+    draw.text((100, 200), CAKE, fill="black", font=font)
+    fact = "Q3 revenue grew 12% year over year to 4.2 million euros."
+    draw.text((100, 1200), fact, fill="black", font=font)
+    x0, y0, x1, y1 = draw.textbbox((100, 1200), fact, font=font)
+    img.save(tmp_path / "page.png")
+    cx, cy = (x0 + x1) / 2 / 1240, (y0 + y1) / 2 / 1754
+
+    claim = "Q3 revenue grew 12% to 4.2 million euros."
+    box = registry.generator().locate(tmp_path / "page.png", claim)
+    assert box is not None
+    assert box.x0 <= cx <= box.x1 and box.y0 <= cy <= box.y1
+    assert box.y0 > 200 / 1754  # not the cake line
+    assert registry.generator().locate(tmp_path / "page.png", claim) == box  # greedy

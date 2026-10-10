@@ -1,6 +1,7 @@
 """`qwn eval`: retrieval metrics, intervals, exit criteria and baselines (PLAN.md → Evaluation).
 
-Retrieval metrics always; answer metrics unless `--no-generate`; Guard metrics with `--guard`.
+Retrieval metrics always; answer metrics unless `--no-generate`; Guard metrics with `--guard`;
+highlight metrics with `--locate` (phase 6).
 Results never include document, answer or guard-prompt text, only ids, paths, ranks, labels, flags
 and timings.
 """
@@ -17,7 +18,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import astuple, dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
@@ -28,6 +29,7 @@ from qwn.config import Settings
 from qwn.guard import Screen
 from qwn.index import Chunk, Index, IndexMismatch
 from qwn.ingest import HEADING_SEP, Ingester, ingest_hash, open_index
+from qwn.interfaces import Box
 from qwn.models import Registry
 from qwn.models_lock import pinned
 from qwn.retrieve import EmptyScope, Hit, Retriever
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 SetName = Literal["public", "private"]
 TAGS = ("text", "scan", "chart", "table", "screenshot", "markdown", "exact", "injection")
 KS = (1, 5, 10)
+ASK_STAGES = ("embed", "search", "rerank", "generate")  # what `qwn ask` waits for (no Guard)
 BOOTSTRAP_RESAMPLES = 1000
 
 # Settings that change results (paths excluded): part of settings_hash.
@@ -75,7 +78,7 @@ class Query:
     answer_contains: list[str] = field(default_factory=list)
     answer_must_not_contain: list[str] = field(default_factory=list)
     scope: list[str] = field(default_factory=list)  # "in" (phase 2)
-    region: list[float] | None = None  # phase 6
+    region: list[float] | None = None  # phase 6: [x0, y0, x1, y1] on expected[0], 0..1
 
     @property
     def answerable(self) -> bool:
@@ -108,9 +111,20 @@ def load_queries(path: Path) -> list[Query]:
             raise EvalError(f"{path.name} line {n}: duplicate id {q.id}")
         if any("path" not in item for item in q.expected):
             raise EvalError(f"{path.name} line {n}: every expected item needs a path")
+        if q.region is not None and not _valid_region(q.region):
+            raise EvalError(f"{path.name} line {n}: region must be [x0, y0, x1, y1] within 0..1")
         seen.add(q.id)
         out.append(q)
     return out
+
+
+def _valid_region(region: Any) -> bool:
+    if not (isinstance(region, list) and len(region) == 4):
+        return False
+    if not all(isinstance(v, int | float) and not isinstance(v, bool) for v in region):
+        return False
+    x0, y0, x1, y1 = region
+    return 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1
 
 
 @dataclass(frozen=True)
@@ -366,6 +380,7 @@ class Options:
     hybrid: bool = True
     generate: bool = False  # answer metrics (greedy decoding)
     guard: bool = False  # Guard metrics on the guard set; not in settings_hash (see differences)
+    locate: bool = False  # highlight metrics on queries with a region; needs `generate`
 
     def as_dict(self) -> dict[str, bool]:
         return {"rerank": self.rerank, "hybrid": self.hybrid, "generate": self.generate}
@@ -400,7 +415,7 @@ def run(
     load_s = time.perf_counter() - t0
 
     timings: dict[str, list[float]] = {
-        stage: [] for stage in ("embed", "search", "rerank", "generate", "ask", "guard")
+        stage: [] for stage in ("embed", "search", "rerank", "generate", "ask", "guard", "locate")
     }
     per_query: list[dict[str, Any]] = []
     # without generation, unanswerable queries have nothing to score
@@ -439,9 +454,12 @@ def run(
                 check = screen.response(q.query, strip_citations(response.text))
                 timings["guard"].append(time.perf_counter() - t)
                 row["guard_response"] = {"label": check.verdict.label, "action": check.action}
-        timings["ask"].append(
-            sum(v[-1] for k, v in timings.items() if k not in ("ask", "guard") and v)
-        )
+            if options.locate and q.answerable and q.region is not None:
+                t = time.perf_counter()
+                row.update(locate_row(q, response, answerer, es.root))
+                if "locate_hit" in row:
+                    timings["locate"].append(time.perf_counter() - t)
+        timings["ask"].append(sum(v[-1] for k, v in timings.items() if k in ASK_STAGES and v))
         per_query.append(row)
     if progress is not None:
         progress(len(todo), len(todo))
@@ -491,6 +509,16 @@ def run(
         result["guard"] = {"summary": guard_summary(guard_rows), "per_prompt": guard_rows}
         if options.generate:
             result["guard"]["answers"] = guarded_answers(per_query)
+    if options.locate:
+        located = [r for r in per_query if "locate" in r]
+        result["locate"] = {
+            "summary": locate_summary(located),
+            "by_tag": {
+                tag: locate_summary([r for r in located if tag in r["tags"]])
+                for tag in TAGS
+                if any(tag in r["tags"] for r in located)
+            },
+        }
     result["latency"] = latency(timings, load_s, registry)
     result["per_query"] = per_query
     result["criteria"] = criteria(result, options)
@@ -615,6 +643,43 @@ def _cited_item(hit: Hit, root: Path) -> dict[str, Any]:
     return item
 
 
+def locate_row(q: Query, response: Response, answerer: Answerer, root: Path) -> dict[str, Any]:
+    """Highlight on the page that holds `q.region` (its first expected item). Scored only when the
+    answer cites that page, as the UI only opens cited pages; `locate_hit` = the box contains the
+    region's centre. Rows keep the box (coordinates only)."""
+    item = q.expected[0]
+    label = next(
+        (
+            s.label
+            for s, h in response.cited_sources()
+            if s.image_path is not None and matches(h.chunk, item, root)
+        ),
+        None,
+    )
+    if label is None or q.region is None:
+        return {"locate": "not_cited"}
+    box = answerer.locate(response, label)
+    return {
+        "locate": "scored",
+        "locate_box": None if box is None else [round(v, 3) for v in astuple(box)],
+        "locate_hit": box is not None and contains_centre(box, q.region),
+    }
+
+
+def contains_centre(box: Box, region: list[float]) -> bool:
+    cx, cy = (region[0] + region[2]) / 2, (region[1] + region[3]) / 2
+    return box.x0 <= cx <= box.x1 and box.y0 <= cy <= box.y1
+
+
+def locate_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    scored = [r for r in rows if "locate_hit" in r]
+    out: dict[str, Any] = {"not_cited": sum(r["locate"] == "not_cited" for r in rows)}
+    if scored:
+        out["locate_hit"] = proportion([r["locate_hit"] for r in scored])
+        out["no_box"] = proportion([r["locate_box"] is None for r in scored])
+    return out
+
+
 def answer_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     answerable = [r for r in rows if r["answerable"]]
     unanswerable = [r for r in rows if not r["answerable"]]
@@ -690,12 +755,14 @@ def _at_most(name: str, metric: dict[str, Any], threshold: float) -> Criterion:
 
 def criteria(result: dict[str, Any], options: Options) -> list[dict[str, Any]]:
     """PLAN.md → Evaluation → Exit criteria: phase 1 always, phase 2 when answers were scored,
-    phase 3 when Guard was."""
+    phase 3 when Guard was, phase 6 when highlights were."""
     out = retrieval_criteria(result, options)
     if "answer" in result:
         out += answer_criteria(result["answer"]["summary"])
     if "guard" in result:
         out += guard_criteria(result["guard"]["summary"], result["guard"].get("answers"))
+    if "locate" in result:
+        out += locate_criteria(result["locate"]["summary"])
     return [c.__dict__ for c in out]
 
 
@@ -720,6 +787,15 @@ def guard_criteria(g: dict[str, Any], answers: dict[str, Any] | None = None) -> 
         detail = f"{len(withheld)}/{answers['checked']} withheld"
         out.append(Criterion("guard withholds no answers", not withheld, detail))
     return out
+
+
+def locate_criteria(s: dict[str, Any]) -> list[Criterion]:
+    if "locate_hit" not in s:
+        return [Criterion("locate_hit", False, "no cited pages with a region to score")]
+    return [
+        _at_least("locate_hit", s["locate_hit"], 0.70),
+        _at_most("no usable box", s["no_box"], 0.15),
+    ]
 
 
 def retrieval_criteria(result: dict[str, Any], options: Options) -> list[Criterion]:
@@ -796,6 +872,7 @@ def changes(baseline: dict[str, Any], result: dict[str, Any]) -> list[str]:
         for key, yes, no in (
             ("citation_hit", "now cites an expected item", "no longer cites an expected item"),
             ("abstained", "now abstains", "no longer abstains"),
+            ("locate_hit", "highlight now hits the region", "highlight no longer hits the region"),
         ):
             if key in r and key in b and r[key] != b[key]:
                 lines.append(f"{r['id']}: {yes if r[key] else no}")
@@ -866,9 +943,11 @@ def format_report(result: dict[str, Any]) -> str:
         lines += answer_report(result["answer"])
     if "guard" in result:
         lines += guard_report(result["guard"], meta["guard"]["controversial"])
+    if "locate" in result:
+        lines += locate_report(result["locate"], result["per_query"])
     lat = result["latency"]
     lines += ["", "Latency (models loaded)"]
-    for stage in ("embed", "search", "rerank", "generate", "ask", "guard"):
+    for stage in ("embed", "search", "rerank", "generate", "ask", "guard", "locate"):
         if stage in lat:
             p50, p95 = lat[stage]["p50_ms"], lat[stage]["p95_ms"]
             lines.append(f"  {stage:<8} p50 {p50:8.1f} ms   p95 {p95:8.1f} ms")
@@ -880,6 +959,8 @@ def format_report(result: dict[str, Any]) -> str:
         phases.append("phase 2: answers")
     if "guard" in result:
         phases.append("phase 3: guard")
+    if "locate" in result:
+        phases.append("phase 6: highlighting")
     lines += ["", f"Exit criteria ({', '.join(phases)})"]
     for c in result["criteria"]:
         mark = "✓ pass" if c["passed"] else "✗ FAIL"
@@ -913,6 +994,26 @@ def answer_report(answer: dict[str, Any]) -> list[str]:
             for key in ("citation_hit", "answer_contains", "abstention", "false_abstention")
         ]
         lines.append(f"  {tag:<12}  " + "     ".join(cells))
+    return lines
+
+
+def locate_report(locate: dict[str, Any], per_query: list[dict[str, Any]]) -> list[str]:
+    s = locate["summary"]
+    lines = ["", "Highlights on cited pages (value [95% CI])"]
+    for key, name in (("locate_hit", "locate_hit"), ("no_box", "no usable box")):
+        if key in s:
+            lines.append(f"  {name:<22} {_pct(s[key])}  n={s[key]['n']}")
+    lines.append(f"  {'region page not cited':<22} {s['not_cited']}")
+    lines += ["", "By tag          locate_hit  no box"]
+    for tag, t in locate["by_tag"].items():
+        if "locate_hit" in t:
+            lines.append(
+                f"  {tag:<12}  {t['locate_hit']['value']:.3f} n={t['locate_hit']['n']:<3}"
+                f" {t['no_box']['value']:.3f}"
+            )
+    misses = [r["id"] for r in per_query if r.get("locate_hit") is False]
+    if misses:
+        lines.append(f"  missed: {', '.join(misses)}")
     return lines
 
 

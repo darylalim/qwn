@@ -507,7 +507,9 @@ def eval_(
     guard: Annotated[
         bool, typer.Option("--guard", help="Also score Guard on eval/public/guard.jsonl.")
     ] = False,
-    locate: Annotated[bool, typer.Option("--locate", help="Highlight metrics (phase 6).")] = False,
+    locate: Annotated[
+        bool, typer.Option("--locate", help="Also score highlights on cited pages (phase 6).")
+    ] = False,
     update_baseline: Annotated[
         bool, typer.Option("--update-baseline", help="Save this run as the set's baseline.")
     ] = False,
@@ -527,8 +529,8 @@ def eval_(
     settings: Settings = ctx.obj
     if set_ not in ("public", "private"):
         raise _fail("--set must be public or private.")
-    if locate:
-        raise _fail("--locate arrives in phase 6.")
+    if locate and not generate:
+        raise _fail("--locate scores highlights on answers: drop --no-generate.")
     if clean:
         for path in ev.clean_public(settings):
             typer.echo(f"removed {path}")
@@ -546,7 +548,7 @@ def eval_(
             es,
             index,
             registry,
-            ev.Options(rerank=rerank, hybrid=hybrid, generate=generate, guard=guard),
+            ev.Options(rerank=rerank, hybrid=hybrid, generate=generate, guard=guard, locate=locate),
             progress=progress,
         )
     except (ev.EvalError, IndexMismatch, *EXPECTED_ERRORS) as e:

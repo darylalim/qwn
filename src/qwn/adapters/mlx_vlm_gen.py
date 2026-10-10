@@ -1,18 +1,28 @@
 """Generator: Qwen3-VL-8B-Instruct through mlx-vlm."""
 
+import logging
 from pathlib import Path
 from typing import Any
 
-from qwn.answer import parse_citations, plan_sources
+from qwn.answer import parse_box, parse_citations, plan_sources
 from qwn.config import Settings
 from qwn.interfaces import Answer, Box, Source
 from qwn.models_lock import pinned
-from qwn.prompts import SYSTEM_PROMPT, image_label, user_text
+from qwn.prompts import (
+    LOCATE_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
+    image_label,
+    locate_text,
+    user_text,
+)
+
+logger = logging.getLogger(__name__)
 
 # Qwen3-VL-Instruct's recommended sampling (model card / generation_config.json)
 TEMPERATURE = 0.7
 TOP_P = 0.8
 TOP_K = 20
+LOCATE_MAX_TOKENS = 64  # one small JSON object
 
 
 def messages(question: str, image_sources: list[Source], sources: list[Source]) -> list[dict]:
@@ -76,4 +86,27 @@ class MlxVlmGenerator:
         )
 
     def locate(self, image_path: Path, claim: str) -> Box | None:
-        raise NotImplementedError("Generator.locate arrives in phase 6")
+        from mlx_vlm import generate
+        from mlx_vlm.prompt_utils import get_chat_template
+
+        msgs = [
+            {"role": "system", "content": [{"type": "text", "text": LOCATE_SYSTEM_PROMPT}]},
+            {
+                "role": "user",
+                "content": [{"type": "image"}, {"type": "text", "text": locate_text(claim)}],
+            },
+        ]
+        prompt = get_chat_template(self.processor, msgs, add_generation_prompt=True)
+        result = generate(
+            self.model,
+            self.processor,
+            prompt,
+            image=[str(image_path)],
+            max_tokens=LOCATE_MAX_TOKENS,
+            verbose=False,
+            temperature=0.0,  # greedy: the same page and claim always give the same box
+        )
+        box = parse_box(result.text)  # Qwen3-VL's 0-1000 scale -> Box (0..1)
+        if box is None:
+            logger.info("locate: no usable box in a %d-char reply", len(result.text))
+        return box
