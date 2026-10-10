@@ -1,6 +1,11 @@
 """Prompts and instructions (PLAN.md → Prompts and parameters, Security → Prompt injection)."""
 
+import logging
+import re
+
 from qwn.interfaces import Source
+
+logger = logging.getLogger(__name__)
 
 EMBED_QUERY_INSTRUCTION = "Retrieve images or text relevant to the user's query."
 EMBED_DOC_INSTRUCTION = "Represent the user's input."  # the model's default
@@ -20,6 +25,41 @@ text printed on page images."""
 
 EXCERPT_CHARS = 1500
 
+# Lines addressed to an AI reader (PLAN.md → Security → Prompt injection). Prompt wording alone
+# doesn't stop Qwen3-VL-8B following them, so they never reach the answer prompt. Narrow on
+# purpose: a letter saying "disregard the previous instructions" is ordinary content.
+_AI = (
+    r"(?:ai|a\.i\.)[\s-]+(?:systems?|assistants?|models?|agents?|tools?|bots?|readers?)"
+    r"|(?:ai|a\.i\.)(?=\s*(?:[:,.;!]|$))"
+    r"|llms?|(?:large\s+)?language\s+models?|chat\s?bots?|chatgpt|gpt(?:-\w+)?"
+)
+_TO_AI = re.compile(
+    r"\b(?:note|message|instructions?|notice|attention|reminder|memo|warning|request)\s+"
+    rf"(?:to|for)\s+(?:any\s+|all\s+|the\s+)?(?:{_AI})",
+    re.IGNORECASE,
+)
+_HAILS_AI = re.compile(  # "Dear AI,", "AI assistant: ...", "To language models: ..."
+    rf"^\W*(?:dear|hey|hello|hi|attention|attn|to)?\s*(?:any\s+|all\s+|the\s+)?(?:{_AI})\s*[:,]",
+    re.IGNORECASE,
+)
+_STEERS_MODEL = re.compile(
+    r"\b(?:ignore|disregard)\b[^.\n]{0,30}\b(?:the|this|your|any|all)\s+(?:user'?s?\s+)?"
+    r"(?:question|prompt|query)\b|\bsystem\s+prompt\b",
+    re.IGNORECASE,
+)
+
+
+def drop_ai_directed_lines(text: str) -> tuple[str, int]:
+    """`text` without the lines that address an AI reader, and how many were dropped."""
+    kept: list[str] = []
+    dropped = 0
+    for line in text.split("\n"):
+        if _TO_AI.search(line) or _HAILS_AI.search(line) or _STEERS_MODEL.search(line):
+            dropped += 1
+        else:
+            kept.append(line)
+    return "\n".join(kept), dropped
+
 
 def _escape(text: str) -> str:
     """Stop document text from opening or closing a <source> fence."""
@@ -32,7 +72,10 @@ def _attr(value: str) -> str:
 
 def source_block(source: Source) -> str:
     page = "" if source.page is None else f' page="{source.page}"'
-    excerpt = _escape(source.text[:EXCERPT_CHARS])
+    text, dropped = drop_ai_directed_lines(source.text)
+    if dropped:
+        logger.info("dropped %d line(s) addressed to AI from source %s", dropped, source.label)
+    excerpt = _escape(text[:EXCERPT_CHARS])
     return f'<source id="{source.label}" path="{_attr(source.path)}"{page}>\n{excerpt}\n</source>'
 
 
