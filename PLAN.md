@@ -17,7 +17,11 @@ answers allowed, see Prompts and parameters → Guard parsing). **Phase 5** (Str
 before phase 4 (agreed 2026-10-09; see Phases) and is merged into `main` (2026-10-09, PR #7,
 v0.5.0; notes under Streamlit UI; pages in `ui/app_pages/`). **Phase 4** (voice) is merged into
 `main` (2026-10-09, PR #10, v0.6.0; findings under Voice input pipeline → Phase 4 findings, results
-under Evaluation → Phase 4 results; voice is wired into the Chat page). **Not done:** phase 6.
+under Evaluation → Phase 4 results; voice is wired into the Chat page). **Phase 6** (highlighting)
+is merged into `main` (2026-10-10, PR #12, v0.7.0; findings under Streamlit UI → Answer
+highlighting, results under Evaluation → Phase 6 results). **All phases are done.** Open
+follow-ups: a non-prompt injection defence (Security → Prompt injection), a harder public eval
+tier (needs a planning session), and tighter chart/table highlight regions (Phase 6 results).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
