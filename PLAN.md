@@ -15,8 +15,9 @@ results; one accepted known gap, see Security → Prompt injection). **Phase 3**
 into `main` (2026-10-09, PR #5, v0.4.0; results under Evaluation → Phase 3 results; PII-only
 answers allowed, see Prompts and parameters → Guard parsing). **Phase 5** (Streamlit UI) went
 before phase 4 (agreed 2026-10-09; see Phases) and is merged into `main` (2026-10-09, PR #7,
-v0.5.0; notes under Streamlit UI; pages in `ui/app_pages/`). **Not done:** phases 4 and 6, starting
-with phase 4, which also wires voice into the Chat page (it merges after phase 5).
+v0.5.0; notes under Streamlit UI; pages in `ui/app_pages/`). **Phase 4** (voice) is merged into
+`main` (2026-10-09, PR #10, v0.6.0; findings under Voice input pipeline → Phase 4 findings, results
+under Evaluation → Phase 4 results; voice is wired into the Chat page). **Not done:** phase 6.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
