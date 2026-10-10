@@ -10,6 +10,10 @@ CLI and a Streamlit UI. Target machine: M2 Max, 32 GB.
 and per PR**, in order, and stop when that phase's exit criteria are met. If the plan is wrong or
 unclear, stop and ask; don't improvise around it. When the user agrees to a change, update
 `PLAN.md` in the same PR.
+All phases are merged (v0.7.0); new work is the follow-ups listed in "Start here", one PR each.
+After a phase merges, a separate `plan/phase-N-merged` PR updates "Start here". The user merges
+PRs after the required CI check passes (`gh pr checks N --watch`, then `gh pr merge N --squash
+--delete-branch`); the repo has auto-merge off, so `--auto` fails.
 
 ## Commands
 
@@ -17,10 +21,11 @@ unclear, stop and ask; don't improvise around it. When the user agrees to a chan
 uv sync                               # install from uv.lock
 uv run ruff format . && uv run ruff check --fix .
 uv run ty check
-uv run pytest -m "not slow"           # fast tests: fakes only, no model downloads (<15 s)
+uv run pytest -m "not slow"           # fast tests: fakes only, no model downloads (<15 s; ~14.5 s now)
 uv run pytest                         # everything incl. slow real-model tests (~13 GB models, local only)
 uv run qwn models pull                # the ONLY command that may use the network
-uv run qwn eval --set public          # phase exit criteria (from phase 1)
+uv run qwn eval --set public --guard --locate   # all exit criteria; ~40 min with answers: run in background
+uv run python eval/public/build_corpus.py --regions   # rewrite query regions after changing the corpus layout
 uv run qwn ui                         # Streamlit (localhost only)
 uv version --bump minor               # one minor release per completed phase (from phase 1)
 ```
@@ -47,6 +52,12 @@ uv version --bump minor               # one minor release per completed phase (f
   Responsive layout.
 - **Eval baselines** change only via `qwn eval --update-baseline`, in the same PR as the change
   that moved them, with the per-query changes explained in the PR.
+  If `queries.jsonl` changed (`eval_set_hash`), the tool won't compare runs: diff `per_query`
+  against `git show HEAD:eval/public/baseline.json` by hand. Corpus files must stay
+  byte-identical (`corpus_hash`) unless the change is intended.
+- **Model output formats:** before parsing a new kind of model reply, run a scratch probe with
+  greedy decoding on a few public-corpus pages (scratchpad, not the repo), then pin the format
+  with a `slow` test.
 - **Before every commit:** format, lint, ty and fast tests pass (hook H4 enforces this at stop; CI
   repeats it). Before merging a phase: slow tests, eval and the PLAN.md merge checklist.
 
