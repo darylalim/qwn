@@ -11,6 +11,7 @@ and per PR**, in order, and stop when that phase's exit criteria are met. If the
 unclear, stop and ask; don't improvise around it. When the user agrees to a change, update
 `PLAN.md` in the same PR.
 All phases are merged (v0.7.0); new work is the follow-ups listed in "Start here", one PR each.
+Follow-ups update "Start here" in the same PR (no separate plan PR) and don't bump the version.
 After a phase merges, a separate `plan/phase-N-merged` PR updates "Start here". The user merges
 PRs after the required CI check passes (`gh pr checks N --watch`, then `gh pr merge N --squash
 --delete-branch`); the repo has auto-merge off, so `--auto` fails.
@@ -26,6 +27,7 @@ uv run pytest                         # everything incl. slow real-model tests (
 uv run qwn models pull                # the ONLY command that may use the network
 uv run qwn eval --set public --guard --locate   # all exit criteria; ~40 min with answers: run in background
 uv run python eval/public/build_corpus.py --regions   # rewrite query regions after changing the corpus layout
+uv run python eval/public/build_corpus.py <scratch>/new   # then diff -r against a build from git stash: corpus must be byte-identical
 uv run qwn ui                         # Streamlit (localhost only)
 uv version --bump minor               # one minor release per completed phase (from phase 1)
 ```
@@ -55,6 +57,8 @@ uv version --bump minor               # one minor release per completed phase (f
   If `queries.jsonl` changed (`eval_set_hash`), the tool won't compare runs: diff `per_query`
   against `git show HEAD:eval/public/baseline.json` by hand. Corpus files must stay
   byte-identical (`corpus_hash`) unless the change is intended.
+  A change that only affects scoring (e.g. `region`) can be predicted exactly by re-scoring the
+  committed baseline's `per_query` (e.g. `locate_box`) before the full eval run.
 - **Model output formats:** before parsing a new kind of model reply, run a scratch probe with
   greedy decoding on a few public-corpus pages (scratchpad, not the repo), then pin the format
   with a `slow` test.
