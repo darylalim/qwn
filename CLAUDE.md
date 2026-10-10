@@ -12,6 +12,8 @@ unclear, stop and ask; don't improvise around it. When the user agrees to a chan
 `PLAN.md` in the same PR.
 All phases are merged (v0.7.0); new work is the follow-ups listed in "Start here", one PR each.
 Follow-ups update "Start here" in the same PR (no separate plan PR) and don't bump the version.
+A follow-up marked "needs a planning session" is the exception: plan it on `plan/<name>` (only
+`PLAN.md` changes), merge that PR, then implement in a new session.
 After a phase merges, a separate `plan/phase-N-merged` PR updates "Start here". The user merges
 PRs after the required CI check passes (`gh pr checks N --watch`, then `gh pr merge N --squash
 --delete-branch`); the repo has auto-merge off, so `--auto` fails.
@@ -59,6 +61,8 @@ uv version --bump minor               # one minor release per completed phase (f
   byte-identical (`corpus_hash`) unless the change is intended.
   A change that only affects scoring (e.g. `region`) can be predicted exactly by re-scoring the
   committed baseline's `per_query` (e.g. `locate_box`) before the full eval run.
+  The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
+  tuning changes on the hard set (PLAN.md → Harder tier) once it exists.
 - **Model output formats:** before parsing a new kind of model reply, run a scratch probe with
   greedy decoding on a few public-corpus pages (scratchpad, not the repo), then pin the format
   with a `slow` test.
