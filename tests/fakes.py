@@ -90,6 +90,67 @@ class FakeGuard:
         return self._verdict(response, refusal=True)
 
 
+class FakeVad:
+    """Energy VAD: 32 ms frames louder than `level` RMS are speech; gaps under 0.3 s are joined."""
+
+    model_id = "fake/vad@0"
+
+    def __init__(self, level: float = 0.05) -> None:
+        self.level = level
+        self.calls = 0
+
+    def speech_segments(self, audio: NDArray[np.float32]) -> list[tuple[float, float]]:
+        self.calls += 1
+        frame, rate = 512, 16_000
+        segments: list[tuple[float, float]] = []
+        for i in range(0, audio.size - frame + 1, frame):
+            if np.sqrt(np.mean(audio[i : i + frame] ** 2)) < self.level:
+                continue
+            start, end = i / rate, (i + frame) / rate
+            if segments and start - segments[-1][1] < 0.3:
+                segments[-1] = (segments[-1][0], end)
+            else:
+                segments.append((start, end))
+        return segments
+
+
+class FakeAsr:
+    """Returns `text` for every chunk; records each chunk's length in seconds."""
+
+    model_id = "fake/asr@0"
+
+    def __init__(self, text: str = "How much did revenue grow?") -> None:
+        self.text = text
+        self.chunks: list[float] = []
+
+    def transcribe(self, audio: NDArray[np.float32]) -> str:
+        self.chunks.append(audio.size / 16_000)
+        return self.text
+
+
+class FakeTts:
+    """A 220 Hz tone, 50 ms per character of text, at 16 kHz."""
+
+    model_id = "fake/tts@0"
+
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+
+    def synthesize(self, text: str) -> NDArray[np.float32]:
+        self.texts.append(text)
+        t = np.arange(round(len(text) * 0.05 * 16_000)) / 16_000
+        return (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+
+
+def tone_bursts(*parts: tuple[str, float], rate: int = 16_000) -> NDArray[np.float32]:
+    """Synthetic audio: ("speech", seconds) is a 440 Hz tone at 0.5, ("silence", s) is quiet."""
+    out = []
+    for kind, seconds in parts:
+        t = np.arange(round(seconds * rate)) / rate
+        out.append(0.5 * np.sin(2 * np.pi * 440 * t) if kind == "speech" else 0 * t)
+    return np.concatenate(out).astype(np.float32)
+
+
 GB = 10**9
 
 

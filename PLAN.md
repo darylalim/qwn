@@ -232,6 +232,16 @@ class Vad(Protocol):
     model_id: str
     def speech_segments(self, audio: NDArray[np.float32]) -> list[tuple[float, float]]: ...
     # (start_s, end_s) of detected speech, sorted, non-overlapping; [] = no speech
+
+class Asr(Protocol):               # phase 4: added with the adapters (the plan named them only)
+    model_id: str
+    def transcribe(self, audio: NDArray[np.float32]) -> str: ...
+    # one chunk of speech (≤ asr_max_seconds) → its text; greedy, so deterministic
+
+class Tts(Protocol):
+    model_id: str
+    def synthesize(self, text: str) -> NDArray[np.float32]: ...
+    # text → speech, mono float32 at 16 kHz
 ```
 
 ### Adapter notes (verified 2026-10-04; re-check in phase 0)
@@ -678,6 +688,37 @@ st.audio_input (click start / stop, browser WAV)
   `st.audio_input` records in the browser and only sends audio after you click stop, so the server
   can't end the recording. Hands-free would need a custom browser component doing live VAD plus
   end-of-turn detection (e.g. Smart Turn v3, 64 MB, BSD-2-Clause, also in mlx-audio).
+
+**Phase 4 findings (checked 2026-10-09 against mlx-audio 0.5.8):**
+
+- **VAD:** `mlx_audio.vad.load(path)`; `get_speech_timestamps(audio, sample_rate=16000,
+  threshold=, min_speech_duration_ms=, min_silence_duration_ms=, speech_pad_ms=,
+  return_seconds=True)` takes numpy arrays and returns `[{"start", "end"}]`. The adapter passes
+  `vad_threshold`, `vad_min_speech_ms` (per segment), `vad_min_silence_ms` and `speech_pad_ms=0`:
+  padding is `qwn.voice`'s job. Silence and noise (σ 0.05) both give `[]`.
+- **ASR:** `mlx_audio.stt.load(path)`; `model.generate(audio, max_tokens=, temperature=0.0)` takes
+  16 kHz numpy audio and returns `STTOutput.text` with the "language X<asr_text>" prefix already
+  removed. The language is auto-detected.
+- **TTS:** `mlx_audio.tts.load(path)`; `model.generate(text, voice="Ryan", lang_code="auto")`
+  (the CustomVoice model needs a preset speaker; Ryan is an English one) yields results at
+  24 kHz. The adapter speaks each line separately, joins them with a 0.35 s pause and resamples to
+  16 kHz. Sampling is the model's default (temperature 0.9), so speech varies slightly between
+  runs; the slow tests seed `mx.random`. What's spoken is `qwn.voice.speakable(answer)`: no `[S#]`
+  markers or markdown symbols. Blocked answers aren't spoken.
+- **No new packages:** WAV decoding (PCM 8/16/24/32-bit, float 32/64, any channel count) and
+  resampling (FFT, band-limited) are a few lines of numpy in `qwn.voice`, so scipy isn't needed.
+- **Eviction:** voice models record their last use; `Registry.evict_idle` unloads those idle for
+  `voice_idle_minutes`. It runs on every model request and once a minute in a daemon thread
+  that starts with the first voice load. Eviction waits for the MLX lock, so it never removes a
+  model mid-call.
+- **Chat page:** `st.audio_input("Ask out loud")` sits under "Search in". A new recording (by
+  SHA-256, so reruns don't ask twice) is transcribed in an `st.status`; the transcript becomes the
+  user's message (captioned ":material/mic: Spoken question"), the answer text shows, *then* TTS
+  runs and an `st.audio` player autoplays it once (replayable from history). Typed questions
+  aren't spoken. AppTest can't record, so the UI tests replace `st.audio_input` with a stub.
+- **Measured (M2 Max):** load VAD 1.1 s, ASR 0.6 s, TTS 17 s (cold; the speech tokenizer), 4.5 GB
+  active for all three; TTS peaks ~5 GB above that while speaking. Core + voice loaded together
+  passes the memory check.
 
 ### Theme (`.streamlit/config.toml`, committed)
 
@@ -1173,7 +1214,8 @@ tests/hooks/         run each .claude/hooks/*.sh via subprocess with JSON payloa
                      allow/deny/ask decisions and exit codes from the hooks section's test list
 tests/slow/          @pytest.mark.slow real-model contract tests: shapes, norms, determinism,
                      guard on known safe/unsafe prompts, mlx-vlm vs committed reference vectors (cos ≥ 0.99),
-                     phase 4: TTS → padded/noisy audio → VAD (±150 ms) → ASR (WER ≤ 10%); silence → []
+                     phase 4 (test_voice_models.py): TTS → padded/noisy audio → VAD (±150 ms) →
+                     ASR (WER ≤ 10%); silence → []; transcript ≤ 2 s; TTS RTF ≤ 0.5
 ```
 
 - Default `uv run pytest -m "not slow"`: runs in under 15 s with no downloads *(raised from 10 s
@@ -1429,6 +1471,18 @@ the interval's lower bound is under the threshold, the PR notes that the result 
 - **Latency:** Guard p50 0.16 s / p95 0.17 s per check, so `qwn ask` gains ~0.3 s (two checks)
   against p50 17.4 s / p95 34.7 s. MLX peak 14.2 GB with all 4 core models.
 
+### Phase 4 results (2026-10-09, M2 Max)
+
+- **All voice targets pass** (`tests/slow/test_voice_models.py`, models loaded):
+  - end of speech → transcript (VAD + ASR) for an 11.4 s question: **0.47 s** (target ≤ 2 s);
+  - TTS real-time factor: **0.23** (15.9 s of speech in 3.7 s; target ≤ 0.5); 0.28–0.39 on
+    shorter sentences;
+  - silent and noise-only recordings return `[]` and are rejected before ASR runs;
+  - VAD round trip: one segment within ±150 ms of the TTS speech (1 s of padding, low noise), and
+    ASR on the trimmed audio matches the sentence (WER ≤ 10%).
+- **Retrieval and answers unchanged:** voice is a front end to `Answerer.ask`; the public eval has
+  no per-query changes vs the phase 3 baseline.
+
 ## Phases
 
 | # | Phase | Deliverable | Exit criterion |
@@ -1492,7 +1546,7 @@ carries `License-Expression: Apache-2.0`).
   | MIT | mlx, mlx-lm, mlx-vlm, mlx-audio, typer, pydantic-settings |
   | Apache-2.0 | huggingface-hub |
   | Apache-2.0 | streamlit, transformers, all Qwen models used (VL-8B, Embedding, Reranker, Guard, ASR, TTS) |
-  | MIT (upstream; **confirm in phase 4**, as the HF repo has no licence tag) | Silero VAD model (`mlx-community/silero-vad`) |
+  | MIT (confirmed in phase 4: converted from `onnx-community/silero-vad`, tagged MIT; upstream snakers4/silero-vad is MIT) | Silero VAD model (`mlx-community/silero-vad`) |
   | MIT or Apache-2.0 | sqlite-vec |
   | BSD-3 / Apache-2.0 | pypdfium2 |
   | Apache-2.0 (dev only) | playwright (responsive UI tests; uses the installed Chrome) |

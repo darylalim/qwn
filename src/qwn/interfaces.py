@@ -96,3 +96,19 @@ class Vad(Protocol):
     def speech_segments(self, audio: NDArray[np.float32]) -> list[tuple[float, float]]: ...
 
     # (start_s, end_s) of detected speech, sorted, non-overlapping; [] = no speech
+
+
+class Asr(Protocol):
+    model_id: str
+
+    def transcribe(self, audio: NDArray[np.float32]) -> str: ...
+
+    # one chunk of speech (≤ asr_max_seconds) → its text; greedy, so deterministic
+
+
+class Tts(Protocol):
+    model_id: str
+
+    def synthesize(self, text: str) -> NDArray[np.float32]: ...
+
+    # text → speech, mono float32 at 16 kHz
