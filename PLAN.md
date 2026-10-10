@@ -22,8 +22,9 @@ is merged into `main` (2026-10-10, PR #12, v0.7.0; findings under Streamlit UI �
 highlighting, results under Evaluation → Phase 6 results). **All phases are done.** The
 non-prompt injection defence follow-up is done (text-layer filter, Security → Prompt injection;
 injection 4/4). The tighter chart/table highlight regions follow-up is done (Evaluation → Tighter
-regions results; `locate_hit` 0.914). Open follow-up: a harder public eval tier (needs a planning
-session).
+regions results; `locate_hit` 0.914). Open follow-up: **a harder eval tier** (planned 2026-10-10;
+read Evaluation, especially Harder tier, and Testing). It's a separate `hard` set that measures
+and has no exit criteria; the public set stays as it is.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -1367,8 +1368,10 @@ hash in every result confirms.
   element of the chunk's `heading_path` (its nearest heading).
 - `expected: []` means **unanswerable**: the right behaviour is to abstain.
 - `tags` drive the per-tag breakdown: `text`, `scan`, `chart`, `table`, `screenshot`, `markdown`,
-  `exact`, `unanswerable`, `injection`. A query can carry more than one (`exact` usually sits on
-  top of a content tag).
+  `exact`, `unanswerable`, `injection` (the hard set adds `version`, `multi`, `degraded`, `long`,
+  `paraphrase`, `near-miss`). A query can carry more than one (`exact` usually sits on top of a
+  content tag).
+- `match` and `answer_approx` (optional, hard set): see Harder tier.
 - `in` (optional): a scope, as a list of paths, for queries that test scoped search.
 - `region` (optional, phase 6): `[x0, y0, x1, y1]` (0..1, top-left origin) where the answer sits
   on the expected page or image; used by `qwn eval --locate`.
@@ -1447,6 +1450,99 @@ Each run writes `eval/results/<UTC timestamp>-<set>.json` (gitignored):
 - **Baselines:** `eval/public/baseline.json` is committed. `eval/private/baseline.json` stays
   local. Both change only via `qwn eval --update-baseline` (hook H2 blocks hand edits to the public
   one).
+
+### Harder tier (`eval/hard/`, follow-up, planned 2026-10-10)
+
+**Why:** the public set is saturated (recall@1/5/10 1.000, every rerank candidate count from 5 to
+20 scores the same; see Phase 1 and 2 results). It still catches regressions, but it can't show
+whether a change helps. The harder tier is a **third eval set** that measures; it has no exit
+criteria and never blocks a PR. One follow-up PR (branch `followup/hard-eval-tier`), no version
+bump.
+
+**Shape (agreed 2026-10-10):**
+
+- `qwn eval --set hard`. Committed: `eval/hard/queries.jsonl` (ids `hard-NNN`),
+  `eval/hard/baseline.json` (hook H2's `eval/*/baseline.json` already covers it) and
+  `eval/hard/build_corpus.py`. Guard runs use the public `guard.jsonl`, as the private set does.
+- **Corpus:** `data/eval-hard/` (gitignored) = the **whole public corpus** plus the new hard
+  documents, so the 28 public documents act as distractors. `eval/hard/build_corpus.py [OUT]`
+  imports the public `build()` and calls it first, then writes the hard documents with its own
+  `random.Random(SEED_HARD = 20261010)`. The public generator's output must stay byte-identical
+  (build it into a scratch folder and `diff -r` against a build from `git stash`, as in
+  CLAUDE.md). `--regions` rewrites `region` in `eval/hard/queries.jsonl` from the hard build's
+  layout (reuse the public `find_region`).
+- **Index:** `index/eval-hard/<ingest_hash[:8]>/`, disposable and rebuilt automatically like the
+  public one; `qwn eval --clean` cleans both; `qwn status` doesn't count it.
+- **The public set doesn't change:** same corpus, `queries.jsonl`, baseline and exit criteria.
+
+**New documents** (all invented, ~15). Each group has its own tag. A query can carry more than
+one tag, plus the usual content tag (`text`, `scan`, `chart`, `table`):
+
+| Tag | Documents | What makes it hard |
+|---|---|---|
+| `version` | `reports/annual-review-2024.pdf` (same 4-page layout and sentences as the 2025 review, every figure different); `tables/price-list-winter.png` (same Corner Cafe items, 3 prices differ); `contracts/service-agreement-2026.pdf` (amended: response time and fee changed) | Two editions look almost the same. The question names the year or edition, and only that one counts. Half the queries ask about the **original** public document, which now has a near-twin |
+| `multi` | Pairs across the editions above, plus two sections of the long manual | The answer needs two pages, so both have to make the reranked top 5 (`rerank_k`) and both have to be cited |
+| `degraded` | `scans/faded-invoice.pdf` (100 dpi, rotated 3–4°, blur 1.2, grey ink, heavier speckle); `scans/small-print.pdf` (one dense terms page, ~10 pt text, the fact mid-paragraph); `tables/bus-timetable.png` (18 rows × 6 columns, thin rules); `charts/rainfall-unlabelled.png` (bar) and `charts/occupancy-unlabelled.png` (line): gridlines every 10, **no value labels**, values between gridlines | Harder reading: the misses so far (pub-040, a wrong table row) are this kind |
+| `long` | `manuals/operations-manual.pdf`: 40 pages of templated sections ("Section N: <area>. Inspection interval … Responsible …"), facts on specific pages | Near-duplicate pages *inside* one document; page-level precision |
+| `paraphrase` | Questions on new and public documents | Worded without the page's keywords ("How much did the ferry operator pay out per share?"), so keyword search can't carry it |
+| `near-miss` (with `unanswerable`) | Questions next to a real fact: 2023 revenue (only 2024 and 2025 exist), a Friday shift (roster has the weekend), `PO-48214` (not in the ledger), sprint 15 velocity | The right page looks close, but the answer isn't there; tests abstention |
+
+**Size:** ~45 answerable + ~10 unanswerable: **≥ 10** each for `version`, `degraded` and
+`paraphrase`; **≥ 8** each for `multi` and `near-miss`. No injection queries (the public set
+covers them). A full run with answers takes about 30 minutes, so run it in the background.
+
+**Query format additions** (optional, valid in every set; the public set doesn't use them):
+
+- `match`: `"any"` (default, today's behaviour) or `"all"`: every `expected` item is required.
+  Used by `multi`.
+- `answer_approx`: `[value, tolerance]`. Passes if any number in the answer (normalised as for
+  `answer_contains`) is within the tolerance. For unlabelled charts the tolerance is half a
+  gridline (5). Such queries have no `answer_contains` and so no `region`.
+
+**New metrics** (reported overall and per tag like the rest; a set without such queries reports
+`n = 0`):
+
+| Metric | Definition |
+|---|---|
+| `recall_all@5` | `match: all` queries: every expected item is in the final top `rerank_k` |
+| `citation_all` | `match: all` queries: the answer cites every expected item |
+| `answer_approx` | Queries with `answer_approx`: passes as defined above |
+
+Existing metrics are unchanged. For `match: all` queries, recall@k and citation_hit still mean
+"at least one expected item".
+
+**No exit criteria.** `criteria()` returns none for `hard`. The report prints "measurement set:
+no exit criteria", and the exit code is non-zero only for comparability errors.
+
+**Writing the queries honestly:**
+
+- Write the queries from the generator's facts **before** running any model on them.
+- Never drop, reword or swap a single query because of how the model did on it. If a whole tag
+  turns out too easy, make it harder **in the generator**: more noise, more rows, closer twins.
+  Do that at most once per tag, and record it in the PR.
+- `paraphrase` is checked by a fast test. After lowercasing and removing a fixed stop-word list
+  and plural "s", each question shares **at most one** token with its expected page's drawn text
+  (taken from the build layout). Numbers and codes count as tokens.
+
+**Done when** (first `qwn eval --set hard --locate --update-baseline`; results go under Evaluation
+→ Harder tier results):
+
+1. **Not saturated:** recall@1 before rerank ≤ 0.85, and answer_contains ≤ 0.90.
+2. **Not floored:** recall@5 (after rerank) ≥ 0.40 and citation_hit ≥ 0.40. Below that, the tier
+   can't show changes in either direction.
+3. **Every new tag has at least one miss** (top-5, citation, answer or abstention). A tag with
+   none gets the single generator-level hardening above; if it still has none, keep it and note
+   it.
+4. **Rerank sweep:** `rerank_candidates` 5 / 10 / 20 on the hard set. Report recall@5, MRR,
+   `recall_all@5` and rerank p50/p95. If one count beats 10, propose it; changing the default is a
+   separate follow-up, since it moves the public `settings_hash` and baseline.
+5. **Public set unchanged:** `qwn eval --set public --guard --locate` shows no per-query changes,
+   the corpus is byte-identical, and the public baseline isn't updated.
+6. **Fast tests:**
+   - the hard generator is deterministic;
+   - every query's `expected` path and page exists in the hard layout;
+   - the paraphrase overlap check above;
+   - unit tests for `match`, `answer_approx` and the new metrics (with fakes).
 
 ### Exit criteria (public set; private set reported alongside)
 
