@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -945,3 +946,132 @@ def guard_report(guard: dict[str, Any], policy: str) -> list[str]:
 
 def passed(result: dict[str, Any]) -> bool:
     return all(c["passed"] for c in result["criteria"])
+
+
+# growing the private set (phase 5): Chat ratings → drafts → `qwn eval review` → queries
+
+Rating = Literal["up", "down"]
+_drafts_lock = threading.Lock()
+
+
+def candidates_path(home: Path) -> Path:
+    return home / "eval" / "private" / "candidates.jsonl"
+
+
+def make_draft(
+    draft_id: str, query: str, rating: Rating, scope: list[str], response: Response, root: Path
+) -> dict[str, Any]:
+    """A rated Chat answer as a draft query. No answer text: the cited pages are what's kept."""
+    return {
+        "draft_id": draft_id,
+        "created": datetime.now(UTC).isoformat(timespec="seconds"),
+        "query": query,
+        "rating": rating,
+        "scope": [_relative(p, root) for p in scope],
+        "cited": [_cited_item(h, root) for _, h in response.cited_sources()],
+        "abstained": response.abstained,
+    }
+
+
+def _relative(path: str, root: Path) -> str:
+    p = Path(path)
+    return str(p.relative_to(root)) if p.is_relative_to(root) else path
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _write_lines(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+    tmp.replace(path)
+
+
+def save_draft(path: Path, draft: dict[str, Any]) -> None:
+    """Append `draft`, or rewrite it in place if its `draft_id` is already there."""
+    with _drafts_lock:
+        rows = read_jsonl(path)
+        ids = [r["draft_id"] for r in rows]
+        if draft["draft_id"] in ids:
+            rows[ids.index(draft["draft_id"])] = draft
+        else:
+            rows.append(draft)
+        _write_lines(path, rows)
+
+
+def remove_draft(path: Path, draft_id: str) -> None:
+    with _drafts_lock:
+        rows = read_jsonl(path)
+        kept = [r for r in rows if r["draft_id"] != draft_id]
+        if len(kept) != len(rows):
+            _write_lines(path, kept)
+
+
+def next_query_id(path: Path) -> str:
+    """The next `priv-NNN` id after the highest one in `path`."""
+    numbers = [0]
+    for row in read_jsonl(path):
+        if m := re.fullmatch(r"priv-(\d+)", str(row.get("id", ""))):
+            numbers.append(int(m[1]))
+    return f"priv-{max(numbers) + 1:03}"
+
+
+def draft_query(
+    draft: dict[str, Any],
+    query_id: str,
+    *,
+    expected: list[dict[str, Any]] | None = None,
+    answer_contains: list[str] | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """An eval query from a reviewed draft. `expected` defaults to the cited items, or [] when
+    the answer abstained (an unanswerable question)."""
+    if expected is None:
+        expected = [] if draft["abstained"] else list(draft["cited"])
+    row: dict[str, Any] = {"id": query_id, "query": draft["query"], "expected": expected}
+    if answer_contains:
+        row["answer_contains"] = answer_contains
+    row["tags"] = tags if tags is not None else ([] if expected else ["unanswerable"])
+    if draft.get("scope"):
+        row["in"] = draft["scope"]
+    return row
+
+
+def append_query(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def parse_expected(text: str) -> list[dict[str, Any]]:
+    """Review input → expected items: "docs/q3.pdf:4, notes/pricing.md#SSO, charts/a.png"
+    (path:page, path#heading, or a path alone)."""
+    items: list[dict[str, Any]] = []
+    for part in (p.strip() for p in text.split(",")):
+        if not part:
+            continue
+        if "#" in part:
+            path, heading = part.split("#", 1)
+            items.append({"path": path.strip(), "heading": heading.strip()})
+        elif (m := re.fullmatch(r"(.+):(\d+)", part)) is not None:
+            items.append({"path": m[1].strip(), "page": int(m[2])})
+        else:
+            items.append({"path": part})
+    return items
+
+
+def format_expected(items: list[dict[str, Any]]) -> str:
+    """The inverse of `parse_expected`."""
+    out = []
+    for item in items:
+        if "page" in item:
+            out.append(f"{item['path']}:{item['page']}")
+        elif "heading" in item:
+            out.append(f"{item['path']}#{item['heading']}")
+        else:
+            out.append(item["path"])
+    return ", ".join(out)

@@ -281,7 +281,9 @@ class Ingester:
         *,
         progress: Callable[[int, int, Path], None] | None = None,
         cancel: threading.Event | None = None,
+        force: bool = False,
     ) -> Report:
+        """Index `paths`; `force` re-indexes files even when unchanged (the Library's Re-index)."""
         files, failed, ignored = collect(paths)
         report = Report(failed=failed, ignored=ignored)
         self._clean_tmp()
@@ -293,6 +295,8 @@ class Ingester:
                 break
             try:
                 [planned] = self.plan([path])
+                if force:
+                    planned = Planned(path, "index", planned.sha256)
                 if planned.action == "unchanged":
                     report.unchanged += 1
                 elif planned.action == "move" and planned.moved_from is not None:
@@ -479,3 +483,56 @@ def _volume(path: Path) -> Path | None:
 
 def _error(e: Exception) -> str:
     return f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+
+
+# the Library page (uploads and deletes)
+
+Saved = Literal["saved", "duplicate"]
+
+
+def save_upload(data_dir: Path, name: str, data: bytes) -> tuple[Path, Saved]:
+    """Save an uploaded file into `data_dir`, never overwriting.
+
+    Identical content under the same name (or one of its numbered copies) is a duplicate:
+    nothing is written and the existing path is returned. Different content goes to
+    `name (2).pdf`, `name (3).pdf`, ...
+    """
+    clean = Path(name).name.lstrip(".") or "upload"
+    stem, suffix = Path(clean).stem, Path(clean).suffix
+    sha = hashlib.sha256(data).hexdigest()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while True:
+        candidate = data_dir / (clean if n == 1 else f"{stem} ({n}){suffix}")
+        if not candidate.exists():
+            candidate.write_bytes(data)
+            logger.info("saved upload %s (%d bytes)", candidate, len(data))
+            return candidate, "saved"
+        if candidate.is_file() and sha256_file(candidate) == sha:
+            return candidate, "duplicate"
+        n += 1
+
+
+def is_upload(path: Path, data_dir: Path) -> bool:
+    """Whether qwn owns this file: it lives inside `data_dir` (an upload)."""
+    return path.resolve().is_relative_to(data_dir.resolve())
+
+
+def delete_documents(index: Index, docs: list[Document], data_dir: Path) -> list[Path]:
+    """Remove `docs` from the index and their page renders; delete the file itself only for
+    uploads (inside `data_dir`). Files indexed in place by `qwn ingest` are never touched.
+
+    Returns the files deleted from disk.
+    """
+    if not docs:
+        return []
+    index.delete([d.doc_id for d in docs])
+    removed: list[Path] = []
+    for d in docs:
+        shutil.rmtree(index.root / page_dir(d.doc_id), ignore_errors=True)
+        path = Path(d.path)
+        if is_upload(path, data_dir) and path.is_file():
+            path.unlink()
+            removed.append(path)
+    logger.info("deleted %d documents (%d files)", len(docs), len(removed))
+    return removed

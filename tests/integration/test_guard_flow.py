@@ -218,3 +218,17 @@ def test_eval_guard_scores_prompts_and_checks_phase_3_criteria(cli, home):
     guard_file.write_text(guard_file.read_text().replace("Australia", "France"))
     r = cli("eval", "--set", "private", "--no-generate", "--guard")
     assert r.exit_code == 1 and "Not comparable with the baseline: guard differ" in r.output
+
+
+def test_on_stage_reports_each_stage_in_order(make_answerer):
+    answerer, _ = make_answerer(ScriptedGuard(SAFE, SAFE))
+    stages: list[str] = []
+    answerer.ask(QUESTION, on_stage=stages.append)
+    assert stages == ["guard_prompt", "retrieve", "rerank", "generate", "guard_response"]
+
+
+def test_on_stage_stops_at_a_blocked_question(make_answerer):
+    answerer, _ = make_answerer(ScriptedGuard(UNSAFE, SAFE))
+    stages: list[str] = []
+    answerer.ask(QUESTION, on_stage=stages.append)
+    assert stages == ["guard_prompt"]

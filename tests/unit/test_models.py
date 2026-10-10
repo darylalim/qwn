@@ -8,7 +8,7 @@ from fakes import GB, FakeEmbedder, FakeGenerator, FakeGuard, FakeMemory, FakeRe
 
 from qwn.config import Settings
 from qwn.interfaces import Item
-from qwn.models import InsufficientMemory, ModelsInUse, ProcessLock, Registry
+from qwn.models import InsufficientMemory, ModelsInUse, ProcessLock, Registry, WarmLoad
 
 
 def counting_loaders(memory: FakeMemory, calls: list[str]):
@@ -145,3 +145,31 @@ def test_fast_tests_do_not_import_mlx():
         "assert not bad, bad"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+# warm load (qwn ui)
+
+
+def test_warm_load_uses_one_thread_however_often_it_is_started(home):
+    memory, calls = FakeMemory(), []
+    reg = Registry(Settings(), loaders=counting_loaders(memory, calls), memory=memory)
+    warm = WarmLoad(reg)
+    assert warm.state == "idle"
+    for _ in range(5):  # every rerun / tab calls start()
+        warm.start()
+    warm.join(5)
+    assert warm.state == "ready" and warm.done == warm.total == 4
+    assert calls == ["guard", "embedder", "reranker", "generator"]  # once each, pipeline order
+
+
+def test_warm_load_failure_falls_back_to_loading_on_first_use(home):
+    memory, calls = FakeMemory(recommended_gb=8.0), []  # room for guard + embedder only
+    reg = Registry(Settings(), loaders=counting_loaders(memory, calls), memory=memory)
+    warm = WarmLoad(reg)
+    warm.start()
+    warm.join(5)
+    assert warm.state == "failed" and "InsufficientMemory" in (warm.error or "")
+    assert warm.done == 2 and calls == ["guard", "embedder"]
+    memory.recommended = int(30 * GB)  # memory freed: the next use loads it lazily
+    reg.reranker().score(Item(text="q"), [Item(text="q")])
+    assert calls[-1] == "reranker"

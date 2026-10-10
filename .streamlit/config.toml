@@ -1,0 +1,104 @@
+# qwn theme: "Paper & Ink" (light) / "Lamplight" (dark).
+# Same hues in both modes; only lightness changes. All values validated 2026-10-04 (see PLAN.md).
+
+[server]
+address = "localhost"            # private: never listen on LAN/external interfaces
+maxUploadSize = 100               # MB per file (default 200); bigger files: use `qwn ingest`
+
+[client]
+toolbarMode = "viewer"           # hide Deploy/Rerun/Clear cache; keep the light/dark theme toggle
+
+[browser]
+gatherUsageStats = false          # local-first: no telemetry
+
+[theme]
+# Shared across both modes. Built-in fonts are bundled with Streamlit, so no network requests.
+font = "sans-serif"
+codeFont = "monospace"
+baseFontSize = 16
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+baseRadius = "medium"
+buttonRadius = "medium"
+showWidgetBorder = true
+showSidebarBorder = true
+linkUnderline = false
+
+[theme.light]
+primaryColor = "#0E6B63"
+backgroundColor = "#FBFAF7"
+secondaryBackgroundColor = "#F1EEE7"
+textColor = "#1F1D1A"
+linkColor = "#0E6B63"
+borderColor = "#D9D3C7"
+codeBackgroundColor = "#F1EEE7"
+codeTextColor = "#3B3732"
+dataframeBorderColor = "#D9D3C7"
+dataframeHeaderBackgroundColor = "#F1EEE7"
+redColor = "#B42318"
+redBackgroundColor = "#FBE9E6"
+redTextColor = "#8A1A12"
+orangeColor = "#B54708"
+orangeBackgroundColor = "#FCEFDF"
+orangeTextColor = "#8A3606"
+yellowColor = "#A16207"
+yellowBackgroundColor = "#FBF3D9"
+yellowTextColor = "#7A4A05"
+greenColor = "#2F7D32"
+greenBackgroundColor = "#E6F2E3"
+greenTextColor = "#1F5A22"
+blueColor = "#1D5FA8"
+blueBackgroundColor = "#E4EEF8"
+blueTextColor = "#174C87"
+violetColor = "#5B4BB7"
+violetBackgroundColor = "#ECEAF8"
+violetTextColor = "#45389A"
+grayColor = "#6B665E"
+grayBackgroundColor = "#EEECE7"
+grayTextColor = "#4A463F"
+chartCategoricalColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
+chartSequentialColors = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5", "#2a78d6", "#1c5cab", "#0d366b"]
+
+[theme.light.sidebar]
+backgroundColor = "#F4F1EA"
+secondaryBackgroundColor = "#EAE6DC"
+borderColor = "#D9D3C7"
+
+[theme.dark]
+primaryColor = "#0F7D73"
+backgroundColor = "#1B1A18"
+secondaryBackgroundColor = "#262420"
+textColor = "#ECE8E1"
+linkColor = "#5CC9BC"
+borderColor = "#3B3833"
+codeBackgroundColor = "#262420"
+codeTextColor = "#DDD7CD"
+dataframeBorderColor = "#3B3833"
+dataframeHeaderBackgroundColor = "#262420"
+redColor = "#F0857A"
+redBackgroundColor = "#3A1F1C"
+redTextColor = "#F6B1A9"
+orangeColor = "#F59569"
+orangeBackgroundColor = "#3C251A"
+orangeTextColor = "#FEC1A6"
+yellowColor = "#E6B557"
+yellowBackgroundColor = "#352913"
+yellowTextColor = "#F2D39B"
+greenColor = "#7CC47F"
+greenBackgroundColor = "#1F3221"
+greenTextColor = "#AEDDB0"
+blueColor = "#7FB0EA"
+blueBackgroundColor = "#1C2A3B"
+blueTextColor = "#B3D0F3"
+violetColor = "#AFA4F0"
+violetBackgroundColor = "#28243D"
+violetTextColor = "#CFC8F7"
+grayColor = "#A49E93"
+grayBackgroundColor = "#2B2925"
+grayTextColor = "#CFC9BE"
+chartCategoricalColors = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
+chartSequentialColors = ["#0d366b", "#104281", "#184f95", "#1c5cab", "#256abf", "#2a78d6", "#3987e5", "#5598e7", "#6da7ec", "#9ec5f4"]
+
+[theme.dark.sidebar]
+backgroundColor = "#151412"
+secondaryBackgroundColor = "#211F1C"
+borderColor = "#3B3833"

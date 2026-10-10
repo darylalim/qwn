@@ -16,6 +16,18 @@ uv run qwn models status
 After `qwn models pull`, qwn runs fully offline (`HF_HUB_OFFLINE=1`). Run `qwn` from this folder,
 or set `QWN_HOME` to it.
 
+## Use
+
+```bash
+uv run qwn ui                         # Streamlit app on localhost: Chat, Library, System
+uv run qwn ingest ~/Documents/papers  # or index folders in place from the CLI
+uv run qwn ask "What was APAC revenue in Q3?"
+uv run qwn eval review                # turn 👍/👎 Chat ratings into private eval questions
+```
+
+The UI loads the models (~13 GB) in the background when it starts. Only one qwn process can hold
+the models, so close the UI before running `ask`, `search`, `ingest` or `eval` from the CLI.
+
 ## Models and licenses
 
 qwn's code is Apache-2.0 (see `LICENSE`). Model weights aren't redistributed with qwn:

@@ -8,8 +8,10 @@ timings.
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Literal
 
 from qwn.config import Settings
 from qwn.guard import Check, Screen
@@ -20,6 +22,9 @@ from qwn.prompts import ABSTAIN_TEXT
 from qwn.retrieve import Hit, Retriever
 
 logger = logging.getLogger(__name__)
+
+Stage = Literal["guard_prompt", "retrieve", "rerank", "generate", "guard_response"]
+OnStage = Callable[[Stage], None]
 
 _CITATION = re.compile(r"\[(S\d+)\]")
 _MARKER = re.compile(r"(\s?)\[(S\d+)\]")
@@ -158,9 +163,12 @@ class Answerer:
         rerank: bool = True,
         hybrid: bool | None = None,
         timings: dict[str, float] | None = None,
+        on_stage: OnStage | None = None,
     ) -> list[Hit]:
         """The `rerank_k` best hits for `question`, timing each stage into `timings`."""
         t = timings if timings is not None else {}
+        stage = on_stage or _ignore
+        stage("retrieve")
         start = time.perf_counter()
         qvec = self.retriever.embed_query(question)
         t["embed"] = time.perf_counter() - start
@@ -170,6 +178,7 @@ class Answerer:
         ).fused
         t["search"] = time.perf_counter() - start
         if rerank:
+            stage("rerank")
             start = time.perf_counter()
             hits = self.retriever.rerank(question, hits)
             t["rerank"] = time.perf_counter() - start
@@ -182,8 +191,10 @@ class Answerer:
         *,
         greedy: bool = False,
         timings: dict[str, float] | None = None,
+        on_stage: OnStage | None = None,
     ) -> Response:
         t = dict(timings or {})
+        (on_stage or _ignore)("generate")
         sources, kept = to_sources(hits, self.settings.max_images)
         start = time.perf_counter()
         if sources:
@@ -231,33 +242,42 @@ class Answerer:
         doc_ids: list[str] | None = None,
         greedy: bool = False,
         guard: bool | None = None,
+        on_stage: OnStage | None = None,
     ) -> Response:
         """Guard the question, retrieve, answer, then guard the answer.
 
         A blocked question is never retrieved or answered; a blocked answer is withheld (its text
-        and sources are dropped). `guard=None` follows `Settings.guard_enabled`.
+        and sources are dropped). `guard=None` follows `Settings.guard_enabled`. `on_stage` is
+        called as each stage starts (the UI shows it in `st.status`).
         """
+        stage = on_stage or _ignore
         timings: dict[str, float] = {}
         screen = None
         if self.settings.guard_enabled if guard is None else guard:
             screen = Screen(self.registry.guard, self.settings.controversial)
         checks: list[Check] = []
         if screen is not None:
+            stage("guard_prompt")
             start = time.perf_counter()
             checks.append(screen.prompt(question))
             timings["guard_prompt"] = time.perf_counter() - start
             if checks[-1].action == "block":
                 return _withheld(checks, timings)
-        hits = self.retrieve(question, doc_ids=doc_ids, timings=timings)
-        response = self.answer(question, hits, greedy=greedy, timings=timings)
+        hits = self.retrieve(question, doc_ids=doc_ids, timings=timings, on_stage=stage)
+        response = self.answer(question, hits, greedy=greedy, timings=timings, on_stage=stage)
         if screen is None:
             return response
+        stage("guard_response")
         start = time.perf_counter()
         checks.append(screen.response(question, strip_citations(response.text)))
         timings = {**response.timings, "guard_response": time.perf_counter() - start}
         if checks[-1].action == "block":
             return _withheld(checks, timings, response)
         return replace(response, checks=checks, timings=timings)
+
+
+def _ignore(stage: Stage) -> None:
+    pass
 
 
 def _withheld(
