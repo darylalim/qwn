@@ -21,8 +21,9 @@ under Evaluation → Phase 4 results; voice is wired into the Chat page). **Phas
 is merged into `main` (2026-10-10, PR #12, v0.7.0; findings under Streamlit UI → Answer
 highlighting, results under Evaluation → Phase 6 results). **All phases are done.** The
 non-prompt injection defence follow-up is done (text-layer filter, Security → Prompt injection;
-injection 4/4). Open follow-ups: a harder public eval tier (needs a planning session) and tighter
-chart/table highlight regions (Phase 6 results).
+injection 4/4). The tighter chart/table highlight regions follow-up is done (Evaluation → Tighter
+regions results; `locate_hit` 0.914). Open follow-up: a harder public eval tier (needs a planning
+session).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -674,8 +675,8 @@ check a claim without reading the whole page.
   or image (the UI only opens cited pages); uncited ones are counted as "region page not cited".
   `--locate`, like `--guard`, isn't part of `settings_hash`.
 - **Regions** come from `build_corpus.py --regions`, which redraws the corpus, records where each
-  paragraph, scan line, chart column (value, bar or point, and category label), table row and
-  screenshot field was drawn, and writes `region` for every answerable query whose first
+  paragraph, scan line, chart value (value label and point, or top edge of the bar), table cell
+  and screenshot field was drawn, and writes `region` for every answerable query whose first
   `answer_contains` string appears in exactly one of those blocks on its first expected page:
   58 of 69 (all but the 11 markdown queries). Corpus files are unchanged (byte-identical), so
   `corpus_hash` is too; `eval_set_hash` changes. A unit test keeps the committed regions in step
@@ -1544,7 +1545,8 @@ the interval's lower bound is under the threshold, the PR notes that the result 
   In pub-039 and pub-007 it boxes just the answering cell or name, not the whole row or line.
   Real misses: pub-040 (the row above the right one) and two with no box (pub-029, pub-075).
   A tighter region definition (value label for charts, the matching cell for tables) would
-  measure this better; it's a follow-up, not needed for the criteria.
+  measure this better; it's a follow-up, not needed for the criteria (done, see Tighter regions
+  results).
 - **Retrieval, answers and Guard unchanged:** no per-query differences vs the phase 3 baseline
   other than the new highlight fields (`eval_set_hash` changed because queries gained `region`;
   the corpus is byte-identical). Injection is still 3/4, the accepted gap.
@@ -1564,6 +1566,24 @@ the interval's lower bound is under the threshold, the PR notes that the result 
   and hits (`locate_hit` 0.862, n = 58, was 0.860, n = 57).
 - `pub-013` still passes; `pub-051` (instruction only on the screenshot image) passes as before,
   the filter has no text to act on there.
+
+### Tighter regions results (public set, 2026-10-10, M2 Max)
+
+`qwn eval --set public --guard --locate` (the new baseline):
+
+- **Regions redefined** in `build_corpus.py`: a chart's region is its value label plus the data
+  mark (the point, or the top edge of the bar), no longer the whole column down to the axis
+  label; a table's is the cell that holds the answer, no longer the whole row. Still 58 queries
+  with a region; the corpus is byte-identical, `eval_set_hash` changes.
+- **`locate_hit` 0.914** [0.81, 0.96] (n = 58, was 0.862); chart 0.900 (was 0.600), table 0.800
+  (unchanged). No usable box 0.034, unchanged. Every exit criterion passes.
+- **Per-query changes vs the injection filter baseline:** only `locate_hit` on pub-027, pub-031
+  and pub-032 (line charts), now hits. The boxes themselves are identical: the region is only
+  used for scoring. Answers, citations and Guard are unchanged.
+- **Remaining misses (5):** pub-029 and pub-075 (no box); pub-040 (the row above the right one);
+  pub-039 boxes the "Saturday morning" cell the question names, not the answer "Tomasz" (the
+  phase 6 note above called it the answering cell; it isn't); pub-007 boxes just the name, not
+  the whole text line (text regions are out of scope here).
 
 ## Phases
 

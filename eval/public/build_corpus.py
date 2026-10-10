@@ -8,7 +8,7 @@ Every fact is invented. The questions in queries.jsonl are written against the t
 change both together. Groups: text PDFs, scanned (image-only) PDFs, charts, tables, screenshots,
 markdown, plus exact codes spread across them and 4 prompt-injection documents.
 
-While drawing, it records where each paragraph, chart column, table row and screenshot field sits
+While drawing, it records where each paragraph, chart value, table cell and screenshot field sits
 (relative 0..1 boxes, top-left origin), so queries can carry the `region` that `qwn eval --locate`
 scores against (PLAN.md → Answer highlighting).
 """
@@ -516,7 +516,8 @@ def text_page_boxes(paragraphs: list[str]) -> list[tuple[str, Box]]:
 def chart(
     title: str, ylabel: str, kind: str, data: list[tuple[str, float]]
 ) -> tuple[Image.Image, list[tuple[str, Box]]]:
-    """The chart, and one box per column: value label, bar or point, and category label."""
+    """The chart, and one box per column: its value label and data mark (the point, or the top
+    edge of the bar). Not the whole column: its centre would be empty plot area."""
     w, h = 1200, 800
     left, right, top, bottom = 140, 60, 130, 120
     img = Image.new("RGB", (w, h), "white")
@@ -537,11 +538,12 @@ def chart(
             d.rectangle([cx - step * 0.3, y, cx + step * 0.3, h - bottom], fill="#2f6f8f")
         d.text((cx, y - 12), f"{value:g}", fill="black", font=font(28), anchor="ms")
         d.text((cx, h - bottom + 20), label, fill="black", font=font(28), anchor="mt")
-        column = [
-            d.textbbox((cx, y - 12), f"{value:g}", font=font(28), anchor="ms"),
-            d.textbbox((cx, h - bottom + 20), label, font=font(28), anchor="mt"),
-            (cx - step * 0.3, y, cx + step * 0.3, h - bottom),
-        ]
+        mark = (
+            (cx - step * 0.3, y, cx + step * 0.3, y)
+            if kind == "bar"
+            else (cx - 8, y - 8, cx + 8, y + 8)
+        )
+        column = [d.textbbox((cx, y - 12), f"{value:g}", font=font(28), anchor="ms"), mark]
         boxes.append((f"{label} {value:g}", relative(union(column), w, h)))
     if kind == "line":
         d.line(points, fill="#b0452f", width=5)
@@ -553,7 +555,7 @@ def chart(
 def table(
     title: str, header: list[str], rows: list[list[str]]
 ) -> tuple[Image.Image, list[tuple[str, Box]]]:
-    """The table, and one box per body row."""
+    """The table, and one box per body cell."""
     col_w, row_h, pad = 360, 70, 60
     w = pad * 2 + col_w * len(header)
     h = 140 + row_h * (len(rows) + 1) + pad
@@ -578,8 +580,14 @@ def table(
         d.line([(x, y0), (x, y0 + row_h * (len(rows) + 1))], fill="#888888", width=2)
     d.rectangle([pad, y0, w - pad, y0 + row_h * (len(rows) + 1)], outline="black", width=3)
     boxes = [
-        (" ".join(cells), relative((pad, y0 + r * row_h, w - pad, y0 + (r + 1) * row_h), w, h))
+        (
+            cell,
+            relative(
+                (pad + c * col_w, y0 + r * row_h, pad + (c + 1) * col_w, y0 + (r + 1) * row_h), w, h
+            ),
+        )
         for r, cells in enumerate(rows, start=1)
+        for c, cell in enumerate(cells)
     ]
     return img, boxes
 
