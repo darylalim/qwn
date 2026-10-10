@@ -8,6 +8,7 @@ from sample_corpus import make_corpus
 from typer.testing import CliRunner
 
 import qwn.cli
+from qwn.interfaces import Box
 from qwn.models import Registry
 
 runner = CliRunner()
@@ -163,5 +164,46 @@ def test_eval_fails_up_front_on_unindexed_expected_paths(cli, home):
     assert "Expected files are not in the index" in r.output and "chart.png" in r.output
 
 
-def test_eval_rejects_later_phase_flags(cli, home):
-    assert "phase 6" in cli("eval", "--locate").output
+def test_eval_locate_scores_highlights_on_cited_pages(cli, home, monkeypatch):
+    docs = _private_set(home)
+    path = home / "eval" / "private" / "queries.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[0]["region"] = [0.1, 0.05, 0.5, 0.1]  # p1: cited by the fake generator
+    rows[2]["region"] = [0.0, 0.0, 0.2, 0.2]  # p3: the image isn't cited
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    generator = FakeGenerator(box=Box(0.0, 0.0, 0.6, 0.2))
+
+    def make_registry(settings):
+        return Registry(
+            settings,
+            overrides={
+                "embedder": FakeEmbedder(settings.embed_dim),
+                "reranker": FakeReranker(),
+                "generator": generator,
+                "guard": FakeGuard(),
+            },
+            memory=FakeMemory(),
+        )
+
+    monkeypatch.setattr(qwn.cli, "make_registry", make_registry)
+    cli("ingest", str(docs))
+    r = cli("eval", "--set", "private", "--locate", "--update-baseline")
+    assert r.exit_code == 0, r.output
+    assert "phase 6: highlighting" in r.output and "Highlights on cited pages" in r.output
+    assert len(generator.located) == 1 and generator.located[0][1] == "Revenue grew 12 percent."
+    baseline = json.loads((home / "eval" / "private" / "baseline.json").read_text())
+    per = {r["id"]: r for r in baseline["per_query"]}
+    assert per["p1"]["locate_hit"] and per["p1"]["locate_box"] == [0.0, 0.0, 0.6, 0.2]
+    assert per["p3"]["locate"] == "not_cited" and "locate_hit" not in per["p3"]
+    assert baseline["locate"]["summary"]["locate_hit"]["value"] == 1.0
+    assert baseline["meta"]["options"] == {"rerank": True, "hybrid": True, "generate": True}
+
+    generator.box = None  # the model can't say: a miss, and a "no usable box"
+    r = cli("eval", "--set", "private", "--locate")
+    assert "p1: highlight no longer hits the region" in r.output
+    assert "✗ FAIL  locate_hit" in r.output and "✗ FAIL  no usable box" in r.output
+
+
+def test_eval_locate_needs_answers(cli, home):
+    r = cli("eval", "--locate", "--no-generate")
+    assert r.exit_code == 1 and "drop --no-generate" in r.output

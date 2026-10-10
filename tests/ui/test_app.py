@@ -6,7 +6,7 @@ import time
 import pytest
 import streamlit as st
 from conftest import app
-from fakes import tone_bursts
+from fakes import FakeGenerator, tone_bursts
 
 from qwn import eval as ev
 from qwn.voice import encode_wav
@@ -172,3 +172,37 @@ def test_system_shows_models_memory_paths_and_session_settings(corpus_home):
     assert at.session_state["settings"]["rerank_k"] == 3
     assert at.session_state["settings"]["guard_enabled"] is False
     assert "Guard off" in texts(at.sidebar.caption)
+
+
+def _open_first_page(at):
+    next(b for b in at.button if b.label == "Open page").click().run()
+    assert not at.exception
+
+
+def test_open_page_says_when_the_passage_cant_be_pinpointed(corpus_home):
+    at = app()
+    at.chat_input[0].set_value("How much did revenue grow?").run()
+    _open_first_page(at)
+    assert "Couldn't pinpoint the passage" in texts(at.caption)
+    assert "Supporting passage" not in texts(at.caption)
+
+
+def test_open_page_outlines_the_supporting_passage_once(corpus_home, monkeypatch):
+    from fake_app import fake_registry
+
+    import qwn.ui.services
+    from qwn.interfaces import Box
+
+    generator = FakeGenerator(box=Box(0.1, 0.05, 0.6, 0.15))
+
+    monkeypatch.setattr(
+        qwn.ui.services, "make_registry", lambda settings: fake_registry(settings, generator)
+    )
+    st.cache_resource.clear()
+    at = app()
+    at.chat_input[0].set_value("How much did revenue grow?").run()
+    _open_first_page(at)
+    assert "Supporting passage (approximate)" in texts(at.caption)
+    assert generator.located == [(generator.located[0][0], "Revenue grew 12 percent.")]
+    _open_first_page(at)  # opened again: the box comes from the session, not the model
+    assert len(generator.located) == 1

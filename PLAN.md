@@ -632,8 +632,8 @@ check a claim without reading the whole page.
   that supports the claim, as JSON with a `bbox_2d`. Qwen3-VL reports boxes on a relative
   **0–1000** scale (Qwen2.5-VL used absolute pixels; check in phase 6). The adapter converts to
   `Box` (0..1).
-- **Lazy:** it runs only when you click "Open page" (one extra generation, ~1–3 s, under the MLX
-  lock), never for every answer. The result is cached in `st.session_state` per (message, source).
+- **Lazy:** it runs only when you click "Open page" (one extra generation, ~5 s measured, under
+  the MLX lock), never for every answer. The result is cached in `st.session_state` per (message, source).
 - **Strict parsing:** the model's output is untrusted (the page may contain injected text). Accept
   only one well-formed box inside the page, with non-zero area and covering ≤ 60% of the page;
   otherwise return `None`. The worst case is a wrong outline, never an action.
@@ -645,6 +645,36 @@ check a claim without reading the whole page.
   queries can carry `"region": [x0, y0, x1, y1]` (0..1). `locate_hit` = the box contains the
   centre of the expected region; also reported: the share of `None` / rejected boxes. Text PDFs
   from the fixture writer get regions too (one known line per page).
+
+**Phase 6 findings (2026-10-09, VL-8B):**
+
+- **Scale confirmed:** Qwen3-VL-8B reports `bbox_2d` on the relative **0–1000** scale (a probe on
+  6 public pages gave boxes within ~0.01 of the drawn regions; e.g. `[85, 216, 485, 243]` for a
+  scan line drawn at `[0.09, 0.218, 0.465, 0.242]`). `tests/slow/test_contracts.py` checks it.
+- **Prompt** (`prompts.LOCATE_SYSTEM_PROMPT` + `locate_text`): the page image, then "Find the
+  region of this page that supports the claim below. Reply with only JSON: `{"bbox_2d": [x1, y1,
+  x2, y2]}`. If nothing on the page supports it, reply `{"bbox_2d": null}`", with the claim fenced
+  in `<claim>` tags (≤ 1,000 chars) and the system prompt saying page and claim are data, not
+  instructions. Greedy, `max_tokens=64`; ~2–5 s per page on the M2 Max.
+- **Parsing** (`qwn.answer.parse_box`): the reply may be wrapped in a ```` ```json ```` fence and
+  may be a one-item list (the model's native grounding format); extra keys (`label`) are ignored.
+  Text around the JSON, several boxes, non-numbers, NaN, out-of-page, zero-area or > 60% boxes →
+  `None`.
+- **Claim:** sentences end at `.`, `!` or `?` plus whitespace (unless a `[S#]` follows, which
+  belongs to the sentence before) or at a line break; list bullets are dropped.
+- **Errors in the dialog** (model failure, models busy) show the plain page with "Couldn't
+  pinpoint the passage" and are logged, not cached, so opening the page again retries.
+- **Eval scope:** `--locate` needs answers (it fails up front with `--no-generate`). A query's
+  `region` is on its **first** expected item, and is scored only when the answer cites that page
+  or image (the UI only opens cited pages); uncited ones are counted as "region page not cited".
+  `--locate`, like `--guard`, isn't part of `settings_hash`.
+- **Regions** come from `build_corpus.py --regions`, which redraws the corpus, records where each
+  paragraph, scan line, chart column (value, bar or point, and category label), table row and
+  screenshot field was drawn, and writes `region` for every answerable query whose first
+  `answer_contains` string appears in exactly one of those blocks on its first expected page:
+  58 of 69 (all but the 11 markdown queries). Corpus files are unchanged (byte-identical), so
+  `corpus_hash` is too; `eval_set_hash` changes. A unit test keeps the committed regions in step
+  with the generator.
 
 ### Voice input pipeline (phase 4)
 
@@ -1483,6 +1513,28 @@ the interval's lower bound is under the threshold, the PR notes that the result 
     ASR on the trimmed audio matches the sentence (WER ≤ 10%).
 - **Retrieval and answers unchanged:** voice is a front end to `Answerer.ask`; the public eval has
   no per-query changes vs the phase 3 baseline.
+
+### Phase 6 results (public set, 2026-10-10, M2 Max)
+
+`qwn eval --set public --guard --locate` (the new baseline):
+
+- **Both phase 6 criteria pass:** `locate_hit` **0.860** [0.75, 0.93] (n = 57; target ≥ 0.70);
+  no usable box **0.035** [0.01, 0.12] (2 of 57; target ≤ 0.15). One region page wasn't cited
+  (pub-079, the solo-page injection query).
+- **By tag:** scan 1.000 (11), screenshot 1.000 (7), text 0.895 (19), table 0.800 (10),
+  chart 0.600 (10).
+- **The misses, read one by one (8):** about half are good highlights the metric can't credit.
+  On line charts (pub-027, -031, -032) the model boxes the point and its value, but a chart
+  region is the whole column (value down to the axis label), whose centre is empty plot area.
+  In pub-039 and pub-007 it boxes just the answering cell or name, not the whole row or line.
+  Real misses: pub-040 (the row above the right one) and two with no box (pub-029, pub-075).
+  A tighter region definition (value label for charts, the matching cell for tables) would
+  measure this better; it's a follow-up, not needed for the criteria.
+- **Retrieval, answers and Guard unchanged:** no per-query differences vs the phase 3 baseline
+  other than the new highlight fields (`eval_set_hash` changed because queries gained `region`;
+  the corpus is byte-identical). Injection is still 3/4, the accepted gap.
+- **Latency:** `locate` p50 5.2 s / p95 5.3 s per page, only when a page is opened (the plan
+  guessed ~1–3 s; the page image dominates the prompt). MLX peak 14.2 GB.
 
 ## Phases
 

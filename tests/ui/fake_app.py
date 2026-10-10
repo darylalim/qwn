@@ -29,13 +29,13 @@ from qwn.config import Settings  # noqa: E402
 from qwn.models import Registry  # noqa: E402
 
 
-def fake_registry(settings: Settings) -> Registry:
+def fake_registry(settings: Settings, generator: FakeGenerator | None = None) -> Registry:
     return Registry(
         settings,
         overrides={
             "embedder": FakeEmbedder(settings.embed_dim),
             "reranker": FakeReranker(),
-            "generator": FakeGenerator(),
+            "generator": generator or FakeGenerator(),
             "guard": FakeGuard(),
             "vad": FakeVad(),
             "asr": FakeAsr(),

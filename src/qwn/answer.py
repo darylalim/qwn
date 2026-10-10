@@ -1,10 +1,11 @@
 """Answering: retrieved hits → labelled sources → Generator → checked, rendered answer.
 
 See PLAN.md → Prompts and parameters. `ask` screens the question and the answer with Guard
-(qwn.guard). Nothing here logs question, source or answer text: only lengths, labels, counts and
-timings.
+(qwn.guard). `locate` finds the part of a cited page that supports the answer (phase 6). Nothing
+here logs question, source or answer text: only lengths, labels, counts and timings.
 """
 
+import json
 import logging
 import re
 import time
@@ -16,7 +17,7 @@ from typing import Literal
 from qwn.config import Settings
 from qwn.guard import Check, Screen
 from qwn.ingest import HEADING_SEP
-from qwn.interfaces import Answer, Source
+from qwn.interfaces import Answer, Box, Source
 from qwn.models import Registry
 from qwn.prompts import ABSTAIN_TEXT
 from qwn.retrieve import Hit, Retriever
@@ -28,6 +29,11 @@ OnStage = Callable[[Stage], None]
 
 _CITATION = re.compile(r"\[(S\d+)\]")
 _MARKER = re.compile(r"(\s?)\[(S\d+)\]")
+# a sentence ends at . ! or ? plus whitespace (unless a citation follows), or at a line break
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?!\[S\d+\])|\n+")
+_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
+
+MAX_BOX_AREA = 0.6  # a box covering more of the page than this highlights nothing useful
 
 
 def parse_citations(text: str, labels: list[str]) -> list[str]:
@@ -50,6 +56,45 @@ def invented_citations(text: str, labels: list[str]) -> list[str]:
 def strip_citations(text: str) -> str:
     """The answer without its `[S#]` markers (for matching expected strings)."""
     return _MARKER.sub("", text)
+
+
+def claim_for(text: str, label: str) -> str:
+    """The answer sentences that cite `label`, joined, without markers or list bullets: what that
+    source's page should show."""
+    marker = f"[{label}]"
+    sentences = [s for s in _SENTENCE_END.split(text) if marker in s]
+    return " ".join(strip_citations(s).strip().lstrip("-*• ").strip() for s in sentences)
+
+
+def parse_box(text: str) -> Box | None:
+    """The one box in a locate reply (`{"bbox_2d": [x1, y1, x2, y2]}`, 0-1000 scale), or None.
+
+    The reply is untrusted (the page may carry injected text), so anything but a lone object (or
+    a one-item list) with four numbers, inside the page, with non-zero area and covering at most
+    `MAX_BOX_AREA` of it, is rejected. The worst case is a wrong outline, never an action.
+    """
+    body = text.strip()
+    if m := _FENCE.match(body):
+        body = m.group(1)
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    if isinstance(data, list):
+        data = data[0] if len(data) == 1 else None
+    coords = data.get("bbox_2d") if isinstance(data, dict) else None
+    if not (
+        isinstance(coords, list)
+        and len(coords) == 4
+        and all(isinstance(v, int | float) and not isinstance(v, bool) for v in coords)
+    ):
+        return None
+    x0, y0, x1, y1 = (v / 1000 for v in coords)
+    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):  # also rejects NaN
+        return None
+    if (x1 - x0) * (y1 - y0) > MAX_BOX_AREA:
+        return None
+    return Box(x0, y0, x1, y1)
 
 
 def plan_sources(sources: list[Source], max_images: int) -> tuple[list[Source], list[Source]]:
@@ -234,6 +279,26 @@ class Answerer:
             {k: round(v, 2) for k, v in t.items()},
         )
         return response
+
+    def locate(self, response: Response, label: str) -> Box | None:
+        """Where cited source `label`'s page supports what the answer says about it: one extra
+        greedy generation. None for text sources, uncited labels, or when the model can't say."""
+        source = next((s for s in response.sources if s.label == label), None)
+        if source is None or source.image_path is None or label not in response.cited:
+            return None
+        claim = claim_for(response.text, label)
+        if not claim:
+            return None
+        start = time.perf_counter()
+        box = self.registry.generator().locate(source.image_path, claim)
+        logger.info(
+            "locate: source=%s claim_len=%d found=%s seconds=%.2f",
+            label,
+            len(claim),
+            box is not None,
+            time.perf_counter() - start,
+        )
+        return box
 
     def ask(
         self,

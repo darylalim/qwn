@@ -45,13 +45,16 @@ class FakeReranker:
 
 class FakeGenerator:
     """Cites the first source sharing a content word (5+ letters) with the question, quoting it;
-    abstains when none does. `extra` is appended verbatim (e.g. an invented "[S9]")."""
+    abstains when none does. `extra` is appended verbatim (e.g. an invented "[S9]"). `locate`
+    returns `box` and records each (image_path, claim)."""
 
     model_id = "fake/generator@0"
 
-    def __init__(self, extra: str = "") -> None:
+    def __init__(self, extra: str = "", box: Box | None = None) -> None:
         self.extra = extra
+        self.box = box
         self.calls: list[list[Source]] = []
+        self.located: list[tuple[Path, str]] = []
 
     def answer(self, question: str, sources: list[Source], *, greedy: bool = False) -> Answer:
         self.calls.append(sources)
@@ -66,7 +69,8 @@ class FakeGenerator:
         return Answer(text=text, cited=cited, prompt_tokens=len(question), completion_tokens=8)
 
     def locate(self, image_path: Path, claim: str) -> Box | None:
-        return None
+        self.located.append((image_path, claim))
+        return self.box
 
 
 class FakeGuard:

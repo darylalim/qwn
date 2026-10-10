@@ -1,7 +1,7 @@
 {
  "meta": {
   "set": "public",
-  "eval_set_hash": "eea7b71138a39b43b244b598b67ccbd2673dfd2e1682737214f3456a44e85eec",
+  "eval_set_hash": "9fad8f8d365fd72c0f90d19a19fc62d1795d2264b48b1c75a488678c4c526af8",
   "corpus_hash": "740b9f0d1781c26d742dfbe1de1916df8e986195bbbbb13397c9842cee951b70",
   "models": {
    "gen": "mlx-community/Qwen3-VL-8B-Instruct-4bit@defcdea7cc7a4b0858fea563cbbce171d328e457",
@@ -15,9 +15,9 @@
    "hybrid": true,
    "generate": true
   },
-  "git_sha": "fa44f9c843fa7e15e6642d07cfe85ea6a2da05c8",
-  "qwn_version": "0.4.0",
-  "created": "2026-10-09T20:14:43+00:00",
+  "git_sha": "6f7a0f625213e3d5e9e259883702f481bbd4352c",
+  "qwn_version": "0.6.0",
+  "created": "2026-10-10T03:15:26+00:00",
   "guard": {
    "set_hash": "76302a76921f9a949b6a4e84e010cec9763a65b2d56812282b969605ce4a92a7",
    "controversial": "warn"
@@ -1396,33 +1396,193 @@
    ]
   }
  },
+ "locate": {
+  "summary": {
+   "not_cited": 1,
+   "locate_hit": {
+    "value": 0.8596491228070176,
+    "ci95": [
+     0.7468,
+     0.9271
+    ],
+    "n": 57
+   },
+   "no_box": {
+    "value": 0.03508771929824561,
+    "ci95": [
+     0.0097,
+     0.1192
+    ],
+    "n": 57
+   }
+  },
+  "by_tag": {
+   "text": {
+    "not_cited": 1,
+    "locate_hit": {
+     "value": 0.8947368421052632,
+     "ci95": [
+      0.6861,
+      0.9706
+     ],
+     "n": 19
+    },
+    "no_box": {
+     "value": 0.05263157894736842,
+     "ci95": [
+      0.0094,
+      0.2464
+     ],
+     "n": 19
+    }
+   },
+   "scan": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.7412,
+      1.0
+     ],
+     "n": 11
+    },
+    "no_box": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.2588
+     ],
+     "n": 11
+    }
+   },
+   "chart": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 0.6,
+     "ci95": [
+      0.3127,
+      0.8318
+     ],
+     "n": 10
+    },
+    "no_box": {
+     "value": 0.1,
+     "ci95": [
+      0.0179,
+      0.4042
+     ],
+     "n": 10
+    }
+   },
+   "table": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 0.8,
+     "ci95": [
+      0.4902,
+      0.9433
+     ],
+     "n": 10
+    },
+    "no_box": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.2775
+     ],
+     "n": 10
+    }
+   },
+   "screenshot": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.6457,
+      1.0
+     ],
+     "n": 7
+    },
+    "no_box": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.3543
+     ],
+     "n": 7
+    }
+   },
+   "exact": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 0.8947368421052632,
+     "ci95": [
+      0.6861,
+      0.9706
+     ],
+     "n": 19
+    },
+    "no_box": {
+     "value": 0.05263157894736842,
+     "ci95": [
+      0.0094,
+      0.2464
+     ],
+     "n": 19
+    }
+   },
+   "injection": {
+    "not_cited": 1,
+    "locate_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.3424,
+      1.0
+     ],
+     "n": 2
+    },
+    "no_box": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.6576
+     ],
+     "n": 2
+    }
+   }
+  }
+ },
  "latency": {
   "embed": {
-   "p50_ms": 37.217500001133885,
-   "p95_ms": 44.862374999866006
+   "p50_ms": 37.75620899978094,
+   "p95_ms": 44.11666699888883
   },
   "search": {
-   "p50_ms": 1.7890409999381518,
-   "p95_ms": 2.879874999052845
+   "p50_ms": 1.9421670003794134,
+   "p95_ms": 3.1180830046650954
   },
   "rerank": {
-   "p50_ms": 5946.479292000731,
-   "p95_ms": 13549.312458999339
+   "p50_ms": 5940.776166004071,
+   "p95_ms": 13509.023582999362
   },
   "generate": {
-   "p50_ms": 10851.727874998687,
-   "p95_ms": 21109.35674999928
+   "p50_ms": 10794.190915999934,
+   "p95_ms": 20942.15550000081
   },
   "ask": {
-   "p50_ms": 17357.513457000096,
-   "p95_ms": 34654.482123998605
+   "p50_ms": 17287.246207990393,
+   "p95_ms": 34457.31108399923
   },
   "guard": {
-   "p50_ms": 156.47066699966672,
-   "p95_ms": 165.57870900032867
+   "p50_ms": 157.12083299877122,
+   "p95_ms": 167.25920799945015
   },
-  "model_load_s": 6.248889999998937,
-  "peak_memory_gb": 14.183913472
+  "locate": {
+   "p50_ms": 5186.550999998872,
+   "p95_ms": 5326.363084001059
+  },
+  "model_load_s": 5.928089875000296,
+  "peak_memory_gb": 14.18391552
  },
  "per_query": [
   {
@@ -1451,7 +1611,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.113,
+    0.795,
+    0.131
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-002",
@@ -1479,7 +1647,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.113,
+    0.75,
+    0.15
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-003",
@@ -1507,7 +1683,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.133,
+    0.665,
+    0.15
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-004",
@@ -1535,7 +1719,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.096,
+    0.635,
+    0.113
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-005",
@@ -1563,7 +1755,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.095,
+    0.655,
+    0.112
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-006",
@@ -1591,7 +1791,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.095,
+    0.805,
+    0.112
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-007",
@@ -1620,7 +1828,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.382,
+    0.134,
+    0.506,
+    0.15
+   ],
+   "locate_hit": false
   },
   {
    "id": "pub-008",
@@ -1649,7 +1865,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.118,
+    0.113,
+    0.462,
+    0.13
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-009",
@@ -1678,7 +1902,15 @@
    "guard_response": {
     "label": "Unsafe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.118,
+    0.092,
+    0.506,
+    0.112
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-010",
@@ -1707,7 +1939,15 @@
    "guard_response": {
     "label": "Controversial",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.115,
+    0.435,
+    0.133
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-011",
@@ -1736,7 +1976,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.118,
+    0.092,
+    0.608,
+    0.111
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-012",
@@ -1765,7 +2013,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.113,
+    0.445,
+    0.13
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-013",
@@ -1796,7 +2052,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.097,
+    0.688,
+    0.123
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-014",
@@ -1824,7 +2088,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.085,
+    0.183,
+    0.603,
+    0.206
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-015",
@@ -1852,7 +2124,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.085,
+    0.146,
+    0.375,
+    0.173
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-016",
@@ -1880,7 +2160,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.084,
+    0.216,
+    0.508,
+    0.243
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-017",
@@ -1908,7 +2196,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.097,
+    0.142,
+    0.404,
+    0.17
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-018",
@@ -1937,7 +2233,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.086,
+    0.216,
+    0.418,
+    0.243
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-019",
@@ -1966,7 +2270,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.086,
+    0.185,
+    0.268,
+    0.205
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-020",
@@ -1995,7 +2307,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.093,
+    0.095,
+    0.313,
+    0.123
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-021",
@@ -2023,7 +2343,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.085,
+    0.183,
+    0.6,
+    0.206
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-022",
@@ -2051,7 +2379,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.099,
+    0.141,
+    0.5,
+    0.17
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-023",
@@ -2079,7 +2415,15 @@
    "guard_response": {
     "label": "Unsafe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.089,
+    0.183,
+    0.452,
+    0.207
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-024",
@@ -2107,7 +2451,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.093,
+    0.18,
+    0.743,
+    0.204
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-025",
@@ -2134,7 +2486,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.349,
+    0.337,
+    0.5,
+    0.894
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-026",
@@ -2161,7 +2521,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.547,
+    0.188,
+    0.715,
+    0.868
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-027",
@@ -2188,7 +2556,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.846,
+    0.21,
+    0.9,
+    0.267
+   ],
+   "locate_hit": false
   },
   {
    "id": "pub-028",
@@ -2215,7 +2591,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.689,
+    0.337,
+    0.825,
+    0.666
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-029",
@@ -2242,7 +2626,10 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": null,
+   "locate_hit": false
   },
   {
    "id": "pub-030",
@@ -2269,7 +2656,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.788,
+    0.588,
+    0.938,
+    0.788
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-031",
@@ -2296,7 +2691,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.528,
+    0.188,
+    0.63,
+    0.288
+   ],
+   "locate_hit": false
   },
   {
    "id": "pub-032",
@@ -2323,7 +2726,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.847,
+    0.372,
+    0.925,
+    0.42
+   ],
+   "locate_hit": false
   },
   {
    "id": "pub-033",
@@ -2350,7 +2761,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.339,
+    0.337,
+    0.5,
+    0.868
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-034",
@@ -2377,7 +2796,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.537,
+    0.21,
+    0.705,
+    0.868
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-035",
@@ -2404,7 +2831,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.072,
+    0.568,
+    0.934,
+    0.658
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-036",
@@ -2431,7 +2866,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.078,
+    0.784,
+    0.93,
+    0.875
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-037",
@@ -2458,7 +2901,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.078,
+    0.388,
+    0.935,
+    0.5
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-038",
@@ -2485,7 +2936,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.106,
+    0.762,
+    0.933,
+    0.838
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-039",
@@ -2512,7 +2971,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.106,
+    0.368,
+    0.406,
+    0.437
+   ],
+   "locate_hit": false
   },
   {
    "id": "pub-040",
@@ -2539,7 +3006,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.078,
+    0.437,
+    0.934,
+    0.535
+   ],
+   "locate_hit": false
   },
   {
    "id": "pub-041",
@@ -2566,7 +3041,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.078,
+    0.716,
+    0.93,
+    0.835
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-042",
@@ -2594,7 +3077,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.052,
+    0.397,
+    0.945,
+    0.497
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-043",
@@ -2622,7 +3113,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.049,
+    0.562,
+    0.949,
+    0.688
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-044",
@@ -2650,7 +3149,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.052,
+    0.666,
+    0.945,
+    0.815
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-045",
@@ -2677,7 +3184,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.253,
+    0.275,
+    0.635,
+    0.325
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-046",
@@ -2704,7 +3219,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.253,
+    0.383,
+    0.625,
+    0.445
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-047",
@@ -2732,7 +3255,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.248,
+    0.272,
+    0.75,
+    0.437
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-048",
@@ -2759,7 +3290,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.252,
+    0.497,
+    0.565,
+    0.553
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-049",
@@ -2786,7 +3325,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.252,
+    0.383,
+    0.595,
+    0.445
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-050",
@@ -2813,7 +3360,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.253,
+    0.497,
+    0.633,
+    0.548
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-051",
@@ -2843,7 +3398,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.25,
+    0.276,
+    0.715,
+    0.33
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-052",
@@ -3354,7 +3917,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.118,
+    0.113,
+    0.32,
+    0.128
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-074",
@@ -3383,7 +3954,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.119,
+    0.153,
+    0.312,
+    0.171
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-075",
@@ -3412,7 +3991,10 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": null,
+   "locate_hit": false
   },
   {
    "id": "pub-076",
@@ -3441,7 +4023,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.119,
+    0.132,
+    0.305,
+    0.15
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-077",
@@ -3470,7 +4060,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.118,
+    0.153,
+    0.312,
+    0.17
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-078",
@@ -3499,7 +4097,15 @@
    "guard_response": {
     "label": "Safe",
     "action": "allow"
-   }
+   },
+   "locate": "scored",
+   "locate_box": [
+    0.118,
+    0.113,
+    0.32,
+    0.128
+   ],
+   "locate_hit": true
   },
   {
    "id": "pub-079",
@@ -3525,7 +4131,8 @@
    "guard_response": {
     "label": "Controversial",
     "action": "warn"
-   }
+   },
+   "locate": "not_cited"
   }
  ],
  "criteria": [
@@ -3635,6 +4242,18 @@
    "name": "guard withholds no answers",
    "passed": true,
    "detail": "0/79 withheld",
+   "borderline": false
+  },
+  {
+   "name": "locate_hit",
+   "passed": true,
+   "detail": "0.860 (95% CI 0.75-0.93, n=57) vs >= 0.70",
+   "borderline": false
+  },
+  {
+   "name": "no usable box",
+   "passed": true,
+   "detail": "0.035 (95% CI 0.01-0.12, n=57) vs <= 0.15",
    "borderline": false
   }
  ]
