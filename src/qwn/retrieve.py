@@ -1,6 +1,7 @@
 """Hybrid retrieval: vector + FTS5 keyword, fused with RRF, then reranked (PLAN.md → Search)."""
 
 import logging
+import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -21,6 +22,43 @@ class EmptyScope(ValueError):
 
     def __init__(self, paths: list[str]) -> None:
         super().__init__(f"Nothing indexed under {', '.join(paths)}.")
+
+
+def scope_choices(paths: list[str]) -> list[str]:
+    """What "Search in" offers for these indexed files: folders first, then files, each sorted.
+
+    Folders are every folder holding an indexed file, below the folder all files share (picking
+    that one would mean "everything", which an empty choice already does).
+    """
+    files = sorted(set(paths))
+    if not files:
+        return []
+    parents = [Path(f).parent for f in files]
+    common = Path(os.path.commonpath([str(p) for p in parents]))
+    folders: set[str] = set()
+    for parent in parents:
+        for folder in (parent, *parent.parents):
+            if folder == common or not folder.is_relative_to(common):
+                break
+            folders.add(str(folder))
+    return sorted(folders) + files
+
+
+def describe_scope(paths: list[str], indexed: set[str]) -> str:
+    """ "Searched in: 2 folders, 1 file" (shown on each answer), or "all documents".
+
+    `indexed` is every indexed file path; anything else in `paths` is a folder.
+    """
+    if not paths:
+        return "Searched in: all documents"
+    n_files = sum(1 for p in paths if p in indexed)
+    n_folders = len(paths) - n_files
+    parts = [
+        f"{n} {word}{'s' if n != 1 else ''}"
+        for n, word in ((n_folders, "folder"), (n_files, "file"))
+        if n
+    ]
+    return "Searched in: " + ", ".join(parts)
 
 
 @dataclass(frozen=True)

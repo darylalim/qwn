@@ -214,6 +214,52 @@ class Registry:
             self.memory.clear_cache()
 
 
+class WarmLoad:
+    """Loads the core models in one background thread, in pipeline order (`qwn ui`, phase 5).
+
+    `start` is idempotent, so reruns and extra tabs sharing this object never start a second
+    thread. A failed load stops warming and is kept in `error`; the registry then loads each
+    model on first use, as the CLI does.
+    """
+
+    def __init__(self, registry: Registry) -> None:
+        self.registry = registry
+        self.total = len(CORE_ROLES)
+        self.done = 0
+        self.error: str | None = None
+        self._thread: threading.Thread | None = None
+        self._start_lock = threading.Lock()
+
+    @property
+    def state(self) -> Literal["idle", "loading", "ready", "failed"]:
+        if self.error is not None:
+            return "failed"
+        if self.done == self.total:
+            return "ready"
+        return "idle" if self._thread is None else "loading"
+
+    def start(self) -> None:
+        with self._start_lock:
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, name="qwn-warm-load", daemon=True)
+                self._thread.start()
+
+    def join(self, timeout: float | None = None) -> None:
+        if self._thread is not None:
+            self._thread.join(timeout)
+
+    def _run(self) -> None:
+        for role in CORE_ROLES:
+            try:
+                self.registry._get(role)
+            except Exception as e:  # e.g. InsufficientMemory, ModelsInUse, not downloaded
+                logger.warning("warm load stopped at %s (%s)", role, type(e).__name__)
+                self.error = f"{type(e).__name__}: {e}"
+                return
+            self.done += 1
+        logger.info("warm load done (%d models)", self.done)
+
+
 def _default_loaders() -> dict[Role, Loader]:
     # Adapters import MLX libraries lazily, so importing qwn.models stays light.
     def generator(s: Settings) -> object:

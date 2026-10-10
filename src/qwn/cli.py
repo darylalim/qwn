@@ -25,6 +25,8 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 app = typer.Typer(help="Private multimodal RAG over your documents, on-device with MLX.")
 models_app = typer.Typer(help="Download and inspect the pinned models.")
 app.add_typer(models_app, name="models")
+eval_app = typer.Typer(help="Score retrieval and answers on the public or private eval set.")
+app.add_typer(eval_app, name="eval")
 
 LOCK_FILE = Path(__file__).with_name("models_lock.py")
 
@@ -437,7 +439,7 @@ def _dir_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) if path.exists() else 0
 
 
-@app.command("eval")
+@eval_app.callback(invoke_without_command=True)
 def eval_(
     ctx: typer.Context,
     set_: Annotated[str, typer.Option("--set", help="public or private.")] = "public",
@@ -461,6 +463,8 @@ def eval_(
     ] = False,
 ) -> None:
     """Score retrieval and answers on the public or private eval set; check the exit criteria."""
+    if ctx.invoked_subcommand is not None:
+        return
     from qwn import eval as ev
     from qwn.index import IndexMismatch
 
@@ -513,3 +517,118 @@ def eval_(
         typer.secho(f"Baseline updated: {es.baseline}", fg="green")
     elif not comparable and not force:
         raise typer.Exit(1)
+
+
+REVIEW_CHOICES = {
+    "a": "accept",
+    "e": "edit",
+    "u": "unanswerable",
+    "s": "skip",
+    "d": "discard",
+    "q": "quit",
+}
+
+
+@eval_app.command("review")
+def eval_review(ctx: typer.Context) -> None:
+    """Turn 👍/👎 drafts from the Chat page into private eval queries, one at a time."""
+    from qwn import eval as ev
+
+    settings: Settings = ctx.obj
+    drafts_path = ev.candidates_path(settings.home)
+    queries_path = ev.eval_set(settings, "private").queries
+    drafts = ev.read_jsonl(drafts_path)
+    if not drafts:
+        typer.echo("No drafts to review. Rate answers with 👍/👎 on the Chat page first.")
+        return
+    added = 0
+    for n, draft in enumerate(drafts, start=1):
+        up = draft["rating"] == "up"
+        typer.secho(
+            f"\nDraft {n}/{len(drafts)}  {'👍' if up else '👎'}  {draft['created']}", bold=True
+        )
+        typer.echo(f"  question: {draft['query']}")
+        if draft["abstained"]:
+            typer.echo('  answer:   abstained ("I couldn\'t find this")')
+        typer.echo(f"  cited:    {ev.format_expected(draft['cited']) or '(nothing)'}")
+        if draft.get("scope"):
+            typer.echo(f"  scope:    {', '.join(draft['scope'])}")
+        row = None
+        while True:
+            options = "[a]ccept, " if up else ""
+            key = (
+                typer.prompt(
+                    f"  {options}[e]dit, [u]nanswerable, [s]kip, [d]iscard, [q]uit", default="s"
+                )
+                .strip()
+                .lower()[:1]
+            )
+            choice = REVIEW_CHOICES.get(key)
+            if choice == "accept" and not up:
+                typer.echo("  A 👎 draft's citations were wrong: use [e]dit to set the pages.")
+                continue
+            if choice is not None:
+                break
+            typer.echo("  Choose one of the letters shown.")
+        if choice == "quit":
+            break
+        if choice == "skip":
+            continue
+        if choice in ("accept", "unanswerable", "edit"):
+            qid = ev.next_query_id(queries_path)
+            if choice == "accept":
+                row = ev.draft_query(draft, qid)
+            elif choice == "unanswerable":
+                row = ev.draft_query(draft, qid, expected=[])
+            else:
+                default = "" if draft["abstained"] else ev.format_expected(draft["cited"])
+                expected = ev.parse_expected(
+                    typer.prompt(
+                        "  expected (path:page, path#heading, path; comma-separated)",
+                        default=default,
+                    )
+                )
+                contains = _csv(typer.prompt("  answer_contains (comma-separated)", default=""))
+                tags = _csv(typer.prompt("  tags (comma-separated)", default=""))
+                row = ev.draft_query(
+                    draft, qid, expected=expected, answer_contains=contains, tags=tags or None
+                )
+            ev.append_query(queries_path, row)
+            added += 1
+            typer.secho(f"  added {qid}", fg="green")
+        ev.remove_draft(drafts_path, draft["draft_id"])
+    if added:
+        typer.echo(
+            f"\nAdded {added} queries to {queries_path}. The eval set changed: re-run "
+            "`qwn eval --set private --update-baseline` once you're done."
+        )
+
+
+def _csv(text: str) -> list[str]:
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
+UI_APP = Path(__file__).parent / "ui" / "app.py"
+
+
+@app.command()
+def ui(ctx: typer.Context) -> None:
+    """Open the Streamlit app (localhost only). It warm-loads the core models in the background."""
+    import sys
+
+    settings: Settings = ctx.obj
+    # Streamlit reads .streamlit/config.toml from the working directory: run from the home.
+    os.chdir(settings.home)
+    # No file watcher: it walks every loaded module on each rerun, and transformers' lazy modules
+    # then try to import torch (not installed), logging a traceback per module. Hot reload is for
+    # development: `streamlit run src/qwn/ui/app.py` directly keeps it.
+    argv = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(UI_APP),
+        "--server.fileWatcherType",
+        "none",
+    ]
+    os.execv(sys.executable, argv)

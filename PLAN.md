@@ -13,8 +13,9 @@ group; Apache-2.0 `LICENSE` and package metadata; `.gitignore`; ruff excludes `*
 (answering) is merged into `main` (2026-10-09, PR #3, v0.3.0; results under Evaluation → Phase 2
 results; one accepted known gap, see Security → Prompt injection). **Phase 3** (safety) is merged
 into `main` (2026-10-09, PR #5, v0.4.0; results under Evaluation → Phase 3 results; PII-only
-answers allowed, see Prompts and parameters → Guard parsing). **Not done:** phases 4–6, starting
-with phase 4 (phase 5 may go first; see Phases).
+answers allowed, see Prompts and parameters → Guard parsing). **Phase 5** (Streamlit UI) went
+before phase 4 (agreed 2026-10-09; see Phases) and is in review (branch `phase-5-streamlit-ui`).
+**Not done:** phases 4 and 6, starting with phase 4.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -551,6 +552,33 @@ Common flags override settings (`--top-k`, `--rerank-k`, `--max-images`, `--conf
 Run as an `st.navigation` app with 3 pages. Models are loaded through `@st.cache_resource` wrappers
 around `qwn.models`. The UI has no model or retrieval logic of its own.
 
+*(phase 5, agreed 2026-10-09)* The pages live in `src/qwn/ui/app_pages/`, not `ui/pages/`: Streamlit
+1.65's docs warn that a `pages/` folder next to the entry script clashes with its legacy
+auto-discovery. Shared wiring is in `ui/services.py` (one `st.cache_resource` object per server
+process: settings, registry, warm loader, job registry, index; `make_registry` is the fake
+injection point) and `ui/sources.py` (source cards and the "Open page" dialog). Phase 5 notes:
+
+- **Answers render as markdown with images neutralised** (`ui.services.safe_markdown`): an answer
+  can echo document text, and a markdown image would make the browser fetch a URL a document
+  chose, breaking "no network, no side effects" (see Security → Prompt injection). Streamlit
+  already escapes HTML. Document text in the dialog (text sources) is shown with `st.text`.
+- **Chat stages** come from `Answerer.ask(on_stage=...)`, called as each stage starts; the label
+  becomes "Waiting for the model…" while the MLX lock is held or the warm load is still running.
+- **System sliders and toggles apply through `on_change` callbacks**, so the sidebar's Guard line
+  (drawn before the page) is current on the same rerun. Memory metrics put the unit in the label
+  ("Active (GB)"), since "12.4 GB" truncates in `st.columns(4)` at 1024 px.
+- **Re-index** is `Ingester.run(..., force=True)` on the selected documents; uploads and deletes
+  are `ingest.save_upload` / `ingest.delete_documents`; ingest jobs are `qwn.jobs.JobRegistry`.
+- **`qwn eval` is a Typer group** so that `qwn eval review` exists; `qwn eval [OPTIONS]` works as
+  before.
+- **`qwn ui` runs Streamlit with `--server.fileWatcherType none`.** The watcher walks every loaded
+  module on each rerun; transformers' lazy modules then try to import torch (not installed) and
+  log a traceback each (~1,100 in one real-model session). `streamlit run src/qwn/ui/app.py`
+  directly keeps hot reload for development.
+- **Real-model check (2026-10-09, M2 Max, public eval index):** warm load finished in the
+  background with 4/4 models, MLX peak 14.1 GB; "What did PO-48213 cost?" answered correctly
+  with its citation card in 35–40 s on a just-started app (eval p50 is 19 s once warm).
+
 - **Chat**
   - History in `st.chat_message`. Each question is answered on its own (single-turn in v1; see
     Prompts and parameters), and an `st.caption` under the input says so.
@@ -853,10 +881,9 @@ a phone target.
 thumbnails at 2× Retina and for the 704 px dialog (~55% scale). Raise `pdf_dpi` only if very small
 print in the dialog is unreadable.
 
-**Optional, decide in phase 5:** on 2560 px+ monitors the wide pages stretch to ~2260 px. If
-Library or System looks too spread out, try capping their content with
-`st.container(width=1600)` inside a centred parent, and test that it still shrinks on narrow
-windows before adopting it.
+**Optional, decided in phase 5 (2026-10-09): not adopted.** On 2560 px monitors the wide pages
+stretch to ~2260 px. In the screenshot review the Library table and System page read fine at that
+width (the metric cards and table fill it evenly), so no width cap was added.
 
 **Tests (phase 5, `tests/ui/test_responsive.py`, marked `slow`):** they start a real Streamlit
 server and Chrome, so they're too heavy for CI. Run them locally with the merge checklist.
@@ -1127,6 +1154,7 @@ tests/unit/          chunking, IDs/hashing, guard regex parsing (incl. unparseab
                      contextual header built from file + heading path (not stored in chunks.text),
                      warm load: one thread across reruns, failure falls back to lazy,
                      bbox parsing: 0–1000 → Box, malformed/out-of-page/oversized → None
+tests/sample_corpus.py  the small corpus (PDF, PNG, markdown) shared by integration and UI tests
 tests/integration/   tmp_path SQLite index (real sqlite-vec); 2-page text PDF from `tests/pdf_fixture.py` (dependency-free writer, see License); PIL image; markdown file
                      ingest → re-ingest skips → modify one file → only it re-indexes → --prune;
                      crash between embed and commit leaves the old version intact;
@@ -1137,6 +1165,7 @@ tests/integration/   tmp_path SQLite index (real sqlite-vec); 2-page text PDF fr
                      delete empties chunks_fts; scoped search returns k in-scope hits even when
                      out-of-scope chunks are nearer
 tests/ui/            streamlit.testing.v1.AppTest smoke test per page, with fakes injected
+                     (fake_app.py: the real app with fakes, also what the Playwright server runs)
                      + test_responsive.py (slow): Playwright matrix of 6 widths × light/dark,
                        no horizontal overflow, Chat width ≤ 736 px, sidebar collapse, dialog fit
 tests/hooks/         run each .claude/hooks/*.sh via subprocess with JSON payloads; assert the
@@ -1437,7 +1466,7 @@ qwn/
 │  ├─ prompts.py  ingest.py  index.py  retrieve.py  answer.py  guard.py  voice.py  eval.py  jobs.py
 │  ├─ logging_setup.py      # one-time logging config (see Runtime robustness → Logging)
 │  ├─ cli.py
-│  └─ ui/                   # app.py, pages/chat.py, pages/library.py, pages/system.py
+│  └─ ui/                   # app.py, services.py, sources.py, app_pages/{chat,library,system}.py
 ├─ scripts/                # smoke_test.py, make_embedding_reference.py
 ├─ eval/public/            # build_corpus.py, queries.jsonl, guard.jsonl, baseline.json (committed)
 ├─ eval/private/           # your queries + baseline (gitignored)

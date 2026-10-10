@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from qwn.index import Chunk, chunk_id_for, doc_id_for, fts_query, is_identifier
-from qwn.retrieve import Hit, collapse_duplicates, cosine, rrf
+from qwn.retrieve import Hit, collapse_duplicates, cosine, describe_scope, rrf, scope_choices
 
 
 def test_fts_query_keeps_only_identifiers():
@@ -112,3 +112,31 @@ def test_rerank_scores_only_the_head_and_keeps_the_tail_in_order(home):
     assert Counting.seen == 3
     assert [x.chunk.rowid for x in out] == [3, 1, 2, 4, 5]  # head re-sorted, tail untouched
     assert out[3].rerank_score is None
+
+
+# "Search in" (Chat page)
+
+
+def test_scope_choices_lists_folders_first_then_files():
+    paths = ["/lib/a/x.pdf", "/lib/a/b/y.md", "/lib/c/z.png", "/lib/top.txt"]
+    assert scope_choices(paths) == [
+        "/lib/a",
+        "/lib/a/b",
+        "/lib/c",
+        "/lib/a/b/y.md",
+        "/lib/a/x.pdf",
+        "/lib/c/z.png",
+        "/lib/top.txt",
+    ]
+
+
+def test_scope_choices_skips_the_folder_everything_shares():
+    assert scope_choices(["/lib/a/x.pdf", "/lib/a/y.pdf"]) == ["/lib/a/x.pdf", "/lib/a/y.pdf"]
+    assert scope_choices([]) == []
+
+
+def test_describe_scope_counts_folders_and_files():
+    indexed = {"/lib/a/x.pdf", "/lib/c/z.png"}
+    assert describe_scope([], indexed) == "Searched in: all documents"
+    assert describe_scope(["/lib/a", "/lib/c"], indexed) == "Searched in: 2 folders"
+    assert describe_scope(["/lib/a", "/lib/c/z.png"], indexed) == "Searched in: 1 folder, 1 file"
