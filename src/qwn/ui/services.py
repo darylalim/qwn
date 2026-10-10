@@ -20,6 +20,7 @@ from qwn.ingest import Ingester, open_index
 from qwn.jobs import JobRegistry
 from qwn.models import ModelsInUse, Registry, WarmLoad
 from qwn.retrieve import Retriever
+from qwn.voice import Voice
 
 # Sliders and toggles on the System page: applied per request, never persisted.
 TUNABLE = ("top_k", "rerank_k", "max_images", "guard_enabled", "controversial")
@@ -91,6 +92,10 @@ def answerer(svc: Services) -> Answerer:
     settings = request_settings(svc)
     retriever = Retriever(settings, require_index(svc), svc.registry)
     return Answerer(settings, retriever, svc.registry)
+
+
+def voice(svc: Services) -> Voice:
+    return Voice(request_settings(svc), svc.registry)
 
 
 def ingester(svc: Services) -> Ingester:

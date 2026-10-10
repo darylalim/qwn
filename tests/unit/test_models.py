@@ -3,8 +3,19 @@ import sys
 import threading
 import time
 
+import numpy as np
 import pytest
-from fakes import GB, FakeEmbedder, FakeGenerator, FakeGuard, FakeMemory, FakeReranker
+from fakes import (
+    GB,
+    FakeAsr,
+    FakeEmbedder,
+    FakeGenerator,
+    FakeGuard,
+    FakeMemory,
+    FakeReranker,
+    FakeTts,
+    FakeVad,
+)
 
 from qwn.config import Settings
 from qwn.interfaces import Item
@@ -140,8 +151,11 @@ def test_second_process_is_refused_until_first_exits(tmp_path):
 def test_fast_tests_do_not_import_mlx():
     code = (
         "import sys, qwn.cli, qwn.models, qwn.adapters.mlx_vlm_embed, "
-        "qwn.adapters.mlx_vlm_gen, qwn.adapters.mlx_vlm_rerank, qwn.adapters.mlx_lm_guard; "
-        "bad = [m for m in sys.modules if m.split('.')[0] in ('mlx', 'mlx_vlm', 'mlx_lm')]; "
+        "qwn.adapters.mlx_vlm_gen, qwn.adapters.mlx_vlm_rerank, qwn.adapters.mlx_lm_guard, "
+        "qwn.adapters.mlx_audio_vad, qwn.adapters.mlx_audio_asr, qwn.adapters.mlx_audio_tts, "
+        "qwn.voice; "
+        "bad = [m for m in sys.modules "
+        "if m.split('.')[0] in ('mlx', 'mlx_vlm', 'mlx_lm', 'mlx_audio')]; "
         "assert not bad, bad"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
@@ -173,3 +187,83 @@ def test_warm_load_failure_falls_back_to_loading_on_first_use(home):
     memory.recommended = int(30 * GB)  # memory freed: the next use loads it lazily
     reg.reranker().score(Item(text="q"), [Item(text="q")])
     assert calls[-1] == "reranker"
+
+
+# voice models: lazy and evictable
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def voice_loaders(memory: FakeMemory, calls: list[str]):
+    sizes = {"vad": 0.002, "asr": 2.5, "tts": 2.9}
+    fakes = {"vad": FakeVad, "asr": FakeAsr, "tts": FakeTts}
+
+    def make(role):
+        def load(settings):
+            calls.append(role)
+            memory.active += int(sizes[role] * GB)
+            return fakes[role]()
+
+        return load
+
+    return {role: make(role) for role in sizes}
+
+
+def test_voice_models_load_on_first_use_and_unload_when_idle(home):
+    memory, calls, clock = FakeMemory(), [], Clock()
+    reg = Registry(
+        Settings(voice_idle_minutes=10),
+        loaders=voice_loaders(memory, calls),
+        memory=memory,
+        clock=clock,
+    )
+    assert reg.loaded() == []
+    asr = reg.asr()
+    assert calls == ["asr"]
+    clock.now = 9 * 60
+    asr.transcribe(np.zeros(16_000, dtype=np.float32))  # use counts, not just loading
+    clock.now = 18 * 60
+    reg.evict_idle()
+    assert reg.loaded() == [reg.repo("asr")]  # used 9 minutes ago: kept
+    clock.now = 19 * 60
+    reg.evict_idle()
+    assert reg.loaded() == []
+    assert memory.cleared == 1
+    reg.asr()
+    assert calls == ["asr", "asr"]  # loaded again on the next use
+    reg.process_lock.release()
+
+
+def test_any_model_request_unloads_idle_voice_models(home):
+    memory, calls, clock = FakeMemory(), [], Clock()
+    loaders = {**counting_loaders(memory, []), **voice_loaders(memory, calls)}
+    reg = Registry(Settings(), loaders=loaders, memory=memory, clock=clock)
+    reg.tts()
+    clock.now = 11 * 60
+    reg.guard()
+    assert reg.loaded() == [reg.repo("guard")]
+    reg.process_lock.release()
+
+
+class FreeingMemory(FakeMemory):
+    def clear_cache(self):  # dropping the voice models gives their memory back
+        super().clear_cache()
+        self.active = 0
+
+
+def test_voice_models_are_evicted_to_make_room_for_core_ones(home):
+    memory, calls = FreeingMemory(recommended_gb=12.0), []
+    loaders = {**counting_loaders(memory, calls), **voice_loaders(memory, calls)}
+    reg = Registry(Settings(memory_headroom_gb=1.0), loaders=loaders, memory=memory)
+    reg.asr()
+    reg.tts()
+    assert memory.active == pytest.approx(5.4 * GB)
+    reg.generator()  # 5.4 + 5.8 + 1.0 > 12: voice goes first
+    assert reg.loaded() == [reg.repo("generator")]
+    reg.process_lock.release()

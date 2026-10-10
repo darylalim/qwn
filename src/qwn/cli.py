@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -307,7 +308,9 @@ def search(
 @app.command()
 def ask(
     ctx: typer.Context,
-    question: Annotated[str, typer.Argument(help="Your question.")],
+    question: Annotated[
+        str | None, typer.Argument(help="Your question (or ask it out loud with --audio).")
+    ] = None,
     show_sources: Annotated[
         bool, typer.Option("--sources", help="Also list every source the model was given.")
     ] = False,
@@ -322,21 +325,66 @@ def ask(
             help="Check the question and answer with Guard (default: the guard_enabled setting).",
         ),
     ] = None,
+    audio: Annotated[
+        Path | None,
+        typer.Option(help="Ask a recorded question instead (WAV); it's transcribed on-device."),
+    ] = None,
+    speak: Annotated[
+        Path | None, typer.Option(help="Also write the answer as speech to this WAV file.")
+    ] = None,
     as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
 ) -> None:
     """Answer QUESTION from your documents, citing the pages it used."""
     from qwn.answer import Answerer, cite_label
+    from qwn.voice import (
+        SAMPLE_RATE,
+        AudioError,
+        NoSpeech,
+        Transcript,
+        Voice,
+        encode_wav,
+        load_audio,
+        spoken_text,
+    )
 
+    if (question is None) == (audio is None):
+        raise _fail("Give a QUESTION or --audio IN.wav (exactly one).")
+    recording = None
+    if audio is not None:
+        try:
+            recording = load_audio(audio)
+        except (OSError, AudioError) as e:
+            raise _fail(f"Can't read {audio}: {e}") from None
     settings = _overrides(ctx.obj, top_k=top_k, rerank_k=rerank_k, max_images=max_images)
     retriever, doc_ids = _retriever(settings, scope)
     answerer = Answerer(settings, retriever, retriever.registry)
+    voice = Voice(settings, retriever.registry)
+    transcript: Transcript | None = None
     try:
-        response = answerer.ask(question, doc_ids=doc_ids, guard=guard)
-    except EXPECTED_ERRORS as e:
+        if recording is not None:
+            transcript = voice.transcribe(recording)
+            if not transcript.text:
+                raise NoSpeech(transcript.speech_s)
+            question = transcript.text
+            if not as_json:
+                typer.secho(f"Heard: {question}", dim=True)
+        response = answerer.ask(question or "", doc_ids=doc_ids, guard=guard)
+        spoken, tts_s = None, 0.0
+        if speak is not None and (say := spoken_text(response)) is not None:
+            start = time.perf_counter()
+            spoken = voice.speak(say)
+            speak.write_bytes(encode_wav(spoken))
+            tts_s = time.perf_counter() - start
+    except NoSpeech as e:
+        raise _fail(str(e)) from None
+    except (OSError, *EXPECTED_ERRORS) as e:
         raise _fail(str(e)) from None
     except Exception as e:  # a model error: report it, keep the traceback in the log
         logging.getLogger(__name__).exception("ask failed")
         raise _fail(f"The model failed: {type(e).__name__}: {e}") from None
+    timings = {**(transcript.timings if transcript else {}), **response.timings}
+    if spoken is not None:
+        timings["tts"] = tts_s
 
     pairs = list(zip(response.sources, response.hits, strict=True))
     if as_json:
@@ -361,16 +409,24 @@ def ask(
             "sources": [row(s, h) for s, h in pairs],
             "invented_citations": len(response.invented),
             "tokens": {"prompt": response.prompt_tokens, "completion": response.completion_tokens},
-            "timings_s": {k: round(v, 3) for k, v in response.timings.items()},
+            "timings_s": {k: round(v, 3) for k, v in timings.items()},
         }
+        if transcript is not None:
+            out["transcript"] = transcript.text
+        if speak is not None:
+            out["speech"] = None if spoken is None else str(speak)
         typer.echo(json.dumps(out, indent=2, ensure_ascii=False))
         return
     for check in response.warnings:
         typer.secho(f"⚠ {check.message()}", fg="yellow", err=True)
     if (block := response.blocked) is not None:
         typer.secho(f"⛔ {block.message()}", fg="red")
+        if speak is not None:
+            typer.echo(f"Nothing spoken: {speak} not written.", err=True)
         return
     typer.echo(response.rendered())
+    if spoken is not None:
+        typer.echo(f"Spoken answer: {speak} ({len(spoken) / SAMPLE_RATE:.1f} s)", err=True)
     listed = pairs if show_sources else response.cited_sources()
     if listed:
         typer.echo("")

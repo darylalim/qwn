@@ -13,7 +13,16 @@ APP = TESTS.parent / "src" / "qwn" / "ui" / "app.py"
 if str(TESTS) not in sys.path:
     sys.path.insert(0, str(TESTS))
 
-from fakes import FakeEmbedder, FakeGenerator, FakeGuard, FakeMemory, FakeReranker  # noqa: E402
+from fakes import (  # noqa: E402
+    FakeAsr,
+    FakeEmbedder,
+    FakeGenerator,
+    FakeGuard,
+    FakeMemory,
+    FakeReranker,
+    FakeTts,
+    FakeVad,
+)
 
 import qwn.ui.services  # noqa: E402
 from qwn.config import Settings  # noqa: E402
@@ -28,6 +37,9 @@ def fake_registry(settings: Settings) -> Registry:
             "reranker": FakeReranker(),
             "generator": FakeGenerator(),
             "guard": FakeGuard(),
+            "vad": FakeVad(),
+            "asr": FakeAsr(),
+            "tts": FakeTts(),
         },
         memory=FakeMemory(active_gb=12.4),
     )

@@ -1,5 +1,9 @@
-"""Chat: ask a question, see the answer with its cited pages, rate it (PLAN.md → Streamlit UI)."""
+"""Chat: ask a question (typed or spoken), see the answer with its cited pages, rate it.
 
+See PLAN.md → Streamlit UI and → Voice input pipeline.
+"""
+
+import hashlib
 import logging
 import uuid
 from pathlib import Path
@@ -12,6 +16,7 @@ from qwn.models import InsufficientMemory, ModelsInUse
 from qwn.retrieve import EmptyScope, describe_scope, scope_choices
 from qwn.ui import services as ui
 from qwn.ui import sources
+from qwn.voice import AudioError, NoSpeech, encode_wav, load_audio, spoken_text
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,12 @@ def rate(msg: dict) -> None:
     msg["rating"] = rating
 
 
+def show_user(msg: dict) -> None:
+    st.text(msg["content"])
+    if msg.get("spoken"):
+        st.caption(":material/mic: Spoken question")
+
+
 def show_answer(msg: dict, *, last: bool) -> None:
     if msg.get("error"):
         st.error(msg["error"], icon=":material/error:")
@@ -70,6 +81,8 @@ def show_answer(msg: dict, *, last: bool) -> None:
     st.markdown(ui.safe_markdown(response.rendered()))
     st.caption(describe_scope(msg["scope"], indexed))
     sources.cards(response, msg["id"])
+    if msg.get("audio"):
+        st.audio(msg["audio"], format="audio/wav")
     st.feedback(
         "thumbs",
         key=f"rating-{msg['id']}",
@@ -106,13 +119,48 @@ def ask(question: str, scope: list[str]) -> dict:
     return msg
 
 
+def transcribe(data: bytes) -> str | None:
+    """The recording's transcript, or None after showing why there isn't one."""
+    with st.status("Transcribing…", expanded=False) as status:
+        try:
+            transcript = ui.voice(svc).transcribe(load_audio(data))
+            if not transcript.text:
+                raise NoSpeech(transcript.speech_s)
+            status.update(label="Transcribed", state="complete")
+            return transcript.text
+        except (AudioError, NoSpeech) as e:
+            label = f"Couldn't read the recording: {e}" if isinstance(e, AudioError) else str(e)
+        except (ModelsInUse, InsufficientMemory) as e:
+            label = f"{e} Closing other apps frees memory."
+        except Exception as e:  # a model error: show it, keep the traceback in the log
+            logger.exception("transcribe failed")
+            label = f"The model failed: {type(e).__name__}: {e}"
+        status.update(label=label, state="error")
+    return None
+
+
+def speak(msg: dict) -> None:
+    """Read a fresh answer aloud (after its text is already on screen)."""
+    text = spoken_text(msg["response"]) if "response" in msg else None
+    if text is None:
+        return
+    try:
+        with st.spinner("Speaking…"):
+            msg["audio"] = encode_wav(ui.voice(svc).speak(text))
+    except Exception as e:  # the answer is already shown: say so, don't lose it
+        logger.exception("speak failed")
+        st.warning(f"Couldn't speak the answer: {type(e).__name__}", icon=":material/volume_off:")
+        return
+    st.audio(msg["audio"], format="audio/wav", autoplay=True)
+
+
 history = st.container()
 with history:
     messages = st.session_state.messages
     for i, msg in enumerate(messages):
         if msg["role"] == "user":
             with st.chat_message("user", avatar=USER):
-                st.text(msg["content"])
+                show_user(msg)
         else:
             with st.chat_message("assistant", avatar=ASSISTANT):
                 show_answer(msg, last=i == len(messages) - 1)
@@ -134,16 +182,29 @@ scope = st.multiselect(
     placeholder="All documents",
     disabled=not docs,
 )
+recording = st.audio_input("Ask out loud", key="recording", disabled=not docs)
 st.caption("Each question is answered on its own: earlier messages aren't sent to the model.")
 
 question = st.chat_input("Ask about your documents", disabled=not docs, submit_mode="disable")
 question = question or st.session_state.pop("pending", None)
+spoken = False
+if not question and recording is not None:
+    data = recording.getvalue()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != st.session_state.get("last_recording"):  # new, not a rerun with the same one
+        st.session_state.last_recording = digest
+        with history:
+            question = transcribe(data)
+        spoken = question is not None
 if question:
-    st.session_state.messages.append({"role": "user", "content": question})
+    user = {"role": "user", "content": question, "spoken": spoken}
+    st.session_state.messages.append(user)
     with history:
         with st.chat_message("user", avatar=USER):
-            st.text(question)
+            show_user(user)
         with st.chat_message("assistant", avatar=ASSISTANT):
             msg = ask(question, list(scope))
             st.session_state.messages.append(msg)
             show_answer(msg, last=True)
+            if spoken:
+                speak(msg)

@@ -9,23 +9,28 @@ import gc
 import logging
 import os
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any, Literal, Protocol, cast
 
 from qwn.config import Settings
-from qwn.interfaces import Embedder, Generator, Guard, Reranker
+from qwn.interfaces import Asr, Embedder, Generator, Guard, Reranker, Tts, Vad
 from qwn.models_lock import Group, pinned
 
 logger = logging.getLogger(__name__)
 
-Role = Literal["generator", "embedder", "reranker", "guard"]
+Role = Literal["generator", "embedder", "reranker", "guard", "vad", "asr", "tts"]
 CORE_ROLES: tuple[Role, ...] = ("guard", "embedder", "reranker", "generator")  # pipeline order
+VOICE_ROLES: tuple[Role, ...] = ("vad", "asr", "tts")
 _SETTING: dict[Role, str] = {
     "generator": "gen_model",
     "embedder": "embed_model",
     "reranker": "rerank_model",
     "guard": "guard_model",
+    "vad": "vad_model",
+    "asr": "asr_model",
+    "tts": "tts_model",
 }
 
 GB = 1e9
@@ -85,11 +90,17 @@ class ProcessLock:
 
 
 class _Locked:
-    """Routes every method call on a model through the registry's MLX lock."""
+    """Routes every method call on a model through the registry's MLX lock.
 
-    def __init__(self, inner: object, lock: threading.Lock) -> None:
+    `on_call` runs after each call (the registry uses it to note when a voice model was last used).
+    """
+
+    def __init__(
+        self, inner: object, lock: threading.Lock, on_call: Callable[[], None] | None = None
+    ) -> None:
         self._inner = inner
         self._lock = lock
+        self._on_call = on_call
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._inner, name)
@@ -98,8 +109,12 @@ class _Locked:
 
         @functools.wraps(attr)
         def call(*args: Any, **kwargs: Any) -> Any:
-            with self._lock:
-                return attr(*args, **kwargs)
+            try:
+                with self._lock:
+                    return attr(*args, **kwargs)
+            finally:
+                if self._on_call is not None:
+                    self._on_call()
 
         return call
 
@@ -115,6 +130,7 @@ class Registry:
         overrides: dict[Role, object] | None = None,
         loaders: dict[Role, Loader] | None = None,
         memory: Memory | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.settings = settings
         self.lock = threading.Lock()  # MLX isn't thread-safe: every model call goes through it
@@ -124,6 +140,9 @@ class Registry:
         self._memory = memory
         self._loaded: dict[Role, object] = {}
         self._groups: dict[Role, Group] = {}
+        self._clock = clock
+        self._last_used: dict[Role, float] = {}  # voice models only, for idle eviction
+        self._reaper: threading.Thread | None = None
         self.process_lock = ProcessLock(settings.index_dir / "models.lock")
 
     # typed accessors
@@ -139,6 +158,15 @@ class Registry:
 
     def guard(self) -> Guard:
         return cast(Guard, self._get("guard"))
+
+    def vad(self) -> Vad:
+        return cast(Vad, self._get("vad"))
+
+    def asr(self) -> Asr:
+        return cast(Asr, self._get("asr"))
+
+    def tts(self) -> Tts:
+        return cast(Tts, self._get("tts"))
 
     def load_core(self) -> None:
         for role in CORE_ROLES:
@@ -171,12 +199,20 @@ class Registry:
     # loading
 
     def _get(self, role: Role) -> object:
+        self.evict_idle()
         if role in self._overrides:
             return _Locked(self._overrides[role], self.lock)
         with self._load_lock:
             if role not in self._loaded:
                 self._load(role)
-            return _Locked(self._loaded[role], self.lock)
+            if role not in VOICE_ROLES:
+                return _Locked(self._loaded[role], self.lock)
+            self._touch(role)
+            self._start_reaper()
+            return _Locked(self._loaded[role], self.lock, lambda: self._touch(role))
+
+    def _touch(self, role: Role) -> None:
+        self._last_used[role] = self._clock()
 
     def _load(self, role: Role) -> None:
         repo = self.repo(role)
@@ -206,12 +242,41 @@ class Registry:
             )
 
     def evict(self, group: Group) -> None:
-        with self.lock:
-            for role in [r for r, g in self._groups.items() if g == group]:
-                logger.info("evicting %s", role)
-                del self._loaded[role], self._groups[role]
+        self._evict([r for r, g in self._groups.items() if g == group])
+
+    def evict_idle(self) -> None:
+        """Unload voice models unused for `voice_idle_minutes` (checked on every model request
+        and once a minute by a background thread while any voice model is loaded)."""
+        limit = self.settings.voice_idle_minutes * 60
+        with self._load_lock:
+            now = self._clock()
+            loaded = [r for r in VOICE_ROLES if r in self._loaded]
+            idle = [r for r in loaded if now - self._last_used.get(r, now) >= limit]
+            if idle:
+                self._evict(idle)
+
+    def _evict(self, roles: list[Role]) -> None:
+        with self.lock:  # waits for a running call: never pull a model out from under it
+            for role in roles:
+                if role in self._loaded:
+                    logger.info("evicting %s", role)
+                    del self._loaded[role], self._groups[role]
+                    self._last_used.pop(role, None)
             gc.collect()
             self.memory.clear_cache()
+
+    def _start_reaper(self) -> None:
+        if self._reaper is None:
+            self._reaper = threading.Thread(target=self._reap, name="qwn-voice-idle", daemon=True)
+            self._reaper.start()
+
+    def _reap(self) -> None:
+        while True:
+            time.sleep(60)
+            try:
+                self.evict_idle()
+            except Exception:  # never let the reaper die with a model still loaded
+                logger.exception("idle eviction failed")
 
 
 class WarmLoad:
@@ -282,4 +347,27 @@ def _default_loaders() -> dict[Role, Loader]:
 
         return MlxLmGuard.load(s)
 
-    return {"generator": generator, "embedder": embedder, "reranker": reranker, "guard": guard}
+    def vad(s: Settings) -> object:
+        from qwn.adapters.mlx_audio_vad import MlxAudioVad
+
+        return MlxAudioVad.load(s)
+
+    def asr(s: Settings) -> object:
+        from qwn.adapters.mlx_audio_asr import MlxAudioAsr
+
+        return MlxAudioAsr.load(s)
+
+    def tts(s: Settings) -> object:
+        from qwn.adapters.mlx_audio_tts import MlxAudioTts
+
+        return MlxAudioTts.load(s)
+
+    return {
+        "generator": generator,
+        "embedder": embedder,
+        "reranker": reranker,
+        "guard": guard,
+        "vad": vad,
+        "asr": asr,
+        "tts": tts,
+    }
