@@ -1,32 +1,51 @@
 # qwn
 
-Private, local multimodal RAG on Apple Silicon: ask questions about your PDFs, slides (exported as
-PDF), images and notes, and get answers with page citations. Everything runs on-device with MLX.
+Ask questions about your PDFs, images and notes, and get answers with page citations. qwn is a
+private multimodal RAG app that runs entirely on your Mac with MLX: no cloud, no telemetry.
 
 Work in progress: see `PLAN.md` for the phases.
+
+## Requirements
+
+- Apple Silicon Mac with 32 GB of memory (built on an M2 Max)
+- [uv](https://docs.astral.sh/uv/) and Python 3.12+
+- About 13 GB of disk for the models
 
 ## Setup
 
 ```bash
 uv sync
-uv run qwn models pull      # the only command that uses the network (~13 GB)
-uv run qwn models status
+uv run qwn models pull     # download the pinned models (~13 GB); the only network use
+uv run qwn models status   # check they're all present
 ```
 
-After `qwn models pull`, qwn runs fully offline (`HF_HUB_OFFLINE=1`). Run `qwn` from this folder,
-or set `QWN_HOME` to it.
+After `models pull`, qwn runs fully offline (`HF_HUB_OFFLINE=1`). Run `qwn` from this folder, or
+set `QWN_HOME` to it. Settings can be changed in `qwn.toml` (copy `qwn.example.toml`).
 
 ## Use
 
 ```bash
-uv run qwn ui                         # Streamlit app on localhost: Chat, Library, System
-uv run qwn ingest ~/Documents/papers  # or index folders in place from the CLI
-uv run qwn ask "What was APAC revenue in Q3?"
-uv run qwn eval review                # turn 👍/👎 Chat ratings into private eval questions
+uv run qwn ui                                 # Streamlit app on localhost: Chat, Library, System
+uv run qwn ingest ~/Documents/papers          # index a folder in place
+uv run qwn search "APAC revenue"              # show the best-matching pages and passages
+uv run qwn ask "What was APAC revenue in Q3?" # answer with citations, e.g. [report.pdf p.4]
+uv run qwn ask "..." --in ~/Documents/papers  # only search these files or folders
+uv run qwn status                             # index, model cache and memory
+uv run qwn eval review                        # turn 👍/👎 Chat ratings into private eval questions
 ```
 
-The UI loads the models (~13 GB) in the background when it starts. Only one qwn process can hold
-the models, so close the UI before running `ask`, `search`, `ingest` or `eval` from the CLI.
+- **Supported files:** PDF, PNG, JPEG, WebP, Markdown and plain text. Export slides to PDF first.
+- **One process at a time:** only one qwn process can hold the models. Close the UI before running
+  `ingest`, `search`, `ask` or `eval` from the CLI.
+
+## How it works
+
+1. **Ingest:** PDF pages are rendered to images and their text is extracted. Notes are split into
+   chunks by heading. Everything is embedded and stored in SQLite with sqlite-vec.
+2. **Retrieve:** a vector search and a keyword search (FTS5) run together, their results are
+   merged, and a reranker keeps the best five.
+3. **Answer:** Qwen3-VL-8B reads the page images and text and answers, citing each source.
+4. **Check:** Qwen3Guard screens the question and the answer.
 
 ## Models and licenses
 
