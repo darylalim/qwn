@@ -17,7 +17,7 @@ unclear, stop and ask; don't improvise around it. When the user agrees to a chan
 uv sync                               # install from uv.lock
 uv run ruff format . && uv run ruff check --fix .
 uv run ty check
-uv run pytest -m "not slow"           # fast tests: fakes only, no model downloads (<10 s)
+uv run pytest -m "not slow"           # fast tests: fakes only, no model downloads (<15 s)
 uv run pytest                         # everything incl. slow real-model tests (~13 GB models, local only)
 uv run qwn models pull                # the ONLY command that may use the network
 uv run qwn eval --set public          # phase exit criteria (from phase 1)
