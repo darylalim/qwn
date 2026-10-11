@@ -1,7 +1,7 @@
 """`qwn eval`: retrieval metrics, intervals, exit criteria and baselines (PLAN.md → Evaluation).
 
 Retrieval metrics always; answer metrics unless `--no-generate`; Guard metrics with `--guard`;
-highlight metrics with `--locate` (phase 6).
+highlight metrics with `--locate` (phase 6). The `hard` set measures and has no exit criteria.
 Results never include document, answer or guard-prompt text, only ids, paths, ranks, labels, flags
 and timings.
 """
@@ -36,8 +36,25 @@ from qwn.retrieve import EmptyScope, Hit, Retriever
 
 logger = logging.getLogger(__name__)
 
-SetName = Literal["public", "private"]
-TAGS = ("text", "scan", "chart", "table", "screenshot", "markdown", "exact", "injection")
+SetName = Literal["public", "private", "hard"]
+DISPOSABLE: tuple[SetName, ...] = ("public", "hard")  # generated corpora, indexes rebuilt freely
+TAGS = (
+    "text",
+    "scan",
+    "chart",
+    "table",
+    "screenshot",
+    "markdown",
+    "exact",
+    "injection",
+    # the hard set's (PLAN.md → Harder tier)
+    "version",
+    "multi",
+    "degraded",
+    "long",
+    "paraphrase",
+    "near-miss",
+)
 KS = (1, 5, 10)
 ASK_STAGES = ("embed", "search", "rerank", "generate")  # what `qwn ask` waits for (no Guard)
 BOOTSTRAP_RESAMPLES = 1000
@@ -79,6 +96,8 @@ class Query:
     answer_must_not_contain: list[str] = field(default_factory=list)
     scope: list[str] = field(default_factory=list)  # "in" (phase 2)
     region: list[float] | None = None  # phase 6: [x0, y0, x1, y1] on expected[0], 0..1
+    match: Literal["any", "all"] = "any"  # "all": every expected item is needed
+    answer_approx: tuple[float, float] | None = None  # (value, tolerance): a number in the answer
 
     @property
     def answerable(self) -> bool:
@@ -104,8 +123,10 @@ def load_queries(path: Path) -> list[Query]:
                 answer_must_not_contain=row.get("answer_must_not_contain", []),
                 scope=row.get("in", []),
                 region=row.get("region"),
+                match=row.get("match", "any"),
+                answer_approx=_approx(row.get("answer_approx")),
             )
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             raise EvalError(f"{path.name} line {n}: {type(e).__name__}: {e}") from None
         if q.id in seen:
             raise EvalError(f"{path.name} line {n}: duplicate id {q.id}")
@@ -113,9 +134,25 @@ def load_queries(path: Path) -> list[Query]:
             raise EvalError(f"{path.name} line {n}: every expected item needs a path")
         if q.region is not None and not _valid_region(q.region):
             raise EvalError(f"{path.name} line {n}: region must be [x0, y0, x1, y1] within 0..1")
+        if q.match not in ("any", "all"):
+            raise EvalError(f"{path.name} line {n}: match must be any or all")
         seen.add(q.id)
         out.append(q)
     return out
+
+
+def _approx(value: Any) -> tuple[float, float] | None:
+    """`answer_approx`: [value, tolerance], both numbers, tolerance >= 0."""
+    if value is None:
+        return None
+    if not (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(isinstance(v, int | float) and not isinstance(v, bool) for v in value)
+        and value[1] >= 0
+    ):
+        raise ValueError("answer_approx must be [value, tolerance] with tolerance >= 0")
+    return (float(value[0]), float(value[1]))
 
 
 def _valid_region(region: Any) -> bool:
@@ -181,6 +218,11 @@ def first_rank(hits: list[Hit], expected: list[dict[str, Any]], root: Path) -> i
         if any(matches(hit.chunk, item, root) for item in expected):
             return rank
     return None
+
+
+def all_in(hits: list[Hit], expected: list[dict[str, Any]], root: Path) -> bool:
+    """Does every expected item match some hit?"""
+    return all(any(matches(h.chunk, item, root) for h in hits) for item in expected)
 
 
 def missing_paths(queries: list[Query], index: Index, root: Path) -> list[str]:
@@ -304,19 +346,19 @@ class EvalSet:
     index_root: Path
     queries: Path
     baseline: Path
-    disposable: bool  # public: rebuilt automatically
-    guard: Path  # Guard prompts (the public ones, for both sets)
+    disposable: bool  # public and hard: rebuilt automatically
+    guard: Path  # Guard prompts (the public ones, for every set)
 
 
 def eval_set(settings: Settings, name: SetName) -> EvalSet:
     home = settings.home
-    if name == "public":
+    if name in DISPOSABLE:
         return EvalSet(
             name,
-            home / "data" / "eval-public",
-            public_index_parent(settings) / ingest_hash(settings)[:8],
-            home / "eval" / "public" / "queries.jsonl",
-            home / "eval" / "public" / "baseline.json",
+            home / "data" / f"eval-{name}",
+            disposable_index_parent(settings, name) / ingest_hash(settings)[:8],
+            home / "eval" / name / "queries.jsonl",
+            home / "eval" / name / "baseline.json",
             disposable=True,
             guard=home / "eval" / "public" / "guard.jsonl",
         )
@@ -331,32 +373,38 @@ def eval_set(settings: Settings, name: SetName) -> EvalSet:
     )
 
 
-def public_index_parent(settings: Settings) -> Path:
-    return settings.index_dir / "eval-public"
+def disposable_index_parent(settings: Settings, name: SetName) -> Path:
+    return settings.index_dir / f"eval-{name}"
 
 
-def clean_public(settings: Settings) -> list[Path]:
-    """Delete public eval indexes built with other ingest settings."""
-    parent, keep = public_index_parent(settings), ingest_hash(settings)[:8]
-    removed = [p for p in parent.glob("*") if p.is_dir() and p.name != keep]
+def clean_disposable(settings: Settings) -> list[Path]:
+    """Delete public and hard eval indexes built with other ingest settings."""
+    keep = ingest_hash(settings)[:8]
+    removed = [
+        p
+        for name in DISPOSABLE
+        for p in disposable_index_parent(settings, name).glob("*")
+        if p.is_dir() and p.name != keep
+    ]
     for p in removed:
         shutil.rmtree(p)
     return removed
 
 
-def build_public_corpus(home: Path, root: Path) -> None:
-    script = home / "eval" / "public" / "build_corpus.py"
+def build_corpus(home: Path, name: SetName, root: Path) -> None:
+    script = home / "eval" / name / "build_corpus.py"
     subprocess.run([sys.executable, str(script), str(root)], check=True, capture_output=True)
 
 
 def prepare(
     settings: Settings, es: EvalSet, registry: Registry, *, say: Callable[[str], None]
 ) -> Index:
-    """Open the set's index. The public one is (re)built and brought up to date automatically."""
+    """Open the set's index. Disposable ones (public, hard) are (re)built and brought up to date
+    automatically."""
     if not es.disposable:
         return open_index(settings, es.index_root)
-    say(f"Building the public corpus in {es.root} …")
-    build_public_corpus(settings.home, es.root)
+    say(f"Building the {es.name} corpus in {es.root} …")
+    build_corpus(settings.home, es.name, es.root)
     try:
         index = open_index(settings, es.index_root)
     except IndexMismatch:
@@ -364,9 +412,9 @@ def prepare(
     ingester = Ingester(settings, index, registry.embedder)
     report = ingester.run([es.root])
     if report.indexed:
-        say(f"Indexed {len(report.indexed)} public documents.")
+        say(f"Indexed {len(report.indexed)} {es.name} documents.")
     if report.failed:
-        raise EvalError(f"Public corpus failed to ingest: {report.failed}")
+        raise EvalError(f"The {es.name} corpus failed to ingest: {report.failed}")
     ingester.prune(ingester.prune_plan([es.root]).remove)
     return index
 
@@ -443,6 +491,8 @@ def run(
             row["rank_embed"] = first_rank(primary, q.expected, es.root)
             if options.rerank:
                 row["rank_rerank"] = first_rank(final, q.expected, es.root)
+            if q.match == "all":
+                row["all_in_top"] = all_in(final[: settings.rerank_k], q.expected, es.root)
         row["rank"] = first_rank(final, q.expected, es.root) if q.answerable else None
         if options.generate:
             t = time.perf_counter()
@@ -603,6 +653,14 @@ def contains(text: str, needle: str) -> bool:
     return n in hay
 
 
+_NUMBER = re.compile(r"(?<![\d.])\d+(?:\.\d+)?")
+
+
+def approx(text: str, value: float, tolerance: float) -> bool:
+    """Is any number in `text` (normalised as for `contains`) within `tolerance` of `value`?"""
+    return any(abs(float(n) - value) <= tolerance for n in _NUMBER.findall(normalise(text)))
+
+
 def answer_row(q: Query, response: Response, root: Path) -> dict[str, Any]:
     """What one answer scored. No answer or document text: only ids, labels, flags."""
     text = strip_citations(response.text)
@@ -618,8 +676,12 @@ def answer_row(q: Query, response: Response, root: Path) -> dict[str, Any]:
         row["citation_hit"] = any(
             matches(h.chunk, item, root) for h in cited for item in q.expected
         )
+        if q.match == "all":
+            row["citation_all"] = all_in(cited, q.expected, root)
         if q.answer_contains:
             row["answer_contains"] = all(contains(text, s) for s in q.answer_contains)
+        if q.answer_approx is not None:
+            row["answer_approx"] = approx(text, *q.answer_approx)
     if q.answer_must_not_contain:
         row["must_not_contain_ok"] = not any(contains(text, s) for s in q.answer_must_not_contain)
     if "injection" in q.tags:
@@ -690,6 +752,8 @@ def answer_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if with_contains:
             out["answer_contains"] = proportion(with_contains)
         out["false_abstention"] = proportion([r["abstained"] for r in answerable])
+    out["citation_all"] = proportion([r["citation_all"] for r in rows if "citation_all" in r])
+    out["answer_approx"] = proportion([r["answer_approx"] for r in rows if "answer_approx" in r])
     if unanswerable:
         out["abstention"] = proportion([r["abstained"] for r in unanswerable])
     injection = [r["injection_pass"] for r in rows if "injection_pass" in r]
@@ -705,6 +769,7 @@ def summarize(rows: list[dict[str, Any]], options: Options) -> dict[str, Any]:
     for k in KS:
         out[f"recall@{k}"] = proportion([r is not None and r <= k for r in final])
     out["mrr"] = mean_rr(final)
+    out["recall_all@5"] = proportion([r["all_in_top"] for r in rows if "all_in_top" in r])
     if options.rerank:
         embed = [r["rank_embed"] for r in rows]
         out["recall@5_before_rerank"] = proportion([r is not None and r <= 5 for r in embed])
@@ -755,7 +820,10 @@ def _at_most(name: str, metric: dict[str, Any], threshold: float) -> Criterion:
 
 def criteria(result: dict[str, Any], options: Options) -> list[dict[str, Any]]:
     """PLAN.md → Evaluation → Exit criteria: phase 1 always, phase 2 when answers were scored,
-    phase 3 when Guard was, phase 6 when highlights were."""
+    phase 3 when Guard was, phase 6 when highlights were. None for the hard set, which only
+    measures."""
+    if result.get("meta", {}).get("set") == "hard":
+        return []
     out = retrieval_criteria(result, options)
     if "answer" in result:
         out += answer_criteria(result["answer"]["summary"])
@@ -870,7 +938,14 @@ def changes(baseline: dict[str, Any], result: dict[str, Any]) -> list[str]:
                 verb = "now in top 5" if hit_a else "dropped out of top 5"
                 lines.append(f"{r['id']}: {verb} (rank {rb} -> {ra})")
         for key, yes, no in (
+            (
+                "all_in_top",
+                "now has every expected item in the top",
+                "no longer has them all in the top",
+            ),
             ("citation_hit", "now cites an expected item", "no longer cites an expected item"),
+            ("citation_all", "now cites every expected item", "no longer cites them all"),
+            ("answer_approx", "answer now within tolerance", "answer no longer within tolerance"),
             ("abstained", "now abstains", "no longer abstains"),
             ("locate_hit", "highlight now hits the region", "highlight no longer hits the region"),
         ):
@@ -923,6 +998,10 @@ def format_report(result: dict[str, Any]) -> str:
     ]
     for key in ("recall@1", "recall@5", "recall@10", "mrr"):
         lines.append(f"  {key:<22} {_pct(s[key])}")
+    if s["recall_all@5"]["n"]:
+        lines.append(
+            f"  {'recall_all@5':<22} {_pct(s['recall_all@5'])}  n={s['recall_all@5']['n']}"
+        )
     if "rerank_wlt" in s:
         w = s["rerank_wlt"]
         lines.append(f"  {'recall@5 before rerank':<22} {_pct(s['recall@5_before_rerank'])}")
@@ -954,6 +1033,9 @@ def format_report(result: dict[str, Any]) -> str:
     lines.append(f"  model load {lat['model_load_s']:.1f} s")
     if lat.get("peak_memory_gb") is not None:
         lines.append(f"  MLX peak memory {lat['peak_memory_gb']:.1f} GB")
+    if meta["set"] == "hard":
+        lines += ["", "Measurement set: no exit criteria"]
+        return "\n".join(lines)
     phases = ["phase 1: retrieval"]
     if "answer" in result:
         phases.append("phase 2: answers")
@@ -973,7 +1055,9 @@ def format_report(result: dict[str, Any]) -> str:
 
 ANSWER_METRICS = (
     "citation_hit",
+    "citation_all",
     "answer_contains",
+    "answer_approx",
     "abstention",
     "false_abstention",
     "injection_pass",
@@ -984,7 +1068,7 @@ def answer_report(answer: dict[str, Any]) -> list[str]:
     a = answer["summary"]
     lines = ["", "Answers, greedy (value [95% CI])"]
     for key in ANSWER_METRICS:
-        if key in a:
+        if key in a and a[key]["n"]:
             lines.append(f"  {key:<22} {_pct(a[key])}  n={a[key]['n']}")
     lines.append(f"  {'invented citations':<22} {a['invented_citations']}")
     lines += ["", "By tag          cite_hit  contains  abstain  false_abst"]

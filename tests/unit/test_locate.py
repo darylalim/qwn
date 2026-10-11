@@ -1,6 +1,5 @@
 """Answer highlighting (phase 6): claims, strict box parsing, drawing, eval scoring. No models."""
 
-import importlib.util
 import json
 import logging
 from pathlib import Path
@@ -193,15 +192,8 @@ def test_locate_summary_and_criteria():
 # the public set's regions come from the corpus generator's layout
 
 
-def test_public_regions_match_the_corpus_generator(tmp_path):
-    spec = importlib.util.spec_from_file_location(
-        "build_corpus", ROOT / "eval" / "public" / "build_corpus.py"
-    )
-    assert spec is not None and spec.loader is not None
-    corpus = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(corpus)
-    layout: dict = {}
-    corpus.build(tmp_path, layout)
+def test_public_regions_match_the_corpus_generator(public_corpus):
+    corpus, _, layout = public_corpus
     queries = [json.loads(line) for line in (ROOT / "eval/public/queries.jsonl").open()]
     for q in queries:
         assert q.get("region") == corpus.find_region(layout, q), q["id"]

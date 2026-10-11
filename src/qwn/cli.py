@@ -26,7 +26,7 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 app = typer.Typer(help="Private multimodal RAG over your documents, on-device with MLX.")
 models_app = typer.Typer(help="Download and inspect the pinned models.")
 app.add_typer(models_app, name="models")
-eval_app = typer.Typer(help="Score retrieval and answers on the public or private eval set.")
+eval_app = typer.Typer(help="Score retrieval and answers on the public, private or hard eval set.")
 app.add_typer(eval_app, name="eval")
 
 LOCK_FILE = Path(__file__).with_name("models_lock.py")
@@ -458,7 +458,7 @@ def status(ctx: typer.Context) -> None:
         counts = index.counts()
         kinds = ", ".join(f"{counts.get(k, 0)} {k}" for k in ("pdf", "image", "text"))
         size = sum(f.stat().st_size for f in settings.index_dir.glob(f"{DB_NAME}*"))
-        size += _dir_size(settings.index_dir / "pages")  # eval-public/ indexes not counted
+        size += _dir_size(settings.index_dir / "pages")  # eval-public/ and eval-hard/ not counted
         typer.echo(
             f"index:  {counts['documents']} documents ({kinds}), {counts['chunks']} chunks, "
             f"{size / 1e6:.1f} MB on disk"
@@ -498,7 +498,7 @@ def _dir_size(path: Path) -> int:
 @eval_app.callback(invoke_without_command=True)
 def eval_(
     ctx: typer.Context,
-    set_: Annotated[str, typer.Option("--set", help="public or private.")] = "public",
+    set_: Annotated[str, typer.Option("--set", help="public, private or hard.")] = "public",
     rerank: Annotated[bool, typer.Option(help="Score after reranking.")] = True,
     hybrid: Annotated[bool, typer.Option(help="Hybrid (on) or vector-only (off).")] = True,
     generate: Annotated[
@@ -517,24 +517,25 @@ def eval_(
         bool, typer.Option("--force", help="Report even when not comparable with the baseline.")
     ] = False,
     clean: Annotated[
-        bool, typer.Option("--clean", help="Delete public eval indexes for other settings.")
+        bool,
+        typer.Option("--clean", help="Delete public and hard eval indexes for other settings."),
     ] = False,
 ) -> None:
-    """Score retrieval and answers on the public or private eval set; check the exit criteria."""
+    """Score retrieval and answers on an eval set; check the exit criteria (none for hard)."""
     if ctx.invoked_subcommand is not None:
         return
     from qwn import eval as ev
     from qwn.index import IndexMismatch
 
     settings: Settings = ctx.obj
-    if set_ not in ("public", "private"):
-        raise _fail("--set must be public or private.")
+    if set_ not in ("public", "private", "hard"):
+        raise _fail("--set must be public, private or hard.")
     if locate and not generate:
         raise _fail("--locate scores highlights on answers: drop --no-generate.")
     if clean:
-        for path in ev.clean_public(settings):
+        for path in ev.clean_disposable(settings):
             typer.echo(f"removed {path}")
-    es = ev.eval_set(settings, "public" if set_ == "public" else "private")
+    es = ev.eval_set(settings, set_)
     registry = make_registry(settings)
 
     def progress(i: int, n: int) -> None:

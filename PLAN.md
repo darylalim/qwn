@@ -22,9 +22,9 @@ is merged into `main` (2026-10-10, PR #12, v0.7.0; findings under Streamlit UI �
 highlighting, results under Evaluation → Phase 6 results). **All phases are done.** The
 non-prompt injection defence follow-up is done (text-layer filter, Security → Prompt injection;
 injection 4/4). The tighter chart/table highlight regions follow-up is done (Evaluation → Tighter
-regions results; `locate_hit` 0.914). Open follow-up: **a harder eval tier** (planned 2026-10-10;
-read Evaluation, especially Harder tier, and Testing). It's a separate `hard` set that measures
-and has no exit criteria; the public set stays as it is.
+regions results; `locate_hit` 0.914). The harder eval tier follow-up is done (`qwn eval --set
+hard`, Evaluation → Harder tier and Harder tier results; a measurement set with no exit criteria).
+Judge tuning changes on it; the public set still guards regressions. No open follow-ups.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -1680,6 +1680,66 @@ the interval's lower bound is under the threshold, the PR notes that the result 
   pub-039 boxes the "Saturday morning" cell the question names, not the answer "Tomasz" (the
   phase 6 note above called it the answering cell; it isn't); pub-007 boxes just the name, not
   the whole text line (text regions are out of scope here).
+
+### Harder tier results (hard set, 2026-10-10, M2 Max)
+
+`qwn eval --set hard --locate --update-baseline` (the committed `eval/hard/baseline.json`), after
+the one-time hardening below:
+
+- **Corpus and queries:** 39 documents (the 28 public ones plus 11 hard ones), 60 queries (50
+  answerable, 10 `near-miss` + `unanswerable`). Tag counts: `version` 21, `paraphrase` 13,
+  `degraded` 15, `multi` 9, `long` 8, `near-miss` 10.
+- **Retrieval:** recall@1 before rerank **0.64**; after rerank recall@1 0.820 [0.69, 0.90],
+  recall@5 1.000 [0.93, 1.00], MRR 0.891 (0.761 before rerank); rerank W/L/T 14/1/35;
+  `recall_all@5` 1.000 (n = 9). Hybrid W/L/T 0/12/38 vs vector only (both recall@5 1.000; hybrid
+  only moves hits down within the top 5 here). Lowest MRR: `version` 0.763, `multi` 0.778.
+- **Answers:** citation_hit 0.960 [0.87, 0.99]; `citation_all` 1.000 (n = 9); answer_contains
+  **0.978** [0.89, 1.00] (n = 46); `answer_approx` 0.750 (n = 4); abstention **0.700** [0.40,
+  0.89] (n = 10); false abstention 0.020; invented citations 0.
+- **Highlights:** `locate_hit` 0.773 [0.63, 0.87] (n = 44); no usable box 0.136. `multi` 0.556
+  and `degraded` 0.545 are the weakest.
+- **Latency:** rerank p50 12.3 s (the public set's is 5.9 s at the same 10 candidates: more
+  image pages among them), generate p50 20.8 s, ask p50 33.1 s / p95 35.8 s; MLX peak 13.0 GB.
+- **Misses per new tag:** `version` hard-010 (right page at rank 1, but the model abstained)
+  and hard-038 (asked about 2025, cited and answered from the 2024 review); `degraded` hard-037 (October occupancy read outside ±5);
+  `paraphrase` hard-038; `near-miss` hard-055, hard-059, hard-060 (answered from the lure
+  sentence). **`multi` and `long` have no miss**, even after hardening: kept as they are, per the
+  rule above.
+- **Hardening (once, in the generator; no query changed):** the first run (before hardening:
+  recall@1 before rerank 0.64, answer_contains 0.978, abstention 1.000) had no miss on `long`,
+  `multi` or `near-miss`. Changes: the operations manual gained 9 decoy sections after section 39
+  (near-twin areas such as "Cold store A annex" and "Boiler room North annex", every value
+  different from the twin's) plus a "Cold store E" page that names the area but gives no interval;
+  lure sentences went next to the near-miss facts (2023 restated figures, 2027 fees, the cancelled
+  PO-48214, the invoice's late-payment line, the Saturday-only bus 6, the rainfall gauge outage);
+  two lure documents were added (`tables/weekday-roster.png`, Monday–Thursday evenings with no
+  Friday; `docs/sprint-15-plan.md`, sprint 15 planned with no velocity). Only `near-miss` moved.
+- **Done when, as measured:**
+  1. Not saturated: recall@1 before rerank 0.64 ≤ 0.85 ✓; **answer_contains 0.978 > 0.90 ✗**
+     (known shortfall: the model reads the right page's text well once it is retrieved; the
+     difficulty here is in ranking, abstention and chart reading, not in exact text answers).
+  2. Not floored: recall@5 1.000 and citation_hit 0.960 ≥ 0.40 ✓.
+  3. Every new tag has a miss: ✓ except `multi` and `long` (noted above).
+  4. Rerank sweep (below): no count beats 10.
+  5. Public set unchanged ✓: `qwn eval --set public --guard --locate` shows "No per-query changes
+     vs baseline", every criterion passes, `eval/public/` is untouched and the public files in the
+     hard build are byte-identical to a public-only build.
+  6. Fast tests ✓ (generator determinism, expected pages exist, regions match the generator,
+     paraphrase overlap, `match` / `answer_approx` / new metrics with fakes).
+- **Rerank sweep** (`QWN_RERANK_CANDIDATES`, `--no-generate`):
+
+  | Candidates | recall@5 | MRR | `recall_all@5` | rerank p50 / p95 |
+  |---|---|---|---|---|
+  | 5 | 1.000 | 0.893 | **0.778** | 6.4 s / 7.1 s |
+  | 10 (default) | 1.000 | 0.891 | 1.000 | 12.8 s / 14.2 s |
+  | 20 | 1.000 | 0.886 | 1.000 | 23.8 s / 28.0 s |
+
+  5 halves the latency but loses both pages on 2 of the 9 `multi` queries; 20 costs twice the time
+  for a slightly lower MRR (W/L/T 14/2/34). **Keep 10;** no follow-up proposed.
+- **Deviations from the plan above:** 11 new documents rather than ~15 (the 9 in the table plus
+  the 2 lure documents); 50 answerable queries rather than ~45; the public service agreement has
+  no response time, so the 2026 amendment adds one rather than changing it; the fast suite is
+  ~15 s (one shared public build per session in `tests/unit/conftest.py`).
 
 ## Phases
 

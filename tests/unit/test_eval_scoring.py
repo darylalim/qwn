@@ -355,3 +355,130 @@ def test_public_guard_set_matches_the_plan():
     assert (len(safe), len(unsafe)) == (20, 10)
     assert sum("alarming" in g.tags for g in safe) == 8
     assert {t for g in unsafe for t in g.tags} == set(CATEGORIES)  # every Guard category
+
+
+# the hard set (PLAN.md → Harder tier): match, answer_approx, recall_all@5, citation_all
+
+
+def test_load_queries_reads_match_and_answer_approx(tmp_path):
+    path = tmp_path / "q.jsonl"
+    item = '"expected": [{"path": "a.pdf", "page": 1}, {"path": "b.pdf", "page": 2}]'
+    path.write_text(
+        f'{{"id": "a", "query": "q", {item}, "match": "all"}}\n'
+        '{"id": "b", "query": "q", "expected": [{"path": "c.png"}], "answer_approx": [76, 5]}\n'
+    )
+    a, b = ev.load_queries(path)
+    assert (a.match, a.answer_approx) == ("all", None)
+    assert (b.match, b.answer_approx) == ("any", (76.0, 5.0))
+    for bad, message in (
+        ('{"id": "a", "query": "q", "expected": [], "match": "some"}', "match must be any or all"),
+        ('{"id": "a", "query": "q", "expected": [], "answer_approx": [76]}', "answer_approx"),
+        ('{"id": "a", "query": "q", "expected": [], "answer_approx": [76, -1]}', "answer_approx"),
+        ('{"id": "a", "query": "q", "expected": [], "answer_approx": ["76", 5]}', "answer_approx"),
+    ):
+        path.write_text(bad + "\n")
+        with pytest.raises(ev.EvalError, match=message):
+            ev.load_queries(path)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("About 74 mm of rain fell in March.", True),
+        ("Roughly 81 mm.", True),  # tolerance is inclusive
+        ("Roughly 81.5 mm.", False),
+        ("It was 70.", False),
+        ("In 2025, March had 71 mm.", True),  # any number counts, not only the first
+        ("1,076 mm", False),  # thousands separator: 1076, not 76
+        ("No figure is shown.", False),
+    ],
+)
+def test_approx_accepts_any_number_within_tolerance(text, expected):
+    assert ev.approx(text, 76, 5) is expected
+
+
+def test_answer_row_scores_citation_all_and_answer_approx():
+    two = [{"path": "a.pdf", "page": 1}, {"path": "b.pdf", "page": 2}]
+    q = ev.Query("q", "?", two, ["multi"], ["1.85"], match="all")
+    both = [hit("/corpus/a.pdf", 1), hit("/corpus/b.pdf", 2)]
+    row = ev.answer_row(q, _response("1.85 [S1] and 1.45 [S2]", both), ROOT)
+    assert row["citation_hit"] and row["citation_all"]
+    row = ev.answer_row(q, _response("1.85 [S1]", both[:1]), ROOT)
+    assert row["citation_hit"] and not row["citation_all"]
+    assert "citation_all" not in ev.answer_row(_query(), _response("x [S1]", both[:1]), ROOT)
+
+    q = ev.Query("q", "?", [{"path": "c.png"}], ["chart"], answer_approx=(76, 5))
+    row = ev.answer_row(q, _response("About 78 mm [S1].", [hit("/corpus/c.png")]), ROOT)
+    assert row["answer_approx"] and "answer_contains" not in row
+
+
+def test_all_in_needs_every_expected_item():
+    hits = [hit("/corpus/a.pdf", 1), hit("/corpus/b.pdf", 2)]
+    assert ev.all_in(hits, [{"path": "a.pdf", "page": 1}, {"path": "b.pdf"}], ROOT)
+    assert not ev.all_in(hits[:1], [{"path": "a.pdf", "page": 1}, {"path": "b.pdf"}], ROOT)
+
+
+def test_new_metrics_report_n_zero_when_no_query_uses_them():
+    ranks = {"rank": [1, 2], "rank_embed": [1, 2], "rank_vector": [1, 2], "rank_hybrid": [1, 2]}
+    rows = _rows(ranks, ["text"])
+    assert ev.summarize(rows, ev.Options())["recall_all@5"]["n"] == 0
+    rows[0]["all_in_top"], rows[1]["all_in_top"] = True, False
+    assert ev.summarize(rows, ev.Options())["recall_all@5"]["value"] == 0.5
+
+    s = ev.answer_summary([_arow()])
+    assert s["citation_all"]["n"] == 0 and s["answer_approx"]["n"] == 0
+    s = ev.answer_summary([_arow(citation_all=False), _arow(answer_approx=True)])
+    assert s["citation_all"]["value"] == 0.0 and s["answer_approx"]["value"] == 1.0
+    assert "citation_all" not in "\n".join(
+        ev.answer_report({"summary": ev.answer_summary([_arow()]), "by_tag": {}})
+    )
+
+
+def test_hard_set_has_no_exit_criteria():
+    ranks = {"rank": [9], "rank_embed": [9], "rank_vector": [9], "rank_hybrid": [9]}
+    rows = _rows(ranks, ["text"])
+    opts = ev.Options(generate=False)
+    result = {
+        "meta": {"set": "hard", "options": opts.as_dict()},
+        "summary": ev.summarize(rows, opts),
+        "by_tag": {},
+        "latency": {"model_load_s": 0.0},
+    }
+    assert ev.criteria(result, opts) == []
+    result["criteria"] = []
+    report = ev.format_report(result)
+    assert report.endswith("Measurement set: no exit criteria") and "Exit criteria" not in report
+    result["meta"]["set"] = "public"
+    assert ev.criteria(result, opts)  # the public set still has them
+
+
+def test_hard_set_paths_and_cleaning(home):
+    from qwn.config import Settings
+    from qwn.ingest import ingest_hash
+
+    s = Settings()
+    es = ev.eval_set(s, "hard")
+    assert es.disposable and es.root == s.home / "data" / "eval-hard"
+    assert es.queries == s.home / "eval" / "hard" / "queries.jsonl"
+    assert es.guard == s.home / "eval" / "public" / "guard.jsonl"
+    keep = ingest_hash(s)[:8]
+    assert es.index_root == s.index_dir / "eval-hard" / keep
+    for name in ("public", "hard"):
+        for sub in (keep, "old12345"):
+            (s.index_dir / f"eval-{name}" / sub).mkdir(parents=True)
+    removed = ev.clean_disposable(s)
+    assert sorted(p.parent.name for p in removed) == ["eval-hard", "eval-public"]
+    assert all(p.name == "old12345" for p in removed)
+    assert (s.index_dir / "eval-hard" / keep).is_dir()
+
+
+def test_changes_list_hard_metric_flips():
+    base = {"per_query": [{"id": "a", "all_in_top": True, "citation_all": False,
+                           "answer_approx": True}]}  # fmt: skip
+    now = {"per_query": [{"id": "a", "all_in_top": False, "citation_all": True,
+                          "answer_approx": False}]}  # fmt: skip
+    assert ev.changes(base, now) == [
+        "a: no longer has them all in the top",
+        "a: now cites every expected item",
+        "a: answer no longer within tolerance",
+    ]
