@@ -24,12 +24,14 @@ PRs after the required CI check passes (`gh pr checks N --watch`, then `gh pr me
 uv sync                               # install from uv.lock
 uv run ruff format . && uv run ruff check --fix .
 uv run ty check
-uv run pytest -m "not slow"           # fast tests: fakes only, no model downloads (<15 s; ~14.5 s now)
+uv run pytest -m "not slow"           # fast tests: fakes only, no model downloads (~15 s)
 uv run pytest                         # everything incl. slow real-model tests (~13 GB models, local only)
 uv run qwn models pull                # the ONLY command that may use the network
 uv run qwn eval --set public --guard --locate   # all exit criteria; ~40 min with answers: run in background
 uv run python eval/public/build_corpus.py --regions   # rewrite query regions after changing the corpus layout
 uv run python eval/public/build_corpus.py <scratch>/new   # then diff -r against a build from git stash: corpus must be byte-identical
+uv run qwn eval --set hard --locate   # measurement set, no exit criteria; ~35 min: run in background
+QWN_RERANK_CANDIDATES=5 uv run qwn eval --set hard --no-generate --force   # any setting via QWN_* env, for sweeps
 uv run qwn ui                         # Streamlit (localhost only)
 uv version --bump minor               # one minor release per completed phase (from phase 1)
 ```
@@ -57,12 +59,17 @@ uv version --bump minor               # one minor release per completed phase (f
 - **Eval baselines** change only via `qwn eval --update-baseline`, in the same PR as the change
   that moved them, with the per-query changes explained in the PR.
   If `queries.jsonl` changed (`eval_set_hash`), the tool won't compare runs: diff `per_query`
-  against `git show HEAD:eval/public/baseline.json` by hand. Corpus files must stay
+  against `git show HEAD:eval/<set>/baseline.json` by hand. Corpus files must stay
   byte-identical (`corpus_hash`) unless the change is intended.
   A change that only affects scoring (e.g. `region`) can be predicted exactly by re-scoring the
   committed baseline's `per_query` (e.g. `locate_box`) before the full eval run.
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
-  tuning changes on the hard set (PLAN.md → Harder tier) once it exists.
+  tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
+  MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
+- **Corpus generators:** draw new facts from their own `random.Random` stream (as
+  `SEED_DECOYS` in `eval/hard/build_corpus.py`), never from an existing one, so every existing
+  document stays byte-identical. Unit tests that need a corpus build use the session fixture
+  `public_corpus` in `tests/unit/conftest.py`; a second build costs ~1 s of the fast-test budget.
 - **Model output formats:** before parsing a new kind of model reply, run a scratch probe with
   greedy decoding on a few public-corpus pages (scratchpad, not the repo), then pin the format
   with a `slow` test.
@@ -73,4 +80,4 @@ uv version --bump minor               # one minor release per completed phase (f
 
 `src/qwn/` (interfaces, config, models registry, adapters/, ingest, index, retrieve, prompts,
 answer, guard, voice, eval, jobs, logging_setup, cli, ui/) · `tests/` (fakes, unit, integration, ui, hooks, slow) ·
-`eval/public/` (committed) · `eval/private/` (gitignored) · `.claude/` (hooks) · `.github/workflows/`
+`eval/public/`, `eval/hard/` (committed) · `eval/private/` (gitignored) · `.claude/` (hooks) · `.github/workflows/`
