@@ -1,0 +1,3534 @@
+{
+ "meta": {
+  "set": "hard",
+  "eval_set_hash": "0732f1aa1606319b4a02158e33ae8b31e80de563ff3ee04fe95e037c670308cd",
+  "corpus_hash": "079c16cbfef64133c09de3fddb6d9c46ff288023234858d0c6241cd10d59b176",
+  "models": {
+   "gen": "mlx-community/Qwen3-VL-8B-Instruct-4bit@defcdea7cc7a4b0858fea563cbbce171d328e457",
+   "embed": "mlx-community/Qwen3-VL-Embedding-2B-8bit@b4c9add3544248e763e515c6dd1d1de3ac7d032d",
+   "rerank": "mlx-community/Qwen3-VL-Reranker-2B-8bit@e9cd8bbefa68882550b30cfe1c9905b882965888",
+   "guard": "mlx-community/Qwen3Guard-Gen-0.6B-MLX@919a45777b667714648ee3d10d4560538b5b8bc8"
+  },
+  "settings_hash": "909151213fee6d8bf75a7b650229b5236f4afc1149325f99587afffbbcd7aae0",
+  "options": {
+   "rerank": true,
+   "hybrid": true,
+   "generate": true
+  },
+  "git_sha": "0b7f7200e2052ae7378878328399747120366dc9",
+  "qwn_version": "0.7.0",
+  "created": "2026-10-11T00:22:41+00:00"
+ },
+ "summary": {
+  "recall@1": {
+   "value": 0.82,
+   "ci95": [
+    0.692,
+    0.9023
+   ],
+   "n": 50
+  },
+  "recall@5": {
+   "value": 1.0,
+   "ci95": [
+    0.9286,
+    1.0
+   ],
+   "n": 50
+  },
+  "recall@10": {
+   "value": 1.0,
+   "ci95": [
+    0.9286,
+    1.0
+   ],
+   "n": 50
+  },
+  "mrr": {
+   "value": 0.8906666666666666,
+   "ci95": [
+    0.8193,
+    0.9533
+   ],
+   "n": 50
+  },
+  "recall_all@5": {
+   "value": 1.0,
+   "ci95": [
+    0.7008,
+    1.0
+   ],
+   "n": 9
+  },
+  "recall@5_before_rerank": {
+   "value": 1.0,
+   "ci95": [
+    0.9286,
+    1.0
+   ],
+   "n": 50
+  },
+  "mrr_before_rerank": {
+   "value": 0.7609999999999999,
+   "ci95": [
+    0.6723,
+    0.8507
+   ],
+   "n": 50
+  },
+  "rerank_wlt": {
+   "win": 14,
+   "loss": 1,
+   "tie": 35
+  },
+  "recall@5_vector": {
+   "value": 1.0,
+   "ci95": [
+    0.9286,
+    1.0
+   ],
+   "n": 50
+  },
+  "recall@5_hybrid": {
+   "value": 1.0,
+   "ci95": [
+    0.9286,
+    1.0
+   ],
+   "n": 50
+  },
+  "hybrid_wlt": {
+   "win": 0,
+   "loss": 12,
+   "tie": 38
+  }
+ },
+ "by_tag": {
+  "text": {
+   "recall@1": {
+    "value": 0.6896551724137931,
+    "ci95": [
+     0.5077,
+     0.8272
+    ],
+    "n": 29
+   },
+   "recall@5": {
+    "value": 1.0,
+    "ci95": [
+     0.883,
+     1.0
+    ],
+    "n": 29
+   },
+   "recall@10": {
+    "value": 1.0,
+    "ci95": [
+     0.883,
+     1.0
+    ],
+    "n": 29
+   },
+   "mrr": {
+    "value": 0.8114942528735632,
+    "ci95": [
+     0.7103,
+     0.9138
+    ],
+    "n": 29
+   },
+   "recall_all@5": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "recall@5_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     0.883,
+     1.0
+    ],
+    "n": 29
+   },
+   "mrr_before_rerank": {
+    "value": 0.7000000000000001,
+    "ci95": [
+     0.5839,
+     0.8213
+    ],
+    "n": 29
+   },
+   "rerank_wlt": {
+    "win": 9,
+    "loss": 1,
+    "tie": 19
+   },
+   "recall@5_vector": {
+    "value": 1.0,
+    "ci95": [
+     0.883,
+     1.0
+    ],
+    "n": 29
+   },
+   "recall@5_hybrid": {
+    "value": 1.0,
+    "ci95": [
+     0.883,
+     1.0
+    ],
+    "n": 29
+   },
+   "hybrid_wlt": {
+    "win": 0,
+    "loss": 8,
+    "tie": 21
+   }
+  },
+  "scan": {
+   "recall@1": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "recall@5": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "recall@10": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "mrr": {
+    "value": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "n": 8
+   },
+   "recall_all@5": {
+    "value": 0.0,
+    "ci95": [
+     0.0,
+     1.0
+    ],
+    "n": 0
+   },
+   "recall@5_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "mrr_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "n": 8
+   },
+   "rerank_wlt": {
+    "win": 0,
+    "loss": 0,
+    "tie": 8
+   },
+   "recall@5_vector": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "recall@5_hybrid": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "hybrid_wlt": {
+    "win": 0,
+    "loss": 0,
+    "tie": 8
+   }
+  },
+  "chart": {
+   "recall@1": {
+    "value": 1.0,
+    "ci95": [
+     0.6097,
+     1.0
+    ],
+    "n": 6
+   },
+   "recall@5": {
+    "value": 1.0,
+    "ci95": [
+     0.6097,
+     1.0
+    ],
+    "n": 6
+   },
+   "recall@10": {
+    "value": 1.0,
+    "ci95": [
+     0.6097,
+     1.0
+    ],
+    "n": 6
+   },
+   "mrr": {
+    "value": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "n": 6
+   },
+   "recall_all@5": {
+    "value": 0.0,
+    "ci95": [
+     0.0,
+     1.0
+    ],
+    "n": 0
+   },
+   "recall@5_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     0.6097,
+     1.0
+    ],
+    "n": 6
+   },
+   "mrr_before_rerank": {
+    "value": 0.5416666666666666,
+    "ci95": [
+     0.3056,
+     0.7778
+    ],
+    "n": 6
+   },
+   "rerank_wlt": {
+    "win": 4,
+    "loss": 0,
+    "tie": 2
+   },
+   "recall@5_vector": {
+    "value": 1.0,
+    "ci95": [
+     0.6097,
+     1.0
+    ],
+    "n": 6
+   },
+   "recall@5_hybrid": {
+    "value": 1.0,
+    "ci95": [
+     0.6097,
+     1.0
+    ],
+    "n": 6
+   },
+   "hybrid_wlt": {
+    "win": 0,
+    "loss": 4,
+    "tie": 2
+   }
+  },
+  "table": {
+   "recall@1": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "recall@5": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "recall@10": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "mrr": {
+    "value": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "n": 7
+   },
+   "recall_all@5": {
+    "value": 1.0,
+    "ci95": [
+     0.2065,
+     1.0
+    ],
+    "n": 1
+   },
+   "recall@5_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "mrr_before_rerank": {
+    "value": 0.9285714285714286,
+    "ci95": [
+     0.7857,
+     1.0
+    ],
+    "n": 7
+   },
+   "rerank_wlt": {
+    "win": 1,
+    "loss": 0,
+    "tie": 6
+   },
+   "recall@5_vector": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "recall@5_hybrid": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "hybrid_wlt": {
+    "win": 0,
+    "loss": 0,
+    "tie": 7
+   }
+  },
+  "exact": {
+   "recall@1": {
+    "value": 0.8571428571428571,
+    "ci95": [
+     0.4869,
+     0.9743
+    ],
+    "n": 7
+   },
+   "recall@5": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "recall@10": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "mrr": {
+    "value": 0.9285714285714286,
+    "ci95": [
+     0.7857,
+     1.0
+    ],
+    "n": 7
+   },
+   "recall_all@5": {
+    "value": 1.0,
+    "ci95": [
+     0.3424,
+     1.0
+    ],
+    "n": 2
+   },
+   "recall@5_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "mrr_before_rerank": {
+    "value": 0.9285714285714286,
+    "ci95": [
+     0.7857,
+     1.0
+    ],
+    "n": 7
+   },
+   "rerank_wlt": {
+    "win": 0,
+    "loss": 0,
+    "tie": 7
+   },
+   "recall@5_vector": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "recall@5_hybrid": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "hybrid_wlt": {
+    "win": 0,
+    "loss": 0,
+    "tie": 7
+   }
+  },
+  "version": {
+   "recall@1": {
+    "value": 0.6190476190476191,
+    "ci95": [
+     0.4088,
+     0.7925
+    ],
+    "n": 21
+   },
+   "recall@5": {
+    "value": 1.0,
+    "ci95": [
+     0.8454,
+     1.0
+    ],
+    "n": 21
+   },
+   "recall@10": {
+    "value": 1.0,
+    "ci95": [
+     0.8454,
+     1.0
+    ],
+    "n": 21
+   },
+   "mrr": {
+    "value": 0.7634920634920636,
+    "ci95": [
+     0.6286,
+     0.8905
+    ],
+    "n": 21
+   },
+   "recall_all@5": {
+    "value": 1.0,
+    "ci95": [
+     0.6457,
+     1.0
+    ],
+    "n": 7
+   },
+   "recall@5_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     0.8454,
+     1.0
+    ],
+    "n": 21
+   },
+   "mrr_before_rerank": {
+    "value": 0.5857142857142857,
+    "ci95": [
+     0.4476,
+     0.7349
+    ],
+    "n": 21
+   },
+   "rerank_wlt": {
+    "win": 10,
+    "loss": 1,
+    "tie": 10
+   },
+   "recall@5_vector": {
+    "value": 1.0,
+    "ci95": [
+     0.8454,
+     1.0
+    ],
+    "n": 21
+   },
+   "recall@5_hybrid": {
+    "value": 1.0,
+    "ci95": [
+     0.8454,
+     1.0
+    ],
+    "n": 21
+   },
+   "hybrid_wlt": {
+    "win": 0,
+    "loss": 8,
+    "tie": 13
+   }
+  },
+  "multi": {
+   "recall@1": {
+    "value": 0.6666666666666666,
+    "ci95": [
+     0.3542,
+     0.8794
+    ],
+    "n": 9
+   },
+   "recall@5": {
+    "value": 1.0,
+    "ci95": [
+     0.7008,
+     1.0
+    ],
+    "n": 9
+   },
+   "recall@10": {
+    "value": 1.0,
+    "ci95": [
+     0.7008,
+     1.0
+    ],
+    "n": 9
+   },
+   "mrr": {
+    "value": 0.7777777777777778,
+    "ci95": [
+     0.5556,
+     1.0
+    ],
+    "n": 9
+   },
+   "recall_all@5": {
+    "value": 1.0,
+    "ci95": [
+     0.7008,
+     1.0
+    ],
+    "n": 9
+   },
+   "recall@5_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     0.7008,
+     1.0
+    ],
+    "n": 9
+   },
+   "mrr_before_rerank": {
+    "value": 0.674074074074074,
+    "ci95": [
+     0.4222,
+     0.9111
+    ],
+    "n": 9
+   },
+   "rerank_wlt": {
+    "win": 3,
+    "loss": 0,
+    "tie": 6
+   },
+   "recall@5_vector": {
+    "value": 1.0,
+    "ci95": [
+     0.7008,
+     1.0
+    ],
+    "n": 9
+   },
+   "recall@5_hybrid": {
+    "value": 1.0,
+    "ci95": [
+     0.7008,
+     1.0
+    ],
+    "n": 9
+   },
+   "hybrid_wlt": {
+    "win": 0,
+    "loss": 3,
+    "tie": 6
+   }
+  },
+  "degraded": {
+   "recall@1": {
+    "value": 1.0,
+    "ci95": [
+     0.7961,
+     1.0
+    ],
+    "n": 15
+   },
+   "recall@5": {
+    "value": 1.0,
+    "ci95": [
+     0.7961,
+     1.0
+    ],
+    "n": 15
+   },
+   "recall@10": {
+    "value": 1.0,
+    "ci95": [
+     0.7961,
+     1.0
+    ],
+    "n": 15
+   },
+   "mrr": {
+    "value": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "n": 15
+   },
+   "recall_all@5": {
+    "value": 0.0,
+    "ci95": [
+     0.0,
+     1.0
+    ],
+    "n": 0
+   },
+   "recall@5_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     0.7961,
+     1.0
+    ],
+    "n": 15
+   },
+   "mrr_before_rerank": {
+    "value": 0.8166666666666667,
+    "ci95": [
+     0.6667,
+     0.9556
+    ],
+    "n": 15
+   },
+   "rerank_wlt": {
+    "win": 4,
+    "loss": 0,
+    "tie": 11
+   },
+   "recall@5_vector": {
+    "value": 1.0,
+    "ci95": [
+     0.7961,
+     1.0
+    ],
+    "n": 15
+   },
+   "recall@5_hybrid": {
+    "value": 1.0,
+    "ci95": [
+     0.7961,
+     1.0
+    ],
+    "n": 15
+   },
+   "hybrid_wlt": {
+    "win": 0,
+    "loss": 4,
+    "tie": 11
+   }
+  },
+  "long": {
+   "recall@1": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "recall@5": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "recall@10": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "mrr": {
+    "value": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "n": 8
+   },
+   "recall_all@5": {
+    "value": 1.0,
+    "ci95": [
+     0.3424,
+     1.0
+    ],
+    "n": 2
+   },
+   "recall@5_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "mrr_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "n": 8
+   },
+   "rerank_wlt": {
+    "win": 0,
+    "loss": 0,
+    "tie": 8
+   },
+   "recall@5_vector": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "recall@5_hybrid": {
+    "value": 1.0,
+    "ci95": [
+     0.6756,
+     1.0
+    ],
+    "n": 8
+   },
+   "hybrid_wlt": {
+    "win": 0,
+    "loss": 0,
+    "tie": 8
+   }
+  },
+  "paraphrase": {
+   "recall@1": {
+    "value": 0.7692307692307693,
+    "ci95": [
+     0.4974,
+     0.9182
+    ],
+    "n": 13
+   },
+   "recall@5": {
+    "value": 1.0,
+    "ci95": [
+     0.7719,
+     1.0
+    ],
+    "n": 13
+   },
+   "recall@10": {
+    "value": 1.0,
+    "ci95": [
+     0.7719,
+     1.0
+    ],
+    "n": 13
+   },
+   "mrr": {
+    "value": 0.8615384615384615,
+    "ci95": [
+     0.7,
+     1.0
+    ],
+    "n": 13
+   },
+   "recall_all@5": {
+    "value": 0.0,
+    "ci95": [
+     0.0,
+     1.0
+    ],
+    "n": 0
+   },
+   "recall@5_before_rerank": {
+    "value": 1.0,
+    "ci95": [
+     0.7719,
+     1.0
+    ],
+    "n": 13
+   },
+   "mrr_before_rerank": {
+    "value": 0.8653846153846154,
+    "ci95": [
+     0.7115,
+     1.0
+    ],
+    "n": 13
+   },
+   "rerank_wlt": {
+    "win": 1,
+    "loss": 1,
+    "tie": 11
+   },
+   "recall@5_vector": {
+    "value": 1.0,
+    "ci95": [
+     0.7719,
+     1.0
+    ],
+    "n": 13
+   },
+   "recall@5_hybrid": {
+    "value": 1.0,
+    "ci95": [
+     0.7719,
+     1.0
+    ],
+    "n": 13
+   },
+   "hybrid_wlt": {
+    "win": 0,
+    "loss": 1,
+    "tie": 12
+   }
+  }
+ },
+ "answer": {
+  "summary": {
+   "citation_hit": {
+    "value": 0.96,
+    "ci95": [
+     0.8654,
+     0.989
+    ],
+    "n": 50
+   },
+   "answer_contains": {
+    "value": 0.9782608695652174,
+    "ci95": [
+     0.8866,
+     0.9962
+    ],
+    "n": 46
+   },
+   "false_abstention": {
+    "value": 0.02,
+    "ci95": [
+     0.0035,
+     0.105
+    ],
+    "n": 50
+   },
+   "citation_all": {
+    "value": 1.0,
+    "ci95": [
+     0.7008,
+     1.0
+    ],
+    "n": 9
+   },
+   "answer_approx": {
+    "value": 0.75,
+    "ci95": [
+     0.3006,
+     0.9544
+    ],
+    "n": 4
+   },
+   "abstention": {
+    "value": 0.7,
+    "ci95": [
+     0.3968,
+     0.8922
+    ],
+    "n": 10
+   },
+   "invented_citations": 0
+  },
+  "by_tag": {
+   "text": {
+    "citation_hit": {
+     "value": 0.9310344827586207,
+     "ci95": [
+      0.7804,
+      0.9809
+     ],
+     "n": 29
+    },
+    "answer_contains": {
+     "value": 0.9655172413793104,
+     "ci95": [
+      0.8282,
+      0.9939
+     ],
+     "n": 29
+    },
+    "false_abstention": {
+     "value": 0.034482758620689655,
+     "ci95": [
+      0.0061,
+      0.1718
+     ],
+     "n": 29
+    },
+    "citation_all": {
+     "value": 1.0,
+     "ci95": [
+      0.6756,
+      1.0
+     ],
+     "n": 8
+    },
+    "answer_approx": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "invented_citations": 0
+   },
+   "scan": {
+    "citation_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.6756,
+      1.0
+     ],
+     "n": 8
+    },
+    "answer_contains": {
+     "value": 1.0,
+     "ci95": [
+      0.6756,
+      1.0
+     ],
+     "n": 8
+    },
+    "false_abstention": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.3244
+     ],
+     "n": 8
+    },
+    "citation_all": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "answer_approx": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "invented_citations": 0
+   },
+   "chart": {
+    "citation_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.6097,
+      1.0
+     ],
+     "n": 6
+    },
+    "answer_contains": {
+     "value": 1.0,
+     "ci95": [
+      0.3424,
+      1.0
+     ],
+     "n": 2
+    },
+    "false_abstention": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.3903
+     ],
+     "n": 6
+    },
+    "citation_all": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "answer_approx": {
+     "value": 0.75,
+     "ci95": [
+      0.3006,
+      0.9544
+     ],
+     "n": 4
+    },
+    "invented_citations": 0
+   },
+   "table": {
+    "citation_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.6457,
+      1.0
+     ],
+     "n": 7
+    },
+    "answer_contains": {
+     "value": 1.0,
+     "ci95": [
+      0.6457,
+      1.0
+     ],
+     "n": 7
+    },
+    "false_abstention": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.3543
+     ],
+     "n": 7
+    },
+    "citation_all": {
+     "value": 1.0,
+     "ci95": [
+      0.2065,
+      1.0
+     ],
+     "n": 1
+    },
+    "answer_approx": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "invented_citations": 0
+   },
+   "exact": {
+    "citation_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.6457,
+      1.0
+     ],
+     "n": 7
+    },
+    "answer_contains": {
+     "value": 1.0,
+     "ci95": [
+      0.6457,
+      1.0
+     ],
+     "n": 7
+    },
+    "false_abstention": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.3543
+     ],
+     "n": 7
+    },
+    "citation_all": {
+     "value": 1.0,
+     "ci95": [
+      0.3424,
+      1.0
+     ],
+     "n": 2
+    },
+    "answer_approx": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "invented_citations": 0
+   },
+   "version": {
+    "citation_hit": {
+     "value": 0.9047619047619048,
+     "ci95": [
+      0.7109,
+      0.9735
+     ],
+     "n": 21
+    },
+    "answer_contains": {
+     "value": 0.9523809523809523,
+     "ci95": [
+      0.7733,
+      0.9915
+     ],
+     "n": 21
+    },
+    "false_abstention": {
+     "value": 0.047619047619047616,
+     "ci95": [
+      0.0085,
+      0.2267
+     ],
+     "n": 21
+    },
+    "citation_all": {
+     "value": 1.0,
+     "ci95": [
+      0.6457,
+      1.0
+     ],
+     "n": 7
+    },
+    "answer_approx": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "invented_citations": 0
+   },
+   "multi": {
+    "citation_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.7008,
+      1.0
+     ],
+     "n": 9
+    },
+    "answer_contains": {
+     "value": 1.0,
+     "ci95": [
+      0.7008,
+      1.0
+     ],
+     "n": 9
+    },
+    "false_abstention": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.2992
+     ],
+     "n": 9
+    },
+    "citation_all": {
+     "value": 1.0,
+     "ci95": [
+      0.7008,
+      1.0
+     ],
+     "n": 9
+    },
+    "answer_approx": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "invented_citations": 0
+   },
+   "degraded": {
+    "citation_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.7961,
+      1.0
+     ],
+     "n": 15
+    },
+    "answer_contains": {
+     "value": 1.0,
+     "ci95": [
+      0.7412,
+      1.0
+     ],
+     "n": 11
+    },
+    "false_abstention": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.2039
+     ],
+     "n": 15
+    },
+    "citation_all": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "answer_approx": {
+     "value": 0.75,
+     "ci95": [
+      0.3006,
+      0.9544
+     ],
+     "n": 4
+    },
+    "invented_citations": 0
+   },
+   "long": {
+    "citation_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.6756,
+      1.0
+     ],
+     "n": 8
+    },
+    "answer_contains": {
+     "value": 1.0,
+     "ci95": [
+      0.6756,
+      1.0
+     ],
+     "n": 8
+    },
+    "false_abstention": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.3244
+     ],
+     "n": 8
+    },
+    "citation_all": {
+     "value": 1.0,
+     "ci95": [
+      0.3424,
+      1.0
+     ],
+     "n": 2
+    },
+    "answer_approx": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "invented_citations": 0
+   },
+   "paraphrase": {
+    "citation_hit": {
+     "value": 0.9230769230769231,
+     "ci95": [
+      0.6669,
+      0.9863
+     ],
+     "n": 13
+    },
+    "answer_contains": {
+     "value": 0.9166666666666666,
+     "ci95": [
+      0.6461,
+      0.9851
+     ],
+     "n": 12
+    },
+    "false_abstention": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.2281
+     ],
+     "n": 13
+    },
+    "citation_all": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "answer_approx": {
+     "value": 1.0,
+     "ci95": [
+      0.2065,
+      1.0
+     ],
+     "n": 1
+    },
+    "invented_citations": 0
+   },
+   "near-miss": {
+    "citation_all": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "answer_approx": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "abstention": {
+     "value": 0.7,
+     "ci95": [
+      0.3968,
+      0.8922
+     ],
+     "n": 10
+    },
+    "invented_citations": 0
+   },
+   "unanswerable": {
+    "citation_all": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "answer_approx": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      1.0
+     ],
+     "n": 0
+    },
+    "abstention": {
+     "value": 0.7,
+     "ci95": [
+      0.3968,
+      0.8922
+     ],
+     "n": 10
+    },
+    "invented_citations": 0
+   }
+  }
+ },
+ "locate": {
+  "summary": {
+   "not_cited": 2,
+   "locate_hit": {
+    "value": 0.7727272727272727,
+    "ci95": [
+     0.6301,
+     0.8716
+    ],
+    "n": 44
+   },
+   "no_box": {
+    "value": 0.13636363636363635,
+    "ci95": [
+     0.064,
+     0.2671
+    ],
+    "n": 44
+   }
+  },
+  "by_tag": {
+   "text": {
+    "not_cited": 2,
+    "locate_hit": {
+     "value": 0.8148148148148148,
+     "ci95": [
+      0.633,
+      0.9182
+     ],
+     "n": 27
+    },
+    "no_box": {
+     "value": 0.18518518518518517,
+     "ci95": [
+      0.0818,
+      0.367
+     ],
+     "n": 27
+    }
+   },
+   "scan": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 0.875,
+     "ci95": [
+      0.5291,
+      0.9776
+     ],
+     "n": 8
+    },
+    "no_box": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.3244
+     ],
+     "n": 8
+    }
+   },
+   "chart": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 0.5,
+     "ci95": [
+      0.0945,
+      0.9055
+     ],
+     "n": 2
+    },
+    "no_box": {
+     "value": 0.5,
+     "ci95": [
+      0.0945,
+      0.9055
+     ],
+     "n": 2
+    }
+   },
+   "table": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 0.5714285714285714,
+     "ci95": [
+      0.2505,
+      0.8418
+     ],
+     "n": 7
+    },
+    "no_box": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.3543
+     ],
+     "n": 7
+    }
+   },
+   "exact": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 0.7142857142857143,
+     "ci95": [
+      0.3589,
+      0.9178
+     ],
+     "n": 7
+    },
+    "no_box": {
+     "value": 0.14285714285714285,
+     "ci95": [
+      0.0257,
+      0.5131
+     ],
+     "n": 7
+    }
+   },
+   "version": {
+    "not_cited": 2,
+    "locate_hit": {
+     "value": 0.7368421052631579,
+     "ci95": [
+      0.5121,
+      0.8819
+     ],
+     "n": 19
+    },
+    "no_box": {
+     "value": 0.2631578947368421,
+     "ci95": [
+      0.1181,
+      0.4879
+     ],
+     "n": 19
+    }
+   },
+   "multi": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 0.5555555555555556,
+     "ci95": [
+      0.2666,
+      0.8112
+     ],
+     "n": 9
+    },
+    "no_box": {
+     "value": 0.4444444444444444,
+     "ci95": [
+      0.1888,
+      0.7334
+     ],
+     "n": 9
+    }
+   },
+   "degraded": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 0.5454545454545454,
+     "ci95": [
+      0.2801,
+      0.7873
+     ],
+     "n": 11
+    },
+    "no_box": {
+     "value": 0.09090909090909091,
+     "ci95": [
+      0.0162,
+      0.3774
+     ],
+     "n": 11
+    }
+   },
+   "long": {
+    "not_cited": 0,
+    "locate_hit": {
+     "value": 1.0,
+     "ci95": [
+      0.6756,
+      1.0
+     ],
+     "n": 8
+    },
+    "no_box": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.3244
+     ],
+     "n": 8
+    }
+   },
+   "paraphrase": {
+    "not_cited": 1,
+    "locate_hit": {
+     "value": 0.9090909090909091,
+     "ci95": [
+      0.6226,
+      0.9838
+     ],
+     "n": 11
+    },
+    "no_box": {
+     "value": 0.0,
+     "ci95": [
+      0.0,
+      0.2588
+     ],
+     "n": 11
+    }
+   }
+  }
+ },
+ "latency": {
+  "embed": {
+   "p50_ms": 37.685292001697235,
+   "p95_ms": 44.22087499915506
+  },
+  "search": {
+   "p50_ms": 1.7571249991306104,
+   "p95_ms": 2.843000002030749
+  },
+  "rerank": {
+   "p50_ms": 12262.230584001372,
+   "p95_ms": 13743.860624999797
+  },
+  "generate": {
+   "p50_ms": 20761.96224999876,
+   "p95_ms": 22838.221582998813
+  },
+  "ask": {
+   "p50_ms": 33064.04625199866,
+   "p95_ms": 35827.32949899582
+  },
+  "locate": {
+   "p50_ms": 5309.958292000374,
+   "p95_ms": 5383.623292000266
+  },
+  "model_load_s": 5.083561332998215,
+  "peak_memory_gb": 12.986280236
+ },
+ "per_query": [
+  {
+   "id": "hard-001",
+   "tags": [
+    "text",
+    "version"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5723,
+   "completion_tokens": 28,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.113,
+    0.795,
+    0.13
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-002",
+   "tags": [
+    "text",
+    "version"
+   ],
+   "answerable": true,
+   "rank_vector": 4,
+   "rank_hybrid": 4,
+   "rank_embed": 4,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 2
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5723,
+   "completion_tokens": 34,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.152,
+    0.715,
+    0.172
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-003",
+   "tags": [
+    "text",
+    "version"
+   ],
+   "answerable": true,
+   "rank_vector": 3,
+   "rank_hybrid": 5,
+   "rank_embed": 5,
+   "rank_rerank": 2,
+   "rank": 2,
+   "cited": [
+    {
+     "path": "reports/annual-review.pdf",
+     "page": 3
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5718,
+   "completion_tokens": 30,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": null,
+   "locate_hit": false
+  },
+  {
+   "id": "hard-004",
+   "tags": [
+    "text",
+    "version"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 2,
+   "rank_embed": 2,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 4
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5677,
+   "completion_tokens": 19,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.115,
+    0.095,
+    0.63,
+    0.112
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-005",
+   "tags": [
+    "text",
+    "version"
+   ],
+   "answerable": true,
+   "rank_vector": 3,
+   "rank_hybrid": 5,
+   "rank_embed": 5,
+   "rank_rerank": 3,
+   "rank": 3,
+   "cited": [
+    {
+     "path": "reports/annual-review.pdf",
+     "page": 3
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5724,
+   "completion_tokens": 20,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.095,
+    0.705,
+    0.112
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-006",
+   "tags": [
+    "table",
+    "version"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "tables/price-list-winter.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 1383,
+   "completion_tokens": 25,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.078,
+    0.666,
+    0.929,
+    0.738
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-007",
+   "tags": [
+    "table",
+    "version"
+   ],
+   "answerable": true,
+   "rank_vector": 2,
+   "rank_hybrid": 2,
+   "rank_embed": 2,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "tables/price-list.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 1393,
+   "completion_tokens": 22,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.073,
+    0.784,
+    0.933,
+    0.875
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-008",
+   "tags": [
+    "text",
+    "version",
+    "exact"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "contracts/service-agreement-2026.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4327,
+   "completion_tokens": 32,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.112,
+    0.605,
+    0.13
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-009",
+   "tags": [
+    "text",
+    "version",
+    "exact"
+   ],
+   "answerable": true,
+   "rank_vector": 2,
+   "rank_hybrid": 2,
+   "rank_embed": 2,
+   "rank_rerank": 2,
+   "rank": 2,
+   "cited": [
+    {
+     "path": "contracts/service-agreement.pdf",
+     "page": 1
+    },
+    {
+     "path": "contracts/service-agreement-2026.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4336,
+   "completion_tokens": 49,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.118,
+    0.092,
+    0.608,
+    0.111
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-010",
+   "tags": [
+    "text",
+    "version"
+   ],
+   "answerable": true,
+   "rank_vector": 2,
+   "rank_hybrid": 3,
+   "rank_embed": 3,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [],
+   "abstained": true,
+   "invented": 0,
+   "prompt_tokens": 5670,
+   "completion_tokens": 96,
+   "citation_hit": false,
+   "answer_contains": true,
+   "locate": "not_cited"
+  },
+  {
+   "id": "hard-011",
+   "tags": [
+    "text",
+    "version"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "contracts/service-agreement-2026.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5657,
+   "completion_tokens": 29,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.133,
+    0.512,
+    0.15
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-012",
+   "tags": [
+    "text",
+    "version"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "reports/annual-review.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5726,
+   "completion_tokens": 21,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.133,
+    0.725,
+    0.15
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-013",
+   "tags": [
+    "text",
+    "version",
+    "multi"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "all_in_top": true,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 1
+    },
+    {
+     "path": "reports/annual-review.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5726,
+   "completion_tokens": 49,
+   "citation_hit": true,
+   "citation_all": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.113,
+    0.795,
+    0.13
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-014",
+   "tags": [
+    "text",
+    "version",
+    "multi"
+   ],
+   "answerable": true,
+   "rank_vector": 3,
+   "rank_hybrid": 3,
+   "rank_embed": 3,
+   "rank_rerank": 3,
+   "all_in_top": true,
+   "rank": 3,
+   "cited": [
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 4
+    },
+    {
+     "path": "reports/annual-review.pdf",
+     "page": 4
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5732,
+   "completion_tokens": 114,
+   "citation_hit": true,
+   "citation_all": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": null,
+   "locate_hit": false
+  },
+  {
+   "id": "hard-015",
+   "tags": [
+    "text",
+    "version",
+    "multi"
+   ],
+   "answerable": true,
+   "rank_vector": 3,
+   "rank_hybrid": 5,
+   "rank_embed": 5,
+   "rank_rerank": 3,
+   "all_in_top": true,
+   "rank": 3,
+   "cited": [
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 2
+    },
+    {
+     "path": "reports/annual-review.pdf",
+     "page": 2
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5726,
+   "completion_tokens": 40,
+   "citation_hit": true,
+   "citation_all": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.096,
+    0.583,
+    0.113
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-016",
+   "tags": [
+    "text",
+    "version",
+    "multi",
+    "exact"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "all_in_top": true,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "contracts/service-agreement.pdf",
+     "page": 1
+    },
+    {
+     "path": "contracts/service-agreement-2026.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4329,
+   "completion_tokens": 61,
+   "citation_hit": true,
+   "citation_all": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": null,
+   "locate_hit": false
+  },
+  {
+   "id": "hard-017",
+   "tags": [
+    "table",
+    "version",
+    "multi"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "all_in_top": true,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "tables/price-list-winter.png"
+    },
+    {
+     "path": "tables/price-list.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 1393,
+   "completion_tokens": 44,
+   "citation_hit": true,
+   "citation_all": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.078,
+    0.786,
+    0.927,
+    0.875
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-018",
+   "tags": [
+    "text",
+    "version",
+    "multi"
+   ],
+   "answerable": true,
+   "rank_vector": 3,
+   "rank_hybrid": 5,
+   "rank_embed": 5,
+   "rank_rerank": 3,
+   "all_in_top": true,
+   "rank": 3,
+   "cited": [
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 3
+    },
+    {
+     "path": "reports/annual-review.pdf",
+     "page": 3
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5724,
+   "completion_tokens": 54,
+   "citation_hit": true,
+   "citation_all": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": null,
+   "locate_hit": false
+  },
+  {
+   "id": "hard-019",
+   "tags": [
+    "text",
+    "version",
+    "multi"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 3,
+   "rank_embed": 3,
+   "rank_rerank": 1,
+   "all_in_top": true,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "contracts/service-agreement.pdf",
+     "page": 2
+    },
+    {
+     "path": "contracts/service-agreement-2026.pdf",
+     "page": 2
+    },
+    {
+     "path": "contracts/service-agreement-2026.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5670,
+   "completion_tokens": 186,
+   "citation_hit": true,
+   "citation_all": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": null,
+   "locate_hit": false
+  },
+  {
+   "id": "hard-020",
+   "tags": [
+    "text",
+    "long",
+    "multi",
+    "exact"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "all_in_top": true,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 2
+    },
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 4
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5729,
+   "completion_tokens": 35,
+   "citation_hit": true,
+   "citation_all": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.118,
+    0.135,
+    0.32,
+    0.152
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-021",
+   "tags": [
+    "text",
+    "long",
+    "multi"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "all_in_top": true,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 12
+    },
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 13
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5734,
+   "completion_tokens": 29,
+   "citation_hit": true,
+   "citation_all": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.118,
+    0.095,
+    0.415,
+    0.112
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-022",
+   "tags": [
+    "text",
+    "long"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 3
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5722,
+   "completion_tokens": 15,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.095,
+    0.435,
+    0.113
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-023",
+   "tags": [
+    "text",
+    "long"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 24
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5736,
+   "completion_tokens": 12,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.119,
+    0.113,
+    0.492,
+    0.131
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-024",
+   "tags": [
+    "text",
+    "long",
+    "exact"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 35
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5733,
+   "completion_tokens": 18,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.118,
+    0.135,
+    0.843,
+    0.155
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-025",
+   "tags": [
+    "text",
+    "long"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 30
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5730,
+   "completion_tokens": 14,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.113,
+    0.505,
+    0.13
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-026",
+   "tags": [
+    "text",
+    "long"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 8
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5730,
+   "completion_tokens": 16,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.095,
+    0.439,
+    0.113
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-027",
+   "tags": [
+    "scan",
+    "degraded",
+    "exact"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "scans/faded-invoice.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5532,
+   "completion_tokens": 26,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.074,
+    0.266,
+    0.423,
+    0.3
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-028",
+   "tags": [
+    "scan",
+    "degraded",
+    "exact"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "scans/faded-invoice.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5584,
+   "completion_tokens": 19,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.068,
+    0.154,
+    0.31,
+    0.185
+   ],
+   "locate_hit": false
+  },
+  {
+   "id": "hard-029",
+   "tags": [
+    "scan",
+    "degraded"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "scans/small-print.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 1677,
+   "completion_tokens": 17,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.103,
+    0.295,
+    0.865,
+    0.319
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-030",
+   "tags": [
+    "scan",
+    "degraded"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "scans/small-print.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5606,
+   "completion_tokens": 55,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.103,
+    0.183,
+    0.883,
+    0.215
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-031",
+   "tags": [
+    "scan",
+    "degraded"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "scans/small-print.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5664,
+   "completion_tokens": 29,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.103,
+    0.237,
+    0.878,
+    0.278
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-032",
+   "tags": [
+    "table",
+    "degraded"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "tables/bus-timetable.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5238,
+   "completion_tokens": 19,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.62,
+    0.587,
+    0.707,
+    0.625
+   ],
+   "locate_hit": false
+  },
+  {
+   "id": "hard-033",
+   "tags": [
+    "table",
+    "degraded"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "tables/bus-timetable.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5217,
+   "completion_tokens": 23,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.788,
+    0.8,
+    0.888,
+    0.83
+   ],
+   "locate_hit": false
+  },
+  {
+   "id": "hard-034",
+   "tags": [
+    "chart",
+    "degraded"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 3,
+   "rank_embed": 3,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "charts/rainfall-unlabelled.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4889,
+   "completion_tokens": 68,
+   "citation_hit": true,
+   "answer_approx": true
+  },
+  {
+   "id": "hard-035",
+   "tags": [
+    "chart",
+    "degraded"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 3,
+   "rank_embed": 3,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "charts/rainfall-unlabelled.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4578,
+   "completion_tokens": 173,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": null,
+   "locate_hit": false
+  },
+  {
+   "id": "hard-036",
+   "tags": [
+    "chart",
+    "degraded"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 4,
+   "rank_embed": 4,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "charts/occupancy-unlabelled.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4932,
+   "completion_tokens": 112,
+   "citation_hit": true,
+   "answer_approx": true
+  },
+  {
+   "id": "hard-037",
+   "tags": [
+    "chart",
+    "degraded"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 3,
+   "rank_embed": 3,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "charts/occupancy-unlabelled.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5289,
+   "completion_tokens": 141,
+   "citation_hit": true,
+   "answer_approx": false
+  },
+  {
+   "id": "hard-038",
+   "tags": [
+    "text",
+    "version",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 2,
+   "rank_hybrid": 4,
+   "rank_embed": 4,
+   "rank_rerank": 2,
+   "rank": 2,
+   "cited": [
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 4
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5645,
+   "completion_tokens": 24,
+   "citation_hit": false,
+   "answer_contains": false,
+   "locate": "not_cited"
+  },
+  {
+   "id": "hard-039",
+   "tags": [
+    "text",
+    "version",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 2,
+   "rank_hybrid": 2,
+   "rank_embed": 2,
+   "rank_rerank": 5,
+   "rank": 5,
+   "cited": [
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 1
+    },
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 2
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5718,
+   "completion_tokens": 87,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.095,
+    0.748,
+    0.113
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-040",
+   "tags": [
+    "text",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "reports/clinic-study.pdf",
+     "page": 2
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4289,
+   "completion_tokens": 19,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.095,
+    0.805,
+    0.112
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-041",
+   "tags": [
+    "text",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 2,
+   "rank_hybrid": 2,
+   "rank_embed": 2,
+   "rank_rerank": 2,
+   "rank": 2,
+   "cited": [
+    {
+     "path": "reports/clinic-study.pdf",
+     "page": 3
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4274,
+   "completion_tokens": 40,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.116,
+    0.135,
+    0.488,
+    0.152
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-042",
+   "tags": [
+    "text",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "reports/clinic-study.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4269,
+   "completion_tokens": 20,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.095,
+    0.653,
+    0.112
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-043",
+   "tags": [
+    "scan",
+    "degraded",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "scans/faded-invoice.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5619,
+   "completion_tokens": 28,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.078,
+    0.266,
+    0.423,
+    0.3
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-044",
+   "tags": [
+    "scan",
+    "degraded",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "scans/small-print.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 2956,
+   "completion_tokens": 14,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.093,
+    0.342,
+    0.828,
+    0.394
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-045",
+   "tags": [
+    "text",
+    "long",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 35
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5735,
+   "completion_tokens": 33,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.117,
+    0.072,
+    0.84,
+    0.191
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-046",
+   "tags": [
+    "table",
+    "degraded",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "tables/bus-timetable.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 2117,
+   "completion_tokens": 75,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.038,
+    0.114,
+    0.965,
+    0.168
+   ],
+   "locate_hit": false
+  },
+  {
+   "id": "hard-047",
+   "tags": [
+    "chart",
+    "degraded",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "charts/rainfall-unlabelled.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4978,
+   "completion_tokens": 61,
+   "citation_hit": true,
+   "answer_approx": true
+  },
+  {
+   "id": "hard-048",
+   "tags": [
+    "scan",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "scans/meeting-minutes.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 1677,
+   "completion_tokens": 21,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.085,
+    0.183,
+    0.602,
+    0.206
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-049",
+   "tags": [
+    "chart",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "charts/regional-revenue.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 3936,
+   "completion_tokens": 27,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.549,
+    0.187,
+    0.715,
+    0.868
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-050",
+   "tags": [
+    "table",
+    "paraphrase"
+   ],
+   "answerable": true,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
+   "cited": [
+    {
+     "path": "tables/staff-roster.png"
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 3964,
+   "completion_tokens": 36,
+   "citation_hit": true,
+   "answer_contains": true,
+   "locate": "scored",
+   "locate_box": [
+    0.078,
+    0.727,
+    0.927,
+    0.835
+   ],
+   "locate_hit": true
+  },
+  {
+   "id": "hard-051",
+   "tags": [
+    "unanswerable",
+    "near-miss"
+   ],
+   "answerable": false,
+   "rank": null,
+   "cited": [],
+   "abstained": true,
+   "invented": 0,
+   "prompt_tokens": 5724,
+   "completion_tokens": 10
+  },
+  {
+   "id": "hard-052",
+   "tags": [
+    "unanswerable",
+    "near-miss"
+   ],
+   "answerable": false,
+   "rank": null,
+   "cited": [],
+   "abstained": true,
+   "invented": 0,
+   "prompt_tokens": 3915,
+   "completion_tokens": 10
+  },
+  {
+   "id": "hard-053",
+   "tags": [
+    "unanswerable",
+    "near-miss"
+   ],
+   "answerable": false,
+   "rank": null,
+   "cited": [],
+   "abstained": true,
+   "invented": 0,
+   "prompt_tokens": 5696,
+   "completion_tokens": 10
+  },
+  {
+   "id": "hard-054",
+   "tags": [
+    "unanswerable",
+    "near-miss"
+   ],
+   "answerable": false,
+   "rank": null,
+   "cited": [],
+   "abstained": true,
+   "invented": 0,
+   "prompt_tokens": 2722,
+   "completion_tokens": 10
+  },
+  {
+   "id": "hard-055",
+   "tags": [
+    "unanswerable",
+    "near-miss"
+   ],
+   "answerable": false,
+   "rank": null,
+   "cited": [
+    {
+     "path": "manuals/operations-manual.pdf",
+     "page": 50
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5701,
+   "completion_tokens": 52
+  },
+  {
+   "id": "hard-056",
+   "tags": [
+    "unanswerable",
+    "near-miss"
+   ],
+   "answerable": false,
+   "rank": null,
+   "cited": [],
+   "abstained": true,
+   "invented": 0,
+   "prompt_tokens": 1387,
+   "completion_tokens": 10
+  },
+  {
+   "id": "hard-057",
+   "tags": [
+    "unanswerable",
+    "near-miss"
+   ],
+   "answerable": false,
+   "rank": null,
+   "cited": [],
+   "abstained": true,
+   "invented": 0,
+   "prompt_tokens": 5219,
+   "completion_tokens": 10
+  },
+  {
+   "id": "hard-058",
+   "tags": [
+    "unanswerable",
+    "near-miss"
+   ],
+   "answerable": false,
+   "rank": null,
+   "cited": [],
+   "abstained": true,
+   "invented": 0,
+   "prompt_tokens": 4868,
+   "completion_tokens": 10
+  },
+  {
+   "id": "hard-059",
+   "tags": [
+    "unanswerable",
+    "near-miss"
+   ],
+   "answerable": false,
+   "rank": null,
+   "cited": [
+    {
+     "path": "contracts/service-agreement-2026.pdf",
+     "page": 1
+    },
+    {
+     "path": "contracts/service-agreement.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 4327,
+   "completion_tokens": 144
+  },
+  {
+   "id": "hard-060",
+   "tags": [
+    "unanswerable",
+    "near-miss"
+   ],
+   "answerable": false,
+   "rank": null,
+   "cited": [
+    {
+     "path": "scans/faded-invoice.pdf",
+     "page": 1
+    }
+   ],
+   "abstained": false,
+   "invented": 0,
+   "prompt_tokens": 5608,
+   "completion_tokens": 72
+  }
+ ],
+ "criteria": []
+}
