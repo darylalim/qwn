@@ -26,7 +26,7 @@ uv run ruff format . && uv run ruff check --fix .
 uv run ty check
 uv run pytest -m "not slow"           # fast tests: fakes only, no model downloads (~15 s)
 uv run pytest                         # everything incl. slow real-model tests (~13 GB models, local only)
-uv run qwn models pull                # the ONLY command that may use the network
+uv run qwn models pull [--voice]      # the ONLY command that may use the network; download only, safe while `qwn ui` runs
 uv run qwn eval --set public --guard --locate   # all exit criteria; ~40 min with answers: run in background
 uv run python eval/public/build_corpus.py --regions   # rewrite query regions after changing the corpus layout
 uv run python eval/public/build_corpus.py <scratch>/new   # then diff -r against a build from git stash: corpus must be byte-identical
@@ -53,6 +53,9 @@ uv version --bump minor               # one minor release per completed phase (f
   PLAN.md → Security). Ingest must survive bad files: record the reason and continue.
 - **Memory:** one process owns the models (~13 GB core). Don't run model-loading CLI commands while
   `qwn ui` is running. Respect the registry's memory check; never bypass it.
+- **Library deletes:** Library → Delete (`delete_documents`) unlinks every indexed file under
+  `data/`, eval corpora in `data/eval-*/` included. To empty the library but keep files, call
+  `index.delete(ids)` and remove each `index.root / page_dir(id)`.
 - **UI:** styling comes from `.streamlit/config.toml` only. No custom CSS/HTML, no web fonts.
   Status colours always come with an icon and words. Check layouts at the widths in PLAN.md →
   Responsive layout.
