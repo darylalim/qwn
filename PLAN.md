@@ -32,8 +32,9 @@ abstention to 0.120.
 
 **Open follow-ups (in order):**
 
-1. **Version awareness** (needs a planning session): answers mixing up editions of near-twin
-   documents (hard-038, hard-010, hard-019; `version` MRR 0.763).
+1. **Version awareness** (planned 2026-10-22, Evaluation → Version awareness): a document title
+   header on PDF pages for the embedder and reranker (`pdf_context`), not the generator. Branch
+   `followup/version-awareness`.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -1881,6 +1882,116 @@ retrieval, answer and highlight flags). Only `abstained` moved.
 - **Hard, still missed:** hard-055 explains ("the inspection frequency is not currently
   defined") without the sentence, so it isn't scored as an abstention. Fixing it needs a prompt
   change (see Outcome).
+
+### Version awareness (follow-up, planned 2026-10-22)
+
+**Why:** `version` has the hard set's lowest MRR (0.763; 0.586 before rerank). The editions of a
+near-twin document differ only on page 1, where the title names the year or the amendment ("Annual
+Review 2024", "… - 2026 amendment"). Every other page reads "Outlook / The board approved a
+dividend of X" in both editions. A PDF page is embedded and reranked as its own image and text,
+with **no document context**, so the 2024 and 2025 page 4 look alike apart from the figures. md/txt
+chunks already get a `"{file} › {heading path}"` header (`chunk_context`, Data flow → Contextual
+chunk headers); PDF pages never did. One follow-up PR (branch `followup/version-awareness`), no
+version bump.
+
+**Probes (scratch, 2026-10-22, greedy, current baseline indexes and settings).** Title = the
+first non-empty line of page 1's text layer.
+
+1. **Title in the generator's `<source>` block** (`title="…"` attribute; 34 hard queries:
+   `version`, `near-miss`, hard-034/-035/-037; 16 public: the 10 `unanswerable`, pub-044 and 5
+   clean answerable). It **fixed nothing and broke two**. hard-038 still answered "1.45 euros per
+   share for 2025" from the page titled "Annual Review 2024". hard-010 and -019 still read the
+   agreement's page 2 as "specific orders, not the agreement's schedule" and refused. hard-059
+   went from a correct cited refusal to "the 2027 fee is 3,650 euros [S1]". hard-014 now ends with
+   `ABSTAIN_TEXT` (false abstention). All 16 public replies were byte-identical. **Not adopted.**
+2. **Title in the rerank input only** (`"{file} › {title}\n\n"` before the page text of PDF
+   pages that have a title; `--no-generate`, whole hard and public sets, no reindex):
+
+   | | baseline | probe |
+   |---|---|---|
+   | hard recall@1 (after rerank) | 0.820 | **0.940** |
+   | hard MRR | 0.891 | **0.965** |
+   | `version` / `multi` / `paraphrase` MRR | 0.763 / 0.778 / 0.862 | **0.917 / 1.000 / 0.904** |
+   | rerank W/L/T | 14/1/35 | 16/1/33 |
+   | rerank p50 (hard) | 12.8 s | 13.0 s |
+   | public | recall@1/5 1.000, MRR 1.000 | identical, every rank unchanged |
+
+   Moved up: hard-003, -005, -014, -015, -018 (to rank 1), -039 (5 → 4), -041 (2 → 1). None moved
+   down. hard-038 stays at rank 2: its question is a paraphrase ("the ferry operator") whose
+   "2025" also appears in the 2024 page's text ("Capital spending for 2025").
+
+**Change (agreed 2026-10-22): a document title header on PDF pages, for the embedder and the
+reranker, not the generator.**
+
+1. **Title** (`ingest.doc_title(page_one_text) -> str | None`): the first line of page 1's text
+   layer that is non-empty and survives `prompts.drop_ai_directed_lines`, with whitespace
+   collapsed and cut to 120 characters. If page 1 has no text layer (a scan), there's no title.
+   Images and md/txt get none (md/txt already have `chunk_context`).
+2. **Embed input** (`ingest.embed_input`): a `pdf_page` chunk of a document with a title, with
+   `pdf_context` on, gets `Item(text=f"{context_header(file_name, title)}\n\n{page_text}",
+   image_path=…)`, where `page_text` keeps its 2000-character cap and the header comes on top of
+   it. With no title, or `pdf_context` off, the input is unchanged. This includes page 1, which
+   repeats its own title (as in the probe).
+3. **Rerank input** mirrors the embed input, as now. `Retriever.rerank_input` needs the hit's
+   document title. It's derived at query time from that document's page-1 chunk text
+   (`chunks.text`, already stored), with the same `doc_title`, through a new
+   `Index.page_one_text(doc_ids)`. Fetch it once per rerank call, not once per hit. **No schema
+   change:** the title is never stored separately, so it can't drift from the page text.
+4. **Setting:** `pdf_context: bool = True` in `Settings` (env `QWN_PDF_CONTEXT`), added to
+   `INGEST_KEYS`, so it's in `ingest_hash`. The public and hard eval indexes rebuild
+   automatically under a new `ingest_hash[:8]` folder. A personal index stops with the usual
+   "`ingest_hash` changed, run `--reindex`" message (say so in the PR).
+5. **Generator: unchanged.** The `<source>` block, `SYSTEM_PROMPT` and `settings_hash` inputs
+   stay as they are (probe 1).
+
+**Embed ablation (decides whether item 2 stays):** the probe changed only the reranker. Before the
+full evals, run `qwn eval --set hard --no-generate --force` with `pdf_context` on (it reports
+before- and after-rerank metrics), and compare recall@1 and MRR before rerank with the hard
+baseline's (0.64 and 0.761; also report `version`'s). **If either overall value drops**, fall back to the rerank-only form: `embed_input`
+ignores the title, `rerank_input` adds the header itself, and `pdf_context` leaves `INGEST_KEYS`
+(it then changes no stored vectors) and goes into `settings_hash` instead. Record the ablation
+numbers and the choice in the results.
+
+**Expected to stay missed (recorded as a reading limit of VL-8B, no prompt change planned):**
+hard-038 (rank 2 in the probe; the model answered from the 2024 page even with its title shown),
+hard-010 and hard-019 (the right page is ranked first, and the model refuses because page 2 is an
+order rather than a clause; probe 1 showed that a title doesn't change that). Don't tune anything
+for them.
+
+**Comparability:** `pdf_context` changes `ingest_hash`, so it changes `corpus_hash` for both
+sets and `qwn eval` won't compare against the baselines. Run with `--force`, and diff
+`per_query` against `git show HEAD:eval/<set>/baseline.json` by hand (CLAUDE.md → Eval
+baselines). In the rerank-only fallback, `settings_hash` changes instead; same procedure.
+
+**Tests (with the code, fakes only):**
+
+- `doc_title`: first non-empty line; leading blank lines skipped; whitespace collapsed; cut at
+  120; an AI-directed first line skipped; no text → `None`.
+- `embed_input`: a `pdf_page` with a title gets the header; without a title, or with
+  `pdf_context=False`, the input is identical to today's; image and text chunks unchanged.
+- `rerank_input` equals `embed_input` for the same chunk (title from the page-1 chunk), including
+  a page of a scanned PDF (no title).
+- `Index.page_one_text` returns page-1 text per document and nothing for images or md/txt.
+- `pdf_context` is in `INGEST_KEYS`, and so in `ingest_hash` (or in `settings_hash`, if the
+  fallback is taken).
+- No new slow test: no new model output format.
+
+**Done when:**
+
+1. **Hard set** (`qwn eval --set hard --locate --force --update-baseline`, measurement): overall
+   MRR and recall@1 (after rerank) are at least the baseline's (0.891, 0.820), and `version` MRR
+   rises above 0.763. answer_contains (0.978), citation_hit (0.960), `citation_all` (1.000) and
+   abstention (0.900) don't drop, and false abstention doesn't rise above 0.060. Every query
+   whose rank, citation, answer or abstention changed is listed and explained, by reading
+   `answer_text` (CLAUDE.md → Eval baselines).
+2. **Public set** (`qwn eval --set public --guard --locate --force --update-baseline`): every exit
+   criterion passes, and the hand diff shows no per-query changes (the probe left every public
+   rank unchanged). Corpus files stay byte-identical (only `ingest_hash` moves `corpus_hash`).
+3. The ablation numbers and the embed choice are recorded. Results go under Evaluation → Version
+   awareness results. PLAN.md updates in the same PR: Data flow (the `pdf_page` row and
+   Contextual chunk headers), Settings (`pdf_context`), Data model (`ingest_hash` keys) and Start
+   here.
+4. Fast tests, ruff, ty and the slow tests pass.
 
 ## Phases
 
