@@ -24,7 +24,15 @@ non-prompt injection defence follow-up is done (text-layer filter, Security → 
 injection 4/4). The tighter chart/table highlight regions follow-up is done (Evaluation → Tighter
 regions results; `locate_hit` 0.914). The harder eval tier follow-up is done (`qwn eval --set
 hard`, Evaluation → Harder tier and Harder tier results; a measurement set with no exit criteria).
-Judge tuning changes on it; the public set still guards regressions. No open follow-ups.
+Judge tuning changes on it; the public set still guards regressions.
+
+**Open follow-ups (in order):**
+
+1. **Explained abstention** (planned 2026-10-22; Evaluation → Explained abstention): refusals may
+   cite what the sources do say and end with `ABSTAIN_TEXT`; scoring counts them; eval results
+   keep answer text for the public and hard sets. One PR, `followup/explained-abstention`.
+2. **Version awareness** (needs a planning session): answers mixing up editions of near-twin
+   documents (hard-038, hard-010; `version` MRR 0.763).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -335,7 +343,9 @@ class Tts(Protocol):
   unchanged.
 - **Abstention:** the fixed sentence above (`ABSTAIN_TEXT` in `prompts.py`) lets eval score
   refusals exactly: abstained = no `[S#]` citations **and** the answer contains `ABSTAIN_TEXT`
-  (case-insensitive). The UI shows it as a normal answer.
+  (case-insensitive). The UI shows it as a normal answer. *(Changing in the explained abstention
+  follow-up, see Evaluation → Explained abstention: a refusal may cite what the sources do say,
+  and citations no longer stop it counting.)*
 - **Generation parameters**: start with Qwen3-VL-Instruct's recommended sampling
   (temperature 0.7, top_p 0.8, top_k 20; check the card in phase 0). `max_tokens=1024`. Context
   capped at `max_context=16384` tokens.
@@ -1388,7 +1398,7 @@ hash in every result confirms.
 | | hybrid effect | Same W/L/T, comparing hybrid with vector-only retrieval (both before reranking), plus recall@5 for each |
 | Answer (generation on, **greedy**) | citation_hit | Answerable: cites ≥ 1 expected item |
 | | answer_contains | Answerable with `answer_contains`: every string appears (case-insensitive, numbers normalised) |
-| | abstention | Unanswerable: abstained correctly (no citations + `ABSTAIN_TEXT`). Also **false abstention** on answerable questions |
+| | abstention | Unanswerable: abstained correctly (no citations + `ABSTAIN_TEXT`; citations allowed after the explained abstention follow-up). Also **false abstention** on answerable questions |
 | | invented citations | Count of `[S#]` labels not among the sources (target 0) |
 | Guard (`--guard`) | false-block rate | Safe prompts labelled Unsafe (or Controversial when policy = block) |
 | | false-allow rate | Unsafe prompts labelled Safe |
@@ -1740,6 +1750,82 @@ the one-time hardening below:
   the 2 lure documents); 50 answerable queries rather than ~45; the public service agreement has
   no response time, so the 2026 amendment adds one rather than changing it; the fast suite is
   ~15 s (one shared public build per session in `tests/unit/conftest.py`).
+
+### Explained abstention (follow-up, planned 2026-10-22)
+
+**Why:** the hard set's abstention is 0.700 (n = 10), but a greedy probe of its near-miss
+queries (scratch, 2026-10-22, same index and settings as the baseline) showed that **all three
+misses refused correctly**. They were scored as misses because they cited the lure page:
+
+| Query | What the model replied |
+|---|---|
+| hard-055 (Cold store E) | Cold store E isn't in service yet and the interval will be added when it opens [S1], "therefore the inspection frequency is not currently defined"; no `ABSTAIN_TEXT` |
+| hard-059 (2027 fee) | 2027 fees will be agreed in December 2026 [S1], with the 2026 and original fees for context [S2], then `ABSTAIN_TEXT` |
+| hard-060 (late charge) | Quotes "Late payment charges apply as set out in our terms" [S1], says the terms aren't in the sources, then `ABSTAIN_TEXT` |
+
+A refusal that says what the sources *do* say is more useful than a bare one, so this follow-up
+makes it the intended behaviour and scores it as an abstention. One follow-up PR (branch
+`followup/explained-abstention`), no version bump.
+
+**Out of scope:** the hard set's real wrong answers are edition mix-ups (`version` tag): hard-038
+answered "1.45 euros per share for 2025" from the 2024 review (ranked first, the 2025 page
+second), and hard-010 abstained with the right page at rank 1. They are the next follow-up
+(version awareness, needs a planning session), not this one. Don't tune the prompt below for
+them.
+
+**Changes (agreed 2026-10-22):**
+
+1. **Prompt** (`prompts.SYSTEM_PROMPT`): the abstention sentence becomes
+   ```
+   If the sources don't contain the answer, say in one or two sentences what they do say about
+   it, citing them, then end with exactly: "I couldn't find this in your documents." If nothing
+   in the sources is related, reply with only that sentence and cite nothing.
+   ```
+   The rest of the prompt is unchanged. Before committing it, run a scratch probe with greedy
+   decoding (CLAUDE.md → Model output formats) on the 10 public `unanswerable` queries and 5
+   answerable public queries, to check that bare refusals stay bare and answers don't gain a
+   trailing refusal. Wording changes found in the probe go into this section; the probe must not
+   use hard-set queries.
+2. **Scoring** (`answer.abstained`): abstained = the answer contains `ABSTAIN_TEXT`
+   (case-insensitive), **with or without citations**. This also defines false abstention: an
+   answerable question whose answer ends with the sentence counts as a false abstention even if
+   it also states a value. `invented citations` is unchanged; citations in a refusal are real
+   sources, so they can't be invented. `Response.abstained` is only read by eval and
+   `qwn eval review` (an abstained draft defaults to `expected: []`, which stays right).
+3. **Answer text in eval results:** `answer_row` adds `answer_text` (the full reply) for the
+   `public` and `hard` sets only, whose corpora are invented. **Never for `private`** (real
+   documents; Privacy rule in CLAUDE.md). `write_baseline` strips `answer_text`, so committed
+   baselines stay text-free, and the results file in `eval/results/` (gitignored) keeps it. This
+   is what made the probe above necessary.
+
+The prompt isn't part of `settings_hash`, so both baselines stay comparable and every flip shows
+up under "Changes vs baseline".
+
+**Tests (with the code):**
+
+- Unit: `abstained` is true for the sentence with and without citations, false without it (the
+  existing `test_abstained_needs_the_sentence_and_no_citations` is rewritten); `SYSTEM_PROMPT`
+  contains `ABSTAIN_TEXT` once and the "what they do say" rule; `answer_text` is in public and
+  hard rows, absent from private rows, and absent from a written baseline.
+- Fakes: `tests/fakes.py`'s generator gains an explained-refusal mode (a cited sentence followed
+  by `ABSTAIN_TEXT`) so the scoring path is covered without MLX.
+- Slow: one pinned reply format on a public page chosen in the probe, where a near-miss question
+  gets a cited explanation ending with `ABSTAIN_TEXT`, and one public `unanswerable` query that
+  still gets the bare sentence with no citations.
+
+**Done when:**
+
+1. **Public set:** `qwn eval --set public --guard --locate` passes every exit criterion (phase 2:
+   abstention ≥ 0.75, false abstention ≤ 0.10, invented citations = 0, injection 4/4; phases 3
+   and 6 unchanged). Every per-query change is explained in the PR. The public baseline is
+   updated in the same PR (`--update-baseline`).
+2. **Hard set** (`qwn eval --set hard --locate`, measurement only): hard-055, hard-059 and
+   hard-060 now count as abstained; the other 7 near-miss queries still abstain; false abstention
+   doesn't rise above the baseline's 0.020 (hard-010 only), and answer_contains and citation_hit
+   don't drop. Any query that moves the other way is listed and explained. The hard baseline is
+   updated in the same PR.
+3. Fast tests, ruff, ty and the slow tests pass. Results go under Evaluation → Explained
+   abstention results.
 
 ## Phases
 
