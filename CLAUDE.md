@@ -66,6 +66,9 @@ uv version --bump minor               # one minor release per completed phase (f
   byte-identical (`corpus_hash`) unless the change is intended.
   A change that only affects scoring (e.g. `region`) can be predicted exactly by re-scoring the
   committed baseline's `per_query` (e.g. `locate_box`) before the full eval run.
+  Run with `--update-baseline` straight away: changes print before the write, and
+  `git checkout eval/<set>/baseline.json` rejects them. To explain a change, read `answer_text`
+  in `eval/results/*-{public,hard}.json`; baselines have none.
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
@@ -76,6 +79,9 @@ uv version --bump minor               # one minor release per completed phase (f
 - **Model output formats:** before parsing a new kind of model reply, run a scratch probe with
   greedy decoding on a few public-corpus pages (scratchpad, not the repo), then pin the format
   with a `slow` test.
+  A prompt-change probe needs answerable queries the model is unsure of (degraded charts,
+  dense tables), not just clean ones: those are where it hedges. Run a subset through the real
+  path with `dataclasses.replace(ev.eval_set(settings, "public"), queries=<scratch jsonl>)`.
 - **Before every commit:** format, lint, ty and fast tests pass (hook H4 enforces this at stop; CI
   repeats it). Before merging a phase: slow tests, eval and the PLAN.md merge checklist.
 
