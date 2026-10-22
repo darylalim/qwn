@@ -38,7 +38,7 @@ dev = [
 ]
 
 [tool.uv]
-required-version = ">=0.12.22,<0.13"   # CI and your machine use the same uv
+required-version = ">=0.13.4,<0.14"   # CI and your machine use the same uv
 python-preference = "only-managed"     # sqlite-vec needs SQLite extension loading; python.org builds lack it
 
 [tool.ruff]

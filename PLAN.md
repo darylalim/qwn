@@ -2074,8 +2074,12 @@ Supporting changes in `pyproject.toml`:
 extend-exclude = ["*.md"]  # PLAN.md/README.md code blocks are illustrative, not source
 
 [tool.uv]
-required-version = ">=0.12.22,<0.13"   # CI and your machine use the same uv
+required-version = ">=0.13.4,<0.14"   # CI and your machine use the same uv
 ```
+
+*(2026-10-22)* Raised from `>=0.12.22,<0.13` after the local uv updated to 0.13.4 and `uv run`
+refused to start; `uv lock --check` passes and `uv.lock` is unchanged. When the local uv moves to
+a new minor, raise the range the same way, in its own PR.
 
 **Why exclude Markdown:** ruff 0.16 also formats Python code blocks inside `.md` files. Without the
 exclude, `ruff format --check .` fails on PLAN.md's illustrative snippets, which breaks both CI and
