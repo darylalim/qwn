@@ -217,7 +217,7 @@ def _response(text: str, cited_hits: list[Hit], invented: list[str] | None = Non
         for i, h in enumerate(cited_hits, start=1)
     ]
     cited = [s.label for s in sources]
-    return Response(text, sources, cited_hits, cited, invented or [], abstained(text, cited), 9, 3)
+    return Response(text, sources, cited_hits, cited, invented or [], abstained(text), 9, 3)
 
 
 def test_answer_row_scores_citation_contains_and_injection():
@@ -247,6 +247,32 @@ def test_unanswerable_row_scores_abstention_only():
         _query(expected=[], tags=["unanswerable"]), _response(ABSTAIN_TEXT, []), ROOT
     )
     assert row["abstained"] and "citation_hit" not in row and row["cited"] == []
+
+
+def test_explained_refusal_counts_as_abstention_with_its_citations():
+    from qwn.prompts import ABSTAIN_TEXT
+
+    text = f"Cold store E opens next year [S1]. {ABSTAIN_TEXT}"
+    row = ev.answer_row(
+        _query(expected=[], tags=["unanswerable"]), _response(text, [hit("/corpus/r.pdf", 2)]), ROOT
+    )
+    assert (
+        row["abstained"] and row["invented"] == 0 and row["cited"] == [{"path": "r.pdf", "page": 2}]
+    )
+    row = ev.answer_row(_query(), _response(text, [hit("/corpus/r.pdf", 2)]), ROOT)
+    assert row["abstained"] and row["citation_hit"]  # answerable: a false abstention
+
+
+def test_answer_text_only_when_asked_and_never_in_a_written_baseline(tmp_path):
+    response = _response("It is 4.75 [S1].", [hit("/corpus/r.pdf", 2)])
+    assert "answer_text" not in ev.answer_row(_query(), response, ROOT)
+    row = {"id": "q", **ev.answer_row(_query(), response, ROOT, keep_text=True)}
+    assert row["answer_text"] == "It is 4.75 [S1]."
+    es = ev.EvalSet("public", ROOT, ROOT, ROOT, tmp_path / "b.json", True, ROOT)
+    ev.write_baseline(es, {"meta": {}, "per_query": [row]})
+    written = json.loads(es.baseline.read_text())["per_query"][0]
+    assert "answer_text" not in written and written["cited"] == row["cited"]
+    assert row["answer_text"]  # the result itself is untouched
 
 
 def _arow(answerable=True, **kw):
@@ -470,6 +496,8 @@ def test_hard_set_paths_and_cleaning(home):
     assert sorted(p.parent.name for p in removed) == ["eval-hard", "eval-public"]
     assert all(p.name == "old12345" for p in removed)
     assert (s.index_dir / "eval-hard" / keep).is_dir()
+    # `run` keeps answer text only for disposable sets: invented corpora, never private documents
+    assert ev.eval_set(s, "public").disposable and not ev.eval_set(s, "private").disposable
 
 
 def test_changes_list_hard_metric_flips():

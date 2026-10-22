@@ -139,7 +139,8 @@ def test_eval_private_set_and_baseline(cli, home):
     assert baseline["answer"]["summary"]["abstention"]["value"] == 1.0
     assert {r["id"] for r in baseline["per_query"]} == {"p1", "p2", "p3", "p4"}
     assert set(baseline["by_tag"]) == {"text", "markdown", "exact", "chart"}
-    assert list((home / "eval" / "results").glob("*-private.json"))
+    [results] = (home / "eval" / "results").glob("*-private.json")
+    assert not any("answer_text" in r for r in json.loads(results.read_text())["per_query"])
     assert "Revenue grew" not in json.dumps(baseline["per_query"])  # no document text in results
 
     r = cli("eval", "--set", "private")

@@ -498,7 +498,7 @@ def run(
             t = time.perf_counter()
             response = answerer.answer(q.query, final[: settings.rerank_k], greedy=True)
             timings["generate"].append(time.perf_counter() - t)
-            row.update(answer_row(q, response, es.root))
+            row.update(answer_row(q, response, es.root, keep_text=es.disposable))
             if screen is not None:  # would `qwn ask` withhold this answer? (reported, no criterion)
                 t = time.perf_counter()
                 check = screen.response(q.query, strip_citations(response.text))
@@ -661,8 +661,11 @@ def approx(text: str, value: float, tolerance: float) -> bool:
     return any(abs(float(n) - value) <= tolerance for n in _NUMBER.findall(normalise(text)))
 
 
-def answer_row(q: Query, response: Response, root: Path) -> dict[str, Any]:
-    """What one answer scored. No answer or document text: only ids, labels, flags."""
+def answer_row(
+    q: Query, response: Response, root: Path, *, keep_text: bool = False
+) -> dict[str, Any]:
+    """What one answer scored: ids, labels, flags. `keep_text` adds the full reply, only for the
+    invented public and hard corpora, never private documents (CLAUDE.md → Privacy)."""
     text = strip_citations(response.text)
     cited = [h for _, h in response.cited_sources()]
     row: dict[str, Any] = {
@@ -672,6 +675,8 @@ def answer_row(q: Query, response: Response, root: Path) -> dict[str, Any]:
         "prompt_tokens": response.prompt_tokens,
         "completion_tokens": response.completion_tokens,
     }
+    if keep_text:
+        row["answer_text"] = response.text
     if q.answerable:
         row["citation_hit"] = any(
             matches(h.chunk, item, root) for h in cited for item in q.expected
@@ -975,8 +980,10 @@ def load_baseline(es: EvalSet) -> dict[str, Any] | None:
 
 
 def write_baseline(es: EvalSet, result: dict[str, Any]) -> None:
+    """Committed baselines stay text-free; the results file keeps `answer_text`."""
+    per_query = [{k: v for k, v in r.items() if k != "answer_text"} for r in result["per_query"]]
     es.baseline.parent.mkdir(parents=True, exist_ok=True)
-    es.baseline.write_text(json.dumps(result, indent=1) + "\n")
+    es.baseline.write_text(json.dumps({**result, "per_query": per_query}, indent=1) + "\n")
 
 
 # report
