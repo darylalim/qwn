@@ -1848,8 +1848,9 @@ answerable queries (degraded charts, pub-044-style tables), not just clean ones.
 2. **Hard set** (`qwn eval --set hard --locate`, measurement only): hard-059 and hard-060 now
    count as abstained (hard-055 stays a miss: its reply has no sentence; amended 2026-10-22 with
    the Outcome above); the other 7 near-miss queries still abstain; false abstention
-   doesn't rise above the baseline's 0.020 (hard-010 only) *except where a reply is unchanged and
-   only its scoring moves (amended 2026-10-22, see results)*, and answer_contains and citation_hit
+   doesn't rise above the baseline's 0.020 (hard-010 only), *apart from hard-019 and hard-037:
+   cited refusals the old scoring hid, with unchanged replies (amended 2026-10-22, see results)*,
+   and answer_contains and citation_hit
    don't drop. Any query that moves the other way is listed and explained. The hard baseline is
    updated in the same PR.
 3. Fast tests, ruff, ty and the slow tests pass. Results go under Evaluation → Explained
