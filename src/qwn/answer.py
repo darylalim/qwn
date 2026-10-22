@@ -143,9 +143,10 @@ def _plain(text: str) -> str:
     return text.replace("\N{RIGHT SINGLE QUOTATION MARK}", "'").casefold()
 
 
-def abstained(text: str, cited: list[str]) -> bool:
-    """No citations and the fixed abstention sentence (case-insensitive)."""
-    return not cited and _plain(ABSTAIN_TEXT) in _plain(text)
+def abstained(text: str) -> bool:
+    """The fixed abstention sentence (case-insensitive), with or without citations: a refusal may
+    first say what the sources do say (PLAN.md → Evaluation → Explained abstention)."""
+    return _plain(ABSTAIN_TEXT) in _plain(text)
 
 
 def cite_label(source: Source, hit: Hit | None = None) -> str:
@@ -261,7 +262,7 @@ class Answerer:
             hits=kept,
             cited=cited,
             invented=invented_citations(ans.text, labels),
-            abstained=abstained(ans.text, cited),
+            abstained=abstained(ans.text),
             prompt_tokens=ans.prompt_tokens,
             completion_tokens=ans.completion_tokens,
             timings=t,

@@ -24,15 +24,16 @@ non-prompt injection defence follow-up is done (text-layer filter, Security → 
 injection 4/4). The tighter chart/table highlight regions follow-up is done (Evaluation → Tighter
 regions results; `locate_hit` 0.914). The harder eval tier follow-up is done (`qwn eval --set
 hard`, Evaluation → Harder tier and Harder tier results; a measurement set with no exit criteria).
-Judge tuning changes on it; the public set still guards regressions.
+Judge tuning changes on it; the public set still guards regressions. The explained abstention
+follow-up is done, scoring only (Evaluation → Explained abstention results; hard abstention
+0.900): a cited refusal ending with `ABSTAIN_TEXT` counts, and eval results keep `answer_text` for
+the public and hard sets. The planned prompt change was dropped after it raised hard false
+abstention to 0.120.
 
 **Open follow-ups (in order):**
 
-1. **Explained abstention** (planned 2026-10-22; Evaluation → Explained abstention): refusals may
-   cite what the sources do say and end with `ABSTAIN_TEXT`; scoring counts them; eval results
-   keep answer text for the public and hard sets. One PR, `followup/explained-abstention`.
-2. **Version awareness** (needs a planning session): answers mixing up editions of near-twin
-   documents (hard-038, hard-010; `version` MRR 0.763).
+1. **Version awareness** (needs a planning session): answers mixing up editions of near-twin
+   documents (hard-038, hard-010, hard-019; `version` MRR 0.763).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -342,10 +343,11 @@ class Tts(Protocol):
   (right answer, `[S2]` for a fact on S1). With them, 4 of 4 were right and abstention was
   unchanged.
 - **Abstention:** the fixed sentence above (`ABSTAIN_TEXT` in `prompts.py`) lets eval score
-  refusals exactly: abstained = no `[S#]` citations **and** the answer contains `ABSTAIN_TEXT`
-  (case-insensitive). The UI shows it as a normal answer. *(Changing in the explained abstention
-  follow-up, see Evaluation → Explained abstention: a refusal may cite what the sources do say,
-  and citations no longer stop it counting.)*
+  refusals exactly: abstained = the answer contains `ABSTAIN_TEXT` (case-insensitive), with or
+  without `[S#]` citations. The prompt still asks for the bare sentence, but on near misses the
+  model often first says, citing them, what the sources do say; those count too (explained
+  abstention follow-up, see Evaluation → Explained abstention). The UI shows it as a normal
+  answer.
 - **Generation parameters**: start with Qwen3-VL-Instruct's recommended sampling
   (temperature 0.7, top_p 0.8, top_k 20; check the card in phase 0). `max_tokens=1024`. Context
   capped at `max_context=16384` tokens.
@@ -1460,6 +1462,9 @@ Each run writes `eval/results/<UTC timestamp>-<set>.json` (gitignored):
 - **Baselines:** `eval/public/baseline.json` is committed. `eval/private/baseline.json` stays
   local. Both change only via `qwn eval --update-baseline` (hook H2 blocks hand edits to the public
   one).
+- **Answer text:** public and hard rows keep the full reply as `answer_text` in the results file
+  (invented corpora); private rows never do. `write_baseline` strips it, so baselines stay
+  text-free.
 
 ### Harder tier (`eval/hard/`, follow-up, planned 2026-10-10)
 
@@ -1775,7 +1780,8 @@ them.
 
 **Changes (agreed 2026-10-22):**
 
-1. **Prompt** (`prompts.SYSTEM_PROMPT`): the abstention sentence becomes
+1. **Prompt** (`prompts.SYSTEM_PROMPT`): *dropped after the evals (agreed 2026-10-22, see
+   Outcome below); the prompt is unchanged.* The planned abstention sentence was
    ```
    If the sources don't contain the answer, say in one or two sentences what they do say about
    it, citing them, then end with exactly: "I couldn't find this in your documents." If nothing
@@ -1804,14 +1810,34 @@ up under "Changes vs baseline".
 **Tests (with the code):**
 
 - Unit: `abstained` is true for the sentence with and without citations, false without it (the
-  existing `test_abstained_needs_the_sentence_and_no_citations` is rewritten); `SYSTEM_PROMPT`
-  contains `ABSTAIN_TEXT` once and the "what they do say" rule; `answer_text` is in public and
-  hard rows, absent from private rows, and absent from a written baseline.
+  existing `test_abstained_needs_the_sentence_and_no_citations` is rewritten); `answer_text` is
+  in public and hard rows, absent from private rows, and absent from a written baseline.
 - Fakes: `tests/fakes.py`'s generator gains an explained-refusal mode (a cited sentence followed
   by `ABSTAIN_TEXT`) so the scoring path is covered without MLX.
-- Slow: one pinned reply format on a public page chosen in the probe, where a near-miss question
-  gets a cited explanation ending with `ABSTAIN_TEXT`, and one public `unanswerable` query that
-  still gets the bare sentence with no citations.
+- Slow: none new. With the prompt dropped there's no new reply format to pin; the existing
+  `test_generator_abstains_without_relevant_sources` still covers the bare sentence.
+
+**Probe (scratch, 2026-10-22, greedy, public index, new prompt):** all 10 public `unanswerable`
+queries still abstain. Five stay bare (pub-063, -064, -067, -070, -071). Five explain with real
+citations and end with the sentence: pub-065 (handbook topics), pub-066 (Q3 by region, annual
+total), pub-068 (the price list has no cappuccino), pub-069 (rates table has no destinations),
+pub-072 (plates 4 and 6, not 9). None invents a citation. The 5 answerable queries (pub-001,
+-014, -025, -035, -045) give the same cited answers as before, with no trailing sentence. The only
+drift from the wording is length: pub-069 explains in three sentences, not one or two.
+
+**Outcome (agreed 2026-10-22): scoring only, prompt unchanged.** The full evals with the new
+prompt showed what the probe's five clean answerable queries couldn't: when the model is unsure,
+it now answers *and* appends the sentence. Public still passed every criterion (false abstention
+0.014: pub-044 gave "1,210 units [S1]" and then the sentence), but the hard set's false
+abstention rose from 0.020 to 0.120: hard-034, -035, -037 (degraded charts; hard-035's "July" is
+right) and hard-014, -019 (edition mix-ups) answered and then refused. The sentence also wasn't
+reliable at the end of an explanation: hard-055 still explained without it, and hard-057 went
+from bare to "Bus 6 runs on Saturdays only and is not shown [S1]" with no sentence. So the
+prompt change is dropped. Changes 2 and 3 ship: under the old prompt, hard-059 and hard-060
+already end their cited explanations with the sentence, so scoring alone counts them. Rewording
+the prompt (e.g. "if the sources answer the question even partly, answer it and don't add that
+sentence") is left for a later follow-up if wanted; it needs its own probe on uncertain
+answerable queries (degraded charts, pub-044-style tables), not just clean ones.
 
 **Done when:**
 
@@ -1819,13 +1845,41 @@ up under "Changes vs baseline".
    abstention ≥ 0.75, false abstention ≤ 0.10, invented citations = 0, injection 4/4; phases 3
    and 6 unchanged). Every per-query change is explained in the PR. The public baseline is
    updated in the same PR (`--update-baseline`).
-2. **Hard set** (`qwn eval --set hard --locate`, measurement only): hard-055, hard-059 and
-   hard-060 now count as abstained; the other 7 near-miss queries still abstain; false abstention
-   doesn't rise above the baseline's 0.020 (hard-010 only), and answer_contains and citation_hit
+2. **Hard set** (`qwn eval --set hard --locate`, measurement only): hard-059 and hard-060 now
+   count as abstained (hard-055 stays a miss: its reply has no sentence; amended 2026-10-22 with
+   the Outcome above); the other 7 near-miss queries still abstain; false abstention
+   doesn't rise above the baseline's 0.020 (hard-010 only) *except where a reply is unchanged and
+   only its scoring moves (amended 2026-10-22, see results)*, and answer_contains and citation_hit
    don't drop. Any query that moves the other way is listed and explained. The hard baseline is
    updated in the same PR.
 3. Fast tests, ruff, ty and the slow tests pass. Results go under Evaluation → Explained
    abstention results.
+
+### Explained abstention results (2026-10-22, M2 Max, scoring only)
+
+Prompt unchanged, so every reply matches the previous baselines (same citations, same
+retrieval, answer and highlight flags). Only `abstained` moved.
+
+| Set | abstention | false abstention | citation_hit | answer_contains | invented |
+|---|---|---|---|---|---|
+| public | 1.000 → 1.000 | 0.000 → 0.000 | 1.000 | 0.971 | 0 |
+| hard | 0.700 → **0.900** | 0.020 → 0.060 | 0.960 | 0.978 | 0 |
+
+- **Public:** every exit criterion passes; no per-query changes. The baseline also gains the
+  hard tier's empty `citation_all`/`answer_approx` summaries (n = 0), as it hadn't been rewritten
+  since that follow-up.
+- **Hard, now abstain (intended):** hard-059 (2027 fee "will be agreed in December 2026" [S1],
+  then the sentence) and hard-060 (quotes the "as set out in our terms" line [S1], then the
+  sentence).
+- **Hard, now false abstentions (scoring only, reply unchanged):** hard-019 (original vs 2026
+  Nordlys amendment, `version`/`multi`: it cites two purchase orders, says the agreement doesn't
+  give the date, then the sentence) and hard-037 (degraded occupancy chart: it says October's
+  value isn't labelled, then the sentence). Both were refusals under the old scoring too, hidden
+  by its `not cited` rule; the done-when's "doesn't rise" assumed no such hidden refusals.
+  hard-019 is an edition mix-up for version awareness; hard-037 is a chart-reading limit.
+- **Hard, still missed:** hard-055 explains ("the inspection frequency is not currently
+  defined") without the sentence, so it isn't scored as an abstention. Fixing it needs a prompt
+  change (see Outcome).
 
 ## Phases
 

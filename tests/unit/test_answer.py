@@ -49,13 +49,11 @@ def test_image_beyond_max_images_gets_no_label_and_labels_stay_contiguous():
 # abstention and citations
 
 
-def test_abstained_needs_the_sentence_and_no_citations():
-    assert abstained(ABSTAIN_TEXT, [])
-    assert abstained(
-        "Sorry. I COULDN\N{RIGHT SINGLE QUOTATION MARK}T FIND THIS IN YOUR DOCUMENTS.", []
-    )
-    assert not abstained(ABSTAIN_TEXT, ["S1"])
-    assert not abstained("Revenue grew 12%.", [])
+def test_abstained_needs_the_sentence_with_or_without_citations():
+    assert abstained(ABSTAIN_TEXT)
+    assert abstained("Sorry. I COULDN\N{RIGHT SINGLE QUOTATION MARK}T FIND THIS IN YOUR DOCUMENTS.")
+    assert abstained(f"Fees for 2027 will be agreed in December [S1]. {ABSTAIN_TEXT}")
+    assert not abstained("Revenue grew 12% [S1].")
 
 
 def test_invented_citations_counts_every_marker_without_a_source():
@@ -103,6 +101,13 @@ def test_unrelated_sources_abstain(home):
     a, _ = answerer(home)
     r = a.answer("What is the refund policy?", [hit(1, text="Bar chart of sales", page=1)])
     assert r.abstained and r.cited == [] and r.rendered() == ABSTAIN_TEXT
+
+
+def test_explained_refusal_abstains_and_keeps_its_citation(home):
+    a, _ = answerer(home, FakeGenerator(explain=True))
+    r = a.answer("What is the refund policy?", [hit(1, text="Bar chart of sales", page=1)])
+    assert r.abstained and r.cited == ["S1"] and r.invented == []
+    assert r.rendered().endswith(ABSTAIN_TEXT) and "[" in r.rendered()
 
 
 def test_generator_sees_only_labelled_sources(home):

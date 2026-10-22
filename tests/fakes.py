@@ -45,13 +45,15 @@ class FakeReranker:
 
 class FakeGenerator:
     """Cites the first source sharing a content word (5+ letters) with the question, quoting it;
-    abstains when none does. `extra` is appended verbatim (e.g. an invented "[S9]"). `locate`
-    returns `box` and records each (image_path, claim)."""
+    abstains when none does; with `explain`, the refusal first quotes and cites S1 (an explained
+    refusal). `extra` is appended verbatim (e.g. an invented "[S9]"). `locate` returns `box` and
+    records each (image_path, claim)."""
 
     model_id = "fake/generator@0"
 
-    def __init__(self, extra: str = "", box: Box | None = None) -> None:
+    def __init__(self, extra: str = "", box: Box | None = None, *, explain: bool = False) -> None:
         self.extra = extra
+        self.explain = explain
         self.box = box
         self.calls: list[list[Source]] = []
         self.located: list[tuple[Path, str]] = []
@@ -62,6 +64,8 @@ class FakeGenerator:
         match = next((s for s in sources if q & _words(s.text)), None)
         if match is None:
             text = "I couldn't find this in your documents."
+            if self.explain and sources:
+                text = f"{sources[0].text[:80]} [{sources[0].label}]. {text}"
         else:
             text = f"{match.text[:80]} [{match.label}]"
         text += self.extra
