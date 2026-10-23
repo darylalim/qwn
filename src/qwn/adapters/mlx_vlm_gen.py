@@ -4,15 +4,17 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from qwn.answer import parse_box, parse_citations, plan_sources
+from qwn.answer import parse_box, parse_citations, parse_standalone, plan_sources
 from qwn.config import Settings
-from qwn.interfaces import Answer, Box, Source
+from qwn.interfaces import Answer, Box, Source, Turn
 from qwn.models_lock import pinned
 from qwn.prompts import (
     LOCATE_SYSTEM_PROMPT,
+    REWRITE_PROMPT,
     SYSTEM_PROMPT,
     image_label,
     locate_text,
+    rewrite_text,
     user_text,
 )
 
@@ -23,6 +25,7 @@ TEMPERATURE = 0.7
 TOP_P = 0.8
 TOP_K = 20
 LOCATE_MAX_TOKENS = 64  # one small JSON object
+REWRITE_MAX_TOKENS = 96  # one question
 
 
 def messages(question: str, image_sources: list[Source], sources: list[Source]) -> list[dict]:
@@ -110,3 +113,29 @@ class MlxVlmGenerator:
         if box is None:
             logger.info("locate: no usable box in a %d-char reply", len(result.text))
         return box
+
+    def rewrite(self, history: list[Turn], question: str) -> str:
+        from mlx_vlm import generate
+        from mlx_vlm.prompt_utils import get_chat_template
+
+        msgs = [
+            {"role": "system", "content": [{"type": "text", "text": REWRITE_PROMPT}]},
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": rewrite_text(history, question)}],
+            },
+        ]
+        prompt = get_chat_template(self.processor, msgs, add_generation_prompt=True)
+        result = generate(
+            self.model,
+            self.processor,
+            prompt,
+            max_tokens=REWRITE_MAX_TOKENS,
+            verbose=False,
+            temperature=0.0,  # greedy: the same conversation always searches the same question
+        )
+        standalone = parse_standalone(result.text, question)
+        if standalone is None:
+            logger.warning("rewrite: no usable question in a %d-char reply", len(result.text))
+            return question
+        return standalone

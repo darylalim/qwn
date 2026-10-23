@@ -1,8 +1,10 @@
 """Answering: retrieved hits → labelled sources → Generator → checked, rendered answer.
 
 See PLAN.md → Prompts and parameters. `ask` screens the question and the answer with Guard
-(qwn.guard). `locate` finds the part of a cited page that supports the answer (phase 6). Nothing
-here logs question, source or answer text: only lengths, labels, counts and timings.
+(qwn.guard). With history, a follow-up is first rewritten into a standalone question (PLAN.md →
+Evaluation → Multi-turn questions). `locate` finds the part of a cited page that supports the
+answer (phase 6). Nothing here logs question, source or answer text: only lengths, labels, counts
+and timings.
 """
 
 import json
@@ -17,14 +19,14 @@ from typing import Literal
 from qwn.config import Settings
 from qwn.guard import Check, Screen
 from qwn.ingest import HEADING_SEP
-from qwn.interfaces import Answer, Box, Source
+from qwn.interfaces import Answer, Box, Source, Turn
 from qwn.models import Registry
 from qwn.prompts import ABSTAIN_TEXT
 from qwn.retrieve import Hit, Retriever
 
 logger = logging.getLogger(__name__)
 
-Stage = Literal["guard_prompt", "retrieve", "rerank", "generate", "guard_response"]
+Stage = Literal["guard_prompt", "rewrite", "retrieve", "rerank", "generate", "guard_response"]
 OnStage = Callable[[Stage], None]
 
 _CITATION = re.compile(r"\[(S\d+)\]")
@@ -33,7 +35,11 @@ _MARKER = re.compile(r"(\s?)\[(S\d+)\]")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?!\[S\d+\])|\n+")
 _FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 
+_LABEL = re.compile(r"^(?:standalone question|question|rewritten)\s*:\s*", re.IGNORECASE)
+_QUOTES = "\"'`\N{LEFT DOUBLE QUOTATION MARK}\N{RIGHT DOUBLE QUOTATION MARK}"
+
 MAX_BOX_AREA = 0.6  # a box covering more of the page than this highlights nothing useful
+MAX_STANDALONE_CHARS = 400  # a longer rewrite is the model answering, not rewriting
 
 
 def parse_citations(text: str, labels: list[str]) -> list[str]:
@@ -95,6 +101,25 @@ def parse_box(text: str) -> Box | None:
     if (x1 - x0) * (y1 - y0) > MAX_BOX_AREA:
         return None
     return Box(x0, y0, x1, y1)
+
+
+def _collapse(text: str) -> str:
+    return " ".join(text.split())
+
+
+def parse_standalone(text: str, question: str) -> str | None:
+    """The standalone question in a rewrite reply, or None (the caller falls back to `question`).
+
+    The first non-empty line, without surrounding quotes or backticks or a leading label, with
+    whitespace collapsed. Empty, over `MAX_STANDALONE_CHARS` or an abstention is rejected: the
+    reply is untrusted, and at worst it changes what is searched for.
+    """
+    line = next((ln for ln in text.splitlines() if ln.strip()), "")
+    line = _LABEL.sub("", line.strip().strip(_QUOTES).strip())
+    line = _collapse(line.strip(_QUOTES))
+    if not line or len(line) > MAX_STANDALONE_CHARS or abstained(line):
+        return None
+    return line
 
 
 def plan_sources(sources: list[Source], max_images: int) -> tuple[list[Source], list[Source]]:
@@ -170,6 +195,7 @@ class Response:
     completion_tokens: int
     timings: dict[str, float] = field(default_factory=dict)  # seconds per stage
     checks: list[Check] = field(default_factory=list)  # Guard: prompt, then response
+    standalone: str | None = None  # the question searched and answered, if it isn't the message
 
     @property
     def blocked(self) -> Check | None:
@@ -301,20 +327,44 @@ class Answerer:
         )
         return box
 
+    def standalone(self, question: str, history: list[Turn] | tuple[Turn, ...]) -> str:
+        """`question` as one standalone question given the earlier `history` (oldest first).
+
+        No history: `question` itself, with no model call. The generator returns `question` when
+        its reply doesn't parse (and logs a warning).
+        """
+        if not history:
+            return question
+        start = time.perf_counter()
+        standalone = self.registry.generator().rewrite(list(history), question)
+        logger.info(
+            "rewrite: turns=%d question_len=%d standalone_len=%d changed=%s seconds=%.2f",
+            len(history),
+            len(question),
+            len(standalone),
+            _collapse(standalone) != _collapse(question),
+            time.perf_counter() - start,
+        )
+        return standalone
+
     def ask(
         self,
         question: str,
         *,
+        history: list[Turn] | tuple[Turn, ...] = (),
         doc_ids: list[str] | None = None,
         greedy: bool = False,
         guard: bool | None = None,
         on_stage: OnStage | None = None,
     ) -> Response:
-        """Guard the question, retrieve, answer, then guard the answer.
+        """Guard the question, rewrite a follow-up, retrieve, answer, then guard the answer.
 
-        A blocked question is never retrieved or answered; a blocked answer is withheld (its text
-        and sources are dropped). `guard=None` follows `Settings.guard_enabled`. `on_stage` is
-        called as each stage starts (the UI shows it in `st.status`).
+        A blocked question is never rewritten, retrieved or answered; a blocked answer is withheld
+        (its text and sources are dropped). With `history` (earlier turns, oldest first), the
+        message is rewritten into a standalone question first, and that question is retrieved,
+        answered and checked; the generator never sees the history. `guard=None` follows
+        `Settings.guard_enabled`. `on_stage` is called as each stage starts (the UI shows it in
+        `st.status`).
         """
         stage = on_stage or _ignore
         timings: dict[str, float] = {}
@@ -329,16 +379,25 @@ class Answerer:
             timings["guard_prompt"] = time.perf_counter() - start
             if checks[-1].action == "block":
                 return _withheld(checks, timings)
-        hits = self.retrieve(question, doc_ids=doc_ids, timings=timings, on_stage=stage)
-        response = self.answer(question, hits, greedy=greedy, timings=timings, on_stage=stage)
+        searched = question
+        history = history[-self.settings.history_turns :] if self.settings.history_turns else ()
+        if history:
+            stage("rewrite")
+            start = time.perf_counter()
+            searched = self.standalone(question, history)
+            timings["rewrite"] = time.perf_counter() - start
+        standalone = searched if _collapse(searched) != _collapse(question) else None
+        hits = self.retrieve(searched, doc_ids=doc_ids, timings=timings, on_stage=stage)
+        response = self.answer(searched, hits, greedy=greedy, timings=timings, on_stage=stage)
+        response = replace(response, standalone=standalone)
         if screen is None:
             return response
         stage("guard_response")
         start = time.perf_counter()
-        checks.append(screen.response(question, strip_citations(response.text)))
+        checks.append(screen.response(searched, strip_citations(response.text)))
         timings = {**response.timings, "guard_response": time.perf_counter() - start}
         if checks[-1].action == "block":
-            return _withheld(checks, timings, response)
+            return replace(_withheld(checks, timings, response), standalone=standalone)
         return replace(response, checks=checks, timings=timings)
 
 

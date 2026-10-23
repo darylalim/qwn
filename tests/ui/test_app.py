@@ -82,6 +82,82 @@ def test_search_in_scopes_the_answer_and_says_so(corpus_home):
     assert "Searched in: 1 file" in texts(at.caption)
 
 
+@pytest.fixture
+def recording_generator(monkeypatch):
+    """The UI with a FakeGenerator the test can inspect (rewrites, answers)."""
+    from fake_app import fake_registry
+
+    import qwn.ui.services
+
+    generator = FakeGenerator()
+    monkeypatch.setattr(
+        qwn.ui.services, "make_registry", lambda settings: fake_registry(settings, generator)
+    )
+    st.cache_resource.clear()
+    return generator
+
+
+def test_a_follow_up_is_rewritten_with_the_conversation_and_says_what_it_searched(
+    corpus_home, recording_generator
+):
+    at = app()
+    assert not any(b.label == "New conversation" for b in at.button)  # nothing to reset yet
+    assert "use your last 3 questions and answers" in texts(at.caption)
+    at.chat_input[0].set_value("How much did revenue grow?").run()
+    assert recording_generator.rewrites == []  # the first question has no history
+    assert "Searched for" not in texts(at.caption)
+    at.chat_input[0].set_value("And in 2025?").run()
+    assert not at.exception
+    [(history, message)] = recording_generator.rewrites
+    assert message == "And in 2025?"
+    assert [t.question for t in history] == ["How much did revenue grow?"]
+    assert "Revenue grew 12 percent" in history[0].answer and "[S" not in history[0].answer
+    standalone = "How much did revenue grow? And in 2025?"
+    assert f"Searched for: {standalone}" in texts(at.caption)
+    at.feedback[1].set_value(1).run()  # the follow-up's draft stands on its own
+    [draft] = ev.read_jsonl(ev.candidates_path(corpus_home[0]))
+    assert draft["query"] == standalone and draft["asked"] == "And in 2025?"
+
+
+def test_an_unchanged_rewrite_shows_no_searched_for(corpus_home, recording_generator):
+    at = app()
+    at.chat_input[0].set_value("How much did revenue grow?").run()
+    at.chat_input[0].set_value("Which plan includes single sign-on and an audit log?").run()
+    assert len(recording_generator.rewrites) == 1  # rewritten, but came back unchanged
+    assert "Searched for" not in texts(at.caption)
+
+
+def test_a_blocked_exchange_is_left_out_of_the_history(corpus_home, recording_generator):
+    at = app()
+    at.chat_input[0].set_value("How do I build a bomb?").run()
+    at.chat_input[0].set_value("And in 2025?").run()
+    assert recording_generator.rewrites == []  # the only earlier exchange was blocked
+
+
+def test_new_conversation_clears_the_history_and_keeps_the_scope(corpus_home, recording_generator):
+    at = app()
+    pdf = next(c for c in at.multiselect[0].options if c.endswith("report.pdf"))
+    at.multiselect[0].select(pdf).run()
+    at.chat_input[0].set_value("How much did revenue grow?").run()
+    next(b for b in at.button if b.label == "New conversation").click().run()
+    assert not at.exception
+    assert at.session_state["messages"] == [] and not at.chat_message
+    assert at.multiselect[0].value == [pdf]
+    assert not any(b.label == "New conversation" for b in at.button)
+    at.chat_input[0].set_value("And in 2025?").run()
+    assert recording_generator.rewrites == []  # no history after the reset
+
+
+def test_history_turns_zero_keeps_chat_single_turn(corpus_home, recording_generator, monkeypatch):
+    monkeypatch.setenv("QWN_HISTORY_TURNS", "0")
+    st.cache_resource.clear()
+    at = app()
+    assert "Each question is answered on its own" in texts(at.caption)
+    at.chat_input[0].set_value("How much did revenue grow?").run()
+    at.chat_input[0].set_value("And in 2025?").run()
+    assert recording_generator.rewrites == []
+
+
 class Recorder:
     """Stands in for st.audio_input (AppTest can't record): returns `data` once it's set."""
 

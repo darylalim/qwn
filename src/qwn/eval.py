@@ -1,7 +1,8 @@
 """`qwn eval`: retrieval metrics, intervals, exit criteria and baselines (PLAN.md → Evaluation).
 
 Retrieval metrics always; answer metrics unless `--no-generate`; Guard metrics with `--guard`;
-highlight metrics with `--locate` (phase 6). The `hard` set measures and has no exit criteria.
+highlight metrics with `--locate` (phase 6). The `hard` and `turns` sets measure and have no exit
+criteria; `turns` (multi-turn follow-ups) runs on the hard corpus.
 Results never include document, answer or guard-prompt text, only ids, paths, ranks, labels, flags
 and timings.
 """
@@ -29,15 +30,19 @@ from qwn.config import Settings
 from qwn.guard import Screen
 from qwn.index import Chunk, Index, IndexMismatch
 from qwn.ingest import HEADING_SEP, Ingester, ingest_hash, open_index
-from qwn.interfaces import Box
+from qwn.interfaces import Box, Turn
 from qwn.models import Registry
 from qwn.models_lock import pinned
 from qwn.retrieve import EmptyScope, Hit, Retriever
 
 logger = logging.getLogger(__name__)
 
-SetName = Literal["public", "private", "hard"]
-DISPOSABLE: tuple[SetName, ...] = ("public", "hard")  # generated corpora, indexes rebuilt freely
+SetName = Literal["public", "private", "hard", "turns"]
+# generated corpora, indexes rebuilt freely
+DISPOSABLE: tuple[SetName, ...] = ("public", "hard", "turns")
+CORPUS: dict[SetName, SetName] = {"turns": "hard"}  # sets that reuse another set's corpus and index
+MEASUREMENT: tuple[SetName, ...] = ("hard", "turns")  # no exit criteria
+MAX_HISTORY = 3  # turns of `history` a query may carry
 TAGS = (
     "text",
     "scan",
@@ -54,9 +59,16 @@ TAGS = (
     "long",
     "paraphrase",
     "near-miss",
+    # the turns set's (PLAN.md → Multi-turn questions)
+    "ellipsis",
+    "pronoun",
+    "answer-ref",
+    "distant",
+    "switch",
 )
 KS = (1, 5, 10)
-ASK_STAGES = ("embed", "search", "rerank", "generate")  # what `qwn ask` waits for (no Guard)
+# what an answer waits for (no Guard); "rewrite" only for follow-ups
+ASK_STAGES = ("rewrite", "embed", "search", "rerank", "generate")
 BOOTSTRAP_RESAMPLES = 1000
 
 # Settings that change results (paths excluded): part of settings_hash.
@@ -99,6 +111,9 @@ class Query:
     region: list[float] | None = None  # phase 6: [x0, y0, x1, y1] on expected[0], 0..1
     match: Literal["any", "all"] = "any"  # "all": every expected item is needed
     answer_approx: tuple[float, float] | None = None  # (value, tolerance): a number in the answer
+    history: tuple[Turn, ...] = ()  # earlier turns, oldest first: `query` is a follow-up
+    rewrite_contains: list[str] = field(default_factory=list)  # terms the standalone must have
+    rewrite_must_not_contain: list[str] = field(default_factory=list)  # ... and mustn't
 
     @property
     def answerable(self) -> bool:
@@ -126,6 +141,9 @@ def load_queries(path: Path) -> list[Query]:
                 region=row.get("region"),
                 match=row.get("match", "any"),
                 answer_approx=_approx(row.get("answer_approx")),
+                history=_history(row),
+                rewrite_contains=row.get("rewrite_contains", []),
+                rewrite_must_not_contain=row.get("rewrite_must_not_contain", []),
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             raise EvalError(f"{path.name} line {n}: {type(e).__name__}: {e}") from None
@@ -140,6 +158,23 @@ def load_queries(path: Path) -> list[Query]:
         seen.add(q.id)
         out.append(q)
     return out
+
+
+def _history(row: dict[str, Any]) -> tuple[Turn, ...]:
+    """A query's `history`: 1 to MAX_HISTORY {"question", "answer"} turns, or none."""
+    if "history" not in row:
+        return ()
+    turns = row["history"]
+    if not isinstance(turns, list) or not 1 <= len(turns) <= MAX_HISTORY:
+        raise ValueError(f"history must list 1 to {MAX_HISTORY} turns")
+    out = []
+    for t in turns:
+        if not (isinstance(t, dict) and set(t) == {"question", "answer"}):
+            raise ValueError('each history turn needs exactly "question" and "answer"')
+        if not all(isinstance(v, str) and v.strip() for v in t.values()):
+            raise ValueError("history questions and answers must be non-empty text")
+        out.append(Turn(t["question"], t["answer"]))
+    return tuple(out)
 
 
 def _approx(value: Any) -> tuple[float, float] | None:
@@ -356,7 +391,7 @@ def eval_set(settings: Settings, name: SetName) -> EvalSet:
     if name in DISPOSABLE:
         return EvalSet(
             name,
-            home / "data" / f"eval-{name}",
+            home / "data" / f"eval-{corpus_of(name)}",
             disposable_index_parent(settings, name) / ingest_hash(settings)[:8],
             home / "eval" / name / "queries.jsonl",
             home / "eval" / name / "baseline.json",
@@ -374,8 +409,13 @@ def eval_set(settings: Settings, name: SetName) -> EvalSet:
     )
 
 
+def corpus_of(name: SetName) -> SetName:
+    """The set whose generated corpus and index `name` uses (itself, or e.g. hard for turns)."""
+    return CORPUS.get(name, name)
+
+
 def disposable_index_parent(settings: Settings, name: SetName) -> Path:
-    return settings.index_dir / f"eval-{name}"
+    return settings.index_dir / f"eval-{corpus_of(name)}"
 
 
 def clean_disposable(settings: Settings) -> list[Path]:
@@ -384,6 +424,7 @@ def clean_disposable(settings: Settings) -> list[Path]:
     removed = [
         p
         for name in DISPOSABLE
+        if name not in CORPUS
         for p in disposable_index_parent(settings, name).glob("*")
         if p.is_dir() and p.name != keep
     ]
@@ -404,8 +445,9 @@ def prepare(
     automatically."""
     if not es.disposable:
         return open_index(settings, es.index_root)
-    say(f"Building the {es.name} corpus in {es.root} …")
-    build_corpus(settings.home, es.name, es.root)
+    corpus = corpus_of(es.name)
+    say(f"Building the {corpus} corpus in {es.root} …")
+    build_corpus(settings.home, corpus, es.root)
     try:
         index = open_index(settings, es.index_root)
     except IndexMismatch:
@@ -413,9 +455,9 @@ def prepare(
     ingester = Ingester(settings, index, registry.embedder)
     report = ingester.run([es.root])
     if report.indexed:
-        say(f"Indexed {len(report.indexed)} {es.name} documents.")
+        say(f"Indexed {len(report.indexed)} {corpus} documents.")
     if report.failed:
-        raise EvalError(f"The {es.name} corpus failed to ingest: {report.failed}")
+        raise EvalError(f"The {corpus} corpus failed to ingest: {report.failed}")
     ingester.prune(ingester.prune_plan([es.root]).remove)
     return index
 
@@ -457,14 +499,15 @@ def run(
     registry.embedder()
     if options.rerank:
         registry.reranker()
-    if options.generate:
+    if options.generate or any(q.history for q in queries):  # follow-ups need the rewrite
         registry.generator()
     if options.guard:
         registry.guard()
     load_s = time.perf_counter() - t0
 
     timings: dict[str, list[float]] = {
-        stage: [] for stage in ("embed", "search", "rerank", "generate", "ask", "guard", "locate")
+        stage: []
+        for stage in ("rewrite", "embed", "search", "rerank", "generate", "ask", "guard", "locate")
     }
     per_query: list[dict[str, Any]] = []
     # without generation, unanswerable queries have nothing to score
@@ -473,18 +516,24 @@ def run(
         if progress is not None:
             progress(i, len(todo))
         doc_ids = _scope(retriever, q, es.root)
+        row: dict[str, Any] = {"id": q.id, "tags": q.tags, "answerable": q.answerable}
+        question = q.query
+        if q.history:  # a follow-up: everything below sees the standalone question
+            t = time.perf_counter()
+            question = answerer.standalone(q.query, q.history)
+            timings["rewrite"].append(time.perf_counter() - t)
+            row.update(rewrite_row(q, question, keep_text=es.disposable))
         t = time.perf_counter()
-        qvec = retriever.embed_query(q.query)
+        qvec = retriever.embed_query(question)
         timings["embed"].append(time.perf_counter() - t)
         t = time.perf_counter()
-        cand = retriever.candidates(q.query, hybrid=True, query_vec=qvec, doc_ids=doc_ids)
+        cand = retriever.candidates(question, hybrid=True, query_vec=qvec, doc_ids=doc_ids)
         timings["search"].append(time.perf_counter() - t)
         primary = cand.fused if options.hybrid else cand.vector
-        row: dict[str, Any] = {"id": q.id, "tags": q.tags, "answerable": q.answerable}
         final = primary
         if options.rerank:
             t = time.perf_counter()
-            final = retriever.rerank(q.query, primary)
+            final = retriever.rerank(question, primary)
             timings["rerank"].append(time.perf_counter() - t)
         if q.answerable:
             row["rank_vector"] = first_rank(cand.vector, q.expected, es.root)
@@ -497,12 +546,12 @@ def run(
         row["rank"] = first_rank(final, q.expected, es.root) if q.answerable else None
         if options.generate:
             t = time.perf_counter()
-            response = answerer.answer(q.query, final[: settings.rerank_k], greedy=True)
+            response = answerer.answer(question, final[: settings.rerank_k], greedy=True)
             timings["generate"].append(time.perf_counter() - t)
             row.update(answer_row(q, response, es.root, keep_text=es.disposable))
             if screen is not None:  # would `qwn ask` withhold this answer? (reported, no criterion)
                 t = time.perf_counter()
-                check = screen.response(q.query, strip_citations(response.text))
+                check = screen.response(question, strip_citations(response.text))
                 timings["guard"].append(time.perf_counter() - t)
                 row["guard_response"] = {"label": check.verdict.label, "action": check.action}
             if options.locate and q.answerable and q.region is not None:
@@ -517,6 +566,7 @@ def run(
     for q in queries:
         if q not in todo:
             per_query.append({"id": q.id, "tags": q.tags, "answerable": False, "rank": None})
+    rewritten = [r for r in per_query if "rewrite_hit" in r]
 
     guard_rows = run_guard(settings, guard_set, registry, timings["guard"])
 
@@ -544,6 +594,14 @@ def run(
             tag: summarize([r for r in scored if tag in r["tags"]], options)
             for tag in TAGS
             if any(tag in r["tags"] for r in scored)
+        },
+    }
+    result["rewrite"] = {
+        "summary": rewrite_summary(rewritten),
+        "by_tag": {
+            tag: rewrite_summary([r for r in rewritten if tag in r["tags"]])
+            for tag in (*TAGS, "unanswerable")
+            if any(tag in r["tags"] for r in rewritten)
         },
     }
     if options.generate:
@@ -660,6 +718,24 @@ _NUMBER = re.compile(r"(?<![\d.])\d+(?:\.\d+)?")
 def approx(text: str, value: float, tolerance: float) -> bool:
     """Is any number in `text` (normalised as for `contains`) within `tolerance` of `value`?"""
     return any(abs(float(n) - value) <= tolerance for n in _NUMBER.findall(normalise(text)))
+
+
+def rewrite_row(q: Query, standalone: str, *, keep_text: bool = False) -> dict[str, Any]:
+    """How a follow-up was rewritten: `rewritten` (the question changed), `rewrite_hit` (it has
+    every `rewrite_contains` term and no `rewrite_must_not_contain` one), and with `keep_text`
+    (invented corpora only, as `answer_text`) the standalone question itself."""
+    row: dict[str, Any] = {"rewritten": normalise(standalone) != normalise(q.query)}
+    if keep_text:
+        row["standalone_text"] = standalone
+    if q.rewrite_contains or q.rewrite_must_not_contain:
+        row["rewrite_hit"] = all(contains(standalone, s) for s in q.rewrite_contains) and not any(
+            contains(standalone, s) for s in q.rewrite_must_not_contain
+        )
+    return row
+
+
+def rewrite_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"rewrite_hit": proportion([r["rewrite_hit"] for r in rows])}
 
 
 def answer_row(
@@ -826,9 +902,9 @@ def _at_most(name: str, metric: dict[str, Any], threshold: float) -> Criterion:
 
 def criteria(result: dict[str, Any], options: Options) -> list[dict[str, Any]]:
     """PLAN.md → Evaluation → Exit criteria: phase 1 always, phase 2 when answers were scored,
-    phase 3 when Guard was, phase 6 when highlights were. None for the hard set, which only
-    measures."""
-    if result.get("meta", {}).get("set") == "hard":
+    phase 3 when Guard was, phase 6 when highlights were. None for the hard and turns sets, which
+    only measure."""
+    if result.get("meta", {}).get("set") in MEASUREMENT:
         return []
     out = retrieval_criteria(result, options)
     if "answer" in result:
@@ -953,6 +1029,7 @@ def changes(baseline: dict[str, Any], result: dict[str, Any]) -> list[str]:
             ("citation_all", "now cites every expected item", "no longer cites them all"),
             ("answer_approx", "answer now within tolerance", "answer no longer within tolerance"),
             ("abstained", "now abstains", "no longer abstains"),
+            ("rewrite_hit", "rewrite now hits", "rewrite no longer hits"),
             ("locate_hit", "highlight now hits the region", "highlight no longer hits the region"),
         ):
             if key in r and key in b and r[key] != b[key]:
@@ -982,7 +1059,8 @@ def load_baseline(es: EvalSet) -> dict[str, Any] | None:
 
 def write_baseline(es: EvalSet, result: dict[str, Any]) -> None:
     """Committed baselines stay text-free; the results file keeps `answer_text`."""
-    per_query = [{k: v for k, v in r.items() if k != "answer_text"} for r in result["per_query"]]
+    text = ("answer_text", "standalone_text")
+    per_query = [{k: v for k, v in r.items() if k not in text} for r in result["per_query"]]
     es.baseline.parent.mkdir(parents=True, exist_ok=True)
     es.baseline.write_text(json.dumps({**result, "per_query": per_query}, indent=1) + "\n")
 
@@ -1026,6 +1104,8 @@ def format_report(result: dict[str, Any]) -> str:
             f"{t['mrr']['value']:.3f}  {t['recall@5_vector']['value']:.3f}     "
             f"{t['recall@5_hybrid']['value']:.3f}"
         )
+    if result.get("rewrite", {}).get("summary", {}).get("rewrite_hit", {}).get("n"):
+        lines += rewrite_report(result["rewrite"], result["per_query"])
     if "answer" in result:
         lines += answer_report(result["answer"])
     if "guard" in result:
@@ -1034,14 +1114,14 @@ def format_report(result: dict[str, Any]) -> str:
         lines += locate_report(result["locate"], result["per_query"])
     lat = result["latency"]
     lines += ["", "Latency (models loaded)"]
-    for stage in ("embed", "search", "rerank", "generate", "ask", "guard", "locate"):
+    for stage in ("rewrite", "embed", "search", "rerank", "generate", "ask", "guard", "locate"):
         if stage in lat:
             p50, p95 = lat[stage]["p50_ms"], lat[stage]["p95_ms"]
             lines.append(f"  {stage:<8} p50 {p50:8.1f} ms   p95 {p95:8.1f} ms")
     lines.append(f"  model load {lat['model_load_s']:.1f} s")
     if lat.get("peak_memory_gb") is not None:
         lines.append(f"  MLX peak memory {lat['peak_memory_gb']:.1f} GB")
-    if meta["set"] == "hard":
+    if meta["set"] in MEASUREMENT:
         lines += ["", "Measurement set: no exit criteria"]
         return "\n".join(lines)
     phases = ["phase 1: retrieval"]
@@ -1059,6 +1139,20 @@ def format_report(result: dict[str, Any]) -> str:
         )
         lines.append(f"  {mark}  {c['name']:<27} {c['detail']}{note}")
     return "\n".join(lines)
+
+
+def rewrite_report(rewrite: dict[str, Any], per_query: list[dict[str, Any]]) -> list[str]:
+    rewritten = sum(r.get("rewritten", False) for r in per_query)
+    follow_ups = sum("rewritten" in r for r in per_query)
+    lines = [
+        "",
+        f"Follow-ups ({rewritten}/{follow_ups} rewritten)",
+        f"  {'rewrite_hit':<22} {_pct(rewrite['summary']['rewrite_hit'])}",
+    ]
+    for tag, t in rewrite["by_tag"].items():
+        m = t["rewrite_hit"]
+        lines.append(f"  {tag:<12} {m['n']:>3}   {m['value']:.3f}")
+    return lines
 
 
 ANSWER_METRICS = (
@@ -1154,16 +1248,23 @@ def candidates_path(home: Path) -> Path:
 def make_draft(
     draft_id: str, query: str, rating: Rating, scope: list[str], response: Response, root: Path
 ) -> dict[str, Any]:
-    """A rated Chat answer as a draft query. No answer text: the cited pages are what's kept."""
-    return {
+    """A rated Chat answer as a draft query. No answer text: the cited pages are what's kept.
+
+    A follow-up's draft is its standalone question, so it stands on its own in `queries.jsonl`;
+    `asked` keeps the message as typed.
+    """
+    draft = {
         "draft_id": draft_id,
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
-        "query": query,
+        "query": response.standalone or query,
         "rating": rating,
         "scope": [_relative(p, root) for p in scope],
         "cited": [_cited_item(h, root) for _, h in response.cited_sources()],
         "abstained": response.abstained,
     }
+    if response.standalone:
+        draft["asked"] = query
+    return draft
 
 
 def _relative(path: str, root: Path) -> str:

@@ -510,3 +510,99 @@ def test_changes_list_hard_metric_flips():
         "a: now cites every expected item",
         "a: answer no longer within tolerance",
     ]
+
+
+# the turns set (PLAN.md → Multi-turn questions): history, rewrite_hit
+
+
+def _query_line(**fields) -> str:
+    return json.dumps({"id": "t", "query": "And in 2025?", "expected": [], **fields}) + "\n"
+
+
+TURN = {"question": "What was revenue in 2024?", "answer": "196.9 million."}
+
+
+def test_load_queries_reads_history_and_rewrite_terms(tmp_path):
+    path = tmp_path / "q.jsonl"
+    path.write_text(
+        _query_line(history=[TURN] * 3, rewrite_contains=["2025"], rewrite_must_not_contain=["x"])
+    )
+    [q] = ev.load_queries(path)
+    assert q.history == (ev.Turn(TURN["question"], TURN["answer"]),) * 3
+    assert q.rewrite_contains == ["2025"] and q.rewrite_must_not_contain == ["x"]
+    path.write_text(_query_line())
+    assert ev.load_queries(path)[0].history == ()
+
+
+@pytest.mark.parametrize(
+    "history",
+    [[], [TURN] * 4, [{"question": "q"}], [{**TURN, "extra": 1}], [{**TURN, "answer": " "}], "q"],
+)
+def test_load_queries_rejects_malformed_history(tmp_path, history):
+    path = tmp_path / "q.jsonl"
+    path.write_text(_query_line(history=history))
+    with pytest.raises(ev.EvalError, match="line 1"):
+        ev.load_queries(path)
+
+
+def test_rewrite_row_scores_terms_and_switches():
+    q = ev.Query(
+        "t", "And in 2025?", [], [], rewrite_contains=["2025", "Revenue"],
+        rewrite_must_not_contain=["Halvorsen"],
+    )  # fmt: skip
+    hit = ev.rewrite_row(q, "What was total revenue in 2025?")
+    assert hit == {"rewritten": True, "rewrite_hit": True}
+    assert not ev.rewrite_row(q, "What was Halvorsen's revenue in 2025?")["rewrite_hit"]
+    assert not ev.rewrite_row(q, "What was revenue in 20250?")["rewrite_hit"]  # whole numbers
+    same = ev.rewrite_row(ev.Query("t", "Which  port?", [], []), "which port?", keep_text=True)
+    assert same == {"rewritten": False, "standalone_text": "which port?"}  # no terms, no hit
+
+
+def test_rewrite_summary_and_report():
+    rows = [{"tags": ["ellipsis"], "rewritten": True, "rewrite_hit": True},
+            {"tags": ["switch"], "rewritten": False, "rewrite_hit": False}]  # fmt: skip
+    s = ev.rewrite_summary(rows)
+    assert s["rewrite_hit"]["value"] == 0.5 and s["rewrite_hit"]["n"] == 2
+    assert ev.rewrite_summary([])["rewrite_hit"]["n"] == 0
+    report = "\n".join(ev.rewrite_report({"summary": s, "by_tag": {}}, rows))
+    assert "Follow-ups (1/2 rewritten)" in report and "rewrite_hit" in report
+
+
+def test_changes_list_rewrite_flips():
+    base = {"per_query": [{"id": "a", "rewrite_hit": True}]}
+    assert ev.changes(base, {"per_query": [{"id": "a", "rewrite_hit": False}]}) == [
+        "a: rewrite no longer hits"
+    ]
+
+
+def test_turns_set_uses_the_hard_corpus_and_index(home):
+    from qwn.config import Settings
+    from qwn.ingest import ingest_hash
+
+    s = Settings()
+    turns, hard = ev.eval_set(s, "turns"), ev.eval_set(s, "hard")
+    assert turns.disposable and (turns.root, turns.index_root) == (hard.root, hard.index_root)
+    assert turns.queries == s.home / "eval" / "turns" / "queries.jsonl"
+    assert turns.baseline == s.home / "eval" / "turns" / "baseline.json"
+    keep = ingest_hash(s)[:8]
+    for sub in (keep, "old12345"):
+        (s.index_dir / "eval-hard" / sub).mkdir(parents=True)
+    removed = ev.clean_disposable(s)  # eval-hard is scanned once, not again for turns
+    assert [(p.parent.name, p.name) for p in removed] == [("eval-hard", "old12345")]
+    assert (s.index_dir / "eval-hard" / keep).is_dir()
+    assert not (s.index_dir / "eval-turns").exists()
+
+
+def test_turns_set_has_no_exit_criteria():
+    opts = ev.Options(generate=False)
+    ranks = {"rank": [9], "rank_embed": [9], "rank_vector": [9], "rank_hybrid": [9]}
+    result = {"meta": {"set": "turns"}, "summary": ev.summarize(_rows(ranks, ["text"]), opts)}
+    assert ev.criteria(result, opts) == []
+
+
+def test_baseline_drops_standalone_text(tmp_path):
+    es = ev.EvalSet("turns", tmp_path, tmp_path, tmp_path / "q", tmp_path / "b.json", True,
+                    tmp_path / "g")  # fmt: skip
+    row = {"id": "t", "standalone_text": "s", "answer_text": "a", "rewritten": True}
+    ev.write_baseline(es, {"per_query": [row]})
+    assert json.loads(es.baseline.read_text())["per_query"] == [{"id": "t", "rewritten": True}]

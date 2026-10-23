@@ -13,10 +13,11 @@ from typing import Any
 import streamlit as st
 
 from qwn import logging_setup
-from qwn.answer import Answerer
+from qwn.answer import Answerer, strip_citations
 from qwn.config import Settings
 from qwn.index import Index, IndexMismatch
 from qwn.ingest import Ingester, open_index
+from qwn.interfaces import Turn
 from qwn.jobs import JobRegistry
 from qwn.models import ModelsInUse, Registry, WarmLoad
 from qwn.retrieve import Retriever
@@ -101,6 +102,17 @@ def voice(svc: Services) -> Voice:
 
 def ingester(svc: Services) -> Ingester:
     return Ingester(svc.settings, require_index(svc), svc.registry.embedder)
+
+
+def conversation(messages: list[dict[str, Any]], turns: int) -> list[Turn]:
+    """The last `turns` completed exchanges in a Chat history, oldest first: what a follow-up is
+    rewritten with. Errors and Guard blocks are left out; abstentions stay (useful context)."""
+    out = [
+        Turn(m["question"], strip_citations(m["response"].text))
+        for m in messages
+        if m["role"] == "assistant" and "response" in m and m["response"].blocked is None
+    ]
+    return out[-turns:] if turns > 0 else []
 
 
 def show_problems(svc: Services) -> bool:
