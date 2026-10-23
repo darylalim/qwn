@@ -2365,7 +2365,8 @@ recall@5 on non-`switch` answerable queries was already 0.870) and was replaced 
   2024 revenue → "And in 2025?" (Searched for: "…total revenue in 2025?", 214.6) → "How many
   vessels did the company operate that year?" (Searched for: "…in 2025?") → "Sprint 14
   velocity?" (no Searched for, 41). "New conversation" clears it, and a bare "And in 2025?" is
-  then answered on its own. Layout at 390 px via `test_responsive.py`.
+  then answered on its own. A spoken "And in 2025?" after the 2024 question (checked by the
+  user) showed "Searched for" the 2025 revenue question. Layout at 390 px via `test_responsive.py`.
 
 ## Phases
 
