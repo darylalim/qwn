@@ -41,7 +41,11 @@ of the message falls back to the message (`keeps_message`).
 **Released as v0.8.0** (2026-10-23): every follow-up above since v0.7.0 (Versioning).
 Version awareness changed `ingest_hash`, so an index from v0.7.0 needs `qwn ingest --reindex`.
 
-**Open follow-ups:** none.
+**Open follow-ups:** **abstention wording** (planned 2026-10-23; Evaluation → Abstention
+wording). Probe two `SYSTEM_PROMPT` wordings against today's on uncertain queries (public charts,
+tables and scans, plus scratch queries on the hard corpus's degraded pages); a fixed rule picks
+one, and it ships only if the evals improve something and break nothing. Branch
+`followup/abstention-wording`, no version bump, no reindex.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -1888,8 +1892,9 @@ from bare to "Bus 6 runs on Saturdays only and is not shown [S1]" with no senten
 prompt change is dropped. Changes 2 and 3 ship: under the old prompt, hard-059 and hard-060
 already end their cited explanations with the sentence, so scoring alone counts them. Rewording
 the prompt (e.g. "if the sources answer the question even partly, answer it and don't add that
-sentence") is left for a later follow-up if wanted; it needs its own probe on uncertain
-answerable queries (degraded charts, pub-044-style tables), not just clean ones.
+sentence") is left for a later follow-up (planned 2026-10-23: Evaluation → Abstention wording);
+it needs its own probe on uncertain answerable queries (degraded charts, pub-044-style tables),
+not just clean ones.
 
 **Done when:**
 
@@ -2370,6 +2375,115 @@ recall@5 on non-`switch` answerable queries was already 0.870) and was replaced 
   velocity?" (no Searched for, 41). "New conversation" clears it, and a bare "And in 2025?" is
   then answered on its own. A spoken "And in 2025?" after the 2024 question (checked by the
   user) showed "Searched for" the 2025 revenue question. Layout at 390 px via `test_responsive.py`.
+
+### Abstention wording (follow-up, planned 2026-10-23)
+
+**Why:** two kinds of reply are still scored wrong, and both come from the prompt, not
+retrieval:
+
+- **Explains without the sentence.** hard-055 (Cold store E) and turn-030 (the same question as a
+  follow-up) say, citing it, that the store isn't in service yet and has no interval, but never
+  end with `ABSTAIN_TEXT`, so they don't count as abstentions. Under the explained-abstention
+  prompt, hard-057 did the same.
+- **Answers, then refuses.** The explained-abstention prompt was dropped because, when unsure,
+  the model answered *and* appended the sentence (hard-014, -034, -035; public pub-044). Today's
+  prompt doesn't do this, so a new wording mustn't bring it back.
+
+This follow-up probes two wordings against today's prompt on queries where the model is unsure,
+picks one by a fixed rule, and ships it only if the full evals improve something and break
+nothing. **Ending with no prompt change is an acceptable result**, as last time. One follow-up
+PR (branch `followup/abstention-wording`), no version bump, no reindex.
+
+**Out of scope:** hard-010, -015, -019 (edition and `multi` reading limits) and hard-037 (a
+chart value that isn't readable). Don't tune the wording for them. Scoring (`answer.abstained`)
+doesn't change, nor does anything outside `SYSTEM_PROMPT`.
+
+**Wordings (agreed 2026-10-23).** Each replaces only the abstention lines of `SYSTEM_PROMPT`
+(`If the sources don't contain the answer, reply exactly: "…" and cite nothing.`); the rest of
+the prompt stays as it is.
+
+- **M (minimal):** today's lines plus one sentence aimed at hard-055. It doesn't invite
+  explanations:
+  ```
+  If the sources don't contain the answer, reply exactly:
+  "I couldn't find this in your documents." and cite nothing. If you explain what the sources
+  say instead, cite them and end with that sentence.
+  ```
+- **A (answer-first):** the dropped explained-abstention wording, with an answer-first rule in
+  front of it (the rewording the Outcome above suggested):
+  ```
+  If the sources answer the question, even partly or approximately (such as a value read off a
+  chart), give that answer with citations and don't add a refusal. If they don't answer it, say
+  in one or two sentences what they do say about it, citing them, then end with exactly:
+  "I couldn't find this in your documents." If nothing in the sources is related, reply with
+  only that sentence and cite nothing.
+  ```
+
+Wording fixes found in the probe (the meaning stays the same) go into this section before the
+full runs.
+
+**Probe (scratch, greedy; CLAUDE.md → Model output formats).** Today's prompt, M and A on the same
+queries, through the real path (`dataclasses.replace(ev.eval_set(...), queries=<scratch jsonl>)`):
+
+1. **Public, 41 queries:** every `chart`, `table` and `scan` query (31 answerable, pub-044
+   included) and the 10 `unanswerable` ones.
+2. **Scratch on the hard corpus, ~12 queries, never committed:** about 8 answerable ones on the
+   degraded pages (`charts/rainfall-unlabelled.png`, `charts/occupancy-unlabelled.png`,
+   `tables/bus-timetable.png`, `scans/small-print.pdf`, `scans/faded-invoice.pdf`), plus about 4
+   unanswerable ones next to lure sentences or missing values. They ask about months, rows and
+   fields the hard set doesn't: **no query may share a (document, field) pair with a hard query**,
+   and none copies a hard question. Expected values come from the generator scripts. Write the
+   file and freeze it before running any wording; the PR lists it.
+
+Each reply is scored with the eval's own functions (`abstained`, `answer_contains`, invented
+citations). An **answer-then-refuse** is an answerable reply that contains `ABSTAIN_TEXT` and also
+passes `answer_contains`, or states a value for the question (judged by reading `answer_text`).
+
+**A wording passes the probe** when, compared with today's prompt on the same queries:
+
+1. no answerable query gains `ABSTAIN_TEXT`, and there are no answer-then-refuse replies;
+2. no answerable query loses `answer_contains` or citation_hit;
+3. all 10 public `unanswerable` queries and every scratch unanswerable one still abstain;
+4. there are 0 invented citations.
+
+**Choice rule:** if both pass, take the one with more scratch unanswerable replies that explain
+*and* end with the sentence; on a tie, take M (the smaller change). If neither passes, stop: record
+the probe under results, change no code, and close the follow-up.
+
+**Full runs** with the chosen wording (the prompt isn't in `settings_hash`, so every run compares
+with its baseline and every flip is listed): `qwn eval --set public --guard --locate`, `--set
+hard --locate`, `--set turns --locate`, each with `--update-baseline` once its criteria hold.
+Ranks must not move (a prompt change can't affect retrieval); if any rank moves, stop and find out
+why.
+
+**Tests (with the code):**
+
+- Unit: none new. Scoring doesn't change; `tests/fakes.py` already has the explained-refusal mode.
+- Slow (`tests/slow/test_contracts.py`, synthetic text sources, no real content):
+  `test_generator_explained_refusal_ends_with_sentence` (a source that names an invented area
+  and says its interval will be added later; asked for the interval, the reply contains
+  `ABSTAIN_TEXT`) and `test_generator_approximate_answer_has_no_refusal` (a source that gives a
+  value as "about 75 mm, the label is smudged"; the reply contains 75 and not `ABSTAIN_TEXT`).
+  `test_generator_abstains_without_relevant_sources` stays as it is (bare sentence).
+
+**Done when:**
+
+1. **Probe:** recorded under Abstention wording results (per-wording counts and every flip). If no
+   wording passes, the follow-up ends here (results only, no code).
+2. **Public:** every exit criterion passes; every per-query change is explained.
+3. **Hard** (measurement), against the baseline: abstention ≥ 0.900, false abstention ≤ 0.080,
+   citation_hit ≥ 0.920, answer_contains ≥ 0.957, invented 0, and no answer-then-refuse replies.
+4. **Turns** (measurement): abstention ≥ 0.750, false abstention ≤ 0.034, answer_contains ≥ 0.931,
+   injection 2/2.
+5. **Something improves:** at least one hard or turns query moves to the right side (an
+   abstention counted or a false abstention gone). hard-055 and turn-030 are the target, not
+   requirements. If 2–4 hold but nothing improves, don't ship the prompt: same as no wording
+   passing.
+6. `SYSTEM_PROMPT` and Prompts and parameters → Generator system prompt / Abstention say the same
+   thing. Fast tests, ruff, ty and the slow tests pass.
+
+If the full runs fail 2–4, drop the prompt change as in Explained abstention → Outcome and record
+why.
 
 ## Phases
 
