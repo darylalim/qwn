@@ -498,7 +498,7 @@ def _dir_size(path: Path) -> int:
 @eval_app.callback(invoke_without_command=True)
 def eval_(
     ctx: typer.Context,
-    set_: Annotated[str, typer.Option("--set", help="public, private or hard.")] = "public",
+    set_: Annotated[str, typer.Option("--set", help="public, private, hard or turns.")] = "public",
     rerank: Annotated[bool, typer.Option(help="Score after reranking.")] = True,
     hybrid: Annotated[bool, typer.Option(help="Hybrid (on) or vector-only (off).")] = True,
     generate: Annotated[
@@ -521,15 +521,15 @@ def eval_(
         typer.Option("--clean", help="Delete public and hard eval indexes for other settings."),
     ] = False,
 ) -> None:
-    """Score retrieval and answers on an eval set; check the exit criteria (none for hard)."""
+    """Score retrieval and answers on an eval set; check exit criteria (none for hard or turns)."""
     if ctx.invoked_subcommand is not None:
         return
     from qwn import eval as ev
     from qwn.index import IndexMismatch
 
     settings: Settings = ctx.obj
-    if set_ not in ("public", "private", "hard"):
-        raise _fail("--set must be public, private or hard.")
+    if set_ not in ("public", "private", "hard", "turns"):
+        raise _fail("--set must be public, private, hard or turns.")
     if locate and not generate:
         raise _fail("--locate scores highlights on answers: drop --no-generate.")
     if clean:
@@ -607,6 +607,8 @@ def eval_review(ctx: typer.Context) -> None:
             f"\nDraft {n}/{len(drafts)}  {'👍' if up else '👎'}  {draft['created']}", bold=True
         )
         typer.echo(f"  question: {draft['query']}")
+        if "asked" in draft:  # a Chat follow-up: `query` is its rewrite
+            typer.echo(f"  asked:    {draft['asked']}")
         if draft["abstained"]:
             typer.echo('  answer:   abstained ("I couldn\'t find this")')
         typer.echo(f"  cited:    {ev.format_expected(draft['cited']) or '(nothing)'}")

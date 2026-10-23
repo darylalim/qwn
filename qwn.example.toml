@@ -24,5 +24,6 @@ chunk_context = true     # prefix md/txt chunks with "file > heading path" for t
 
 guard_enabled = true
 controversial = "warn"   # or "block"
+history_turns = 3        # Chat exchanges a follow-up question is rewritten with; 0 = single-turn
 
 memory_headroom_gb = 2.0

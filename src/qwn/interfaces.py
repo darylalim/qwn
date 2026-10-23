@@ -45,6 +45,12 @@ class Verdict:
 
 
 @dataclass(frozen=True)
+class Turn:  # one earlier exchange in a conversation (multi-turn follow-up)
+    question: str  # the message as typed or transcribed, not its rewrite
+    answer: str  # the reply with [S#] markers stripped
+
+
+@dataclass(frozen=True)
 class Box:  # phase 6; relative coordinates, 0..1, origin top-left
     x0: float
     y0: float
@@ -79,6 +85,10 @@ class Generator(Protocol):
     def locate(self, image_path: Path, claim: str) -> Box | None: ...
 
     # phase 6: region of the page that supports `claim`; None if the model can't say (greedy)
+
+    def rewrite(self, history: list[Turn], question: str) -> str: ...
+
+    # follow-up → standalone question (greedy, text only); `question` itself if unparseable
 
 
 class Guard(Protocol):

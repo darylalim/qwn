@@ -1,6 +1,7 @@
 """Chat: ask a question (typed or spoken), see the answer with its cited pages, rate it.
 
-See PLAN.md → Streamlit UI and → Voice input pipeline.
+A follow-up is rewritten into a standalone question using the last few exchanges (PLAN.md →
+Evaluation → Multi-turn questions). See PLAN.md → Streamlit UI and → Voice input pipeline.
 """
 
 import hashlib
@@ -24,6 +25,7 @@ USER = ":material/person:"
 ASSISTANT = ":material/menu_book:"
 STAGES: dict[Stage, str] = {
     "guard_prompt": "Checking the question (Guard)…",
+    "rewrite": "Reading the conversation…",
     "retrieve": "Retrieving…",
     "rerank": "Reranking…",
     "generate": "Answering…",
@@ -39,6 +41,7 @@ if ui.show_problems(svc):
 docs = ui.require_index(svc).documents()
 indexed = {d.path for d in docs}
 data_dir = svc.settings.data_dir
+history_turns = svc.settings.history_turns
 
 
 def rate(msg: dict) -> None:
@@ -79,6 +82,8 @@ def show_answer(msg: dict, *, last: bool) -> None:
         st.error(block.message(), icon=":material/block:")
         return  # blocked answers aren't rated
     st.markdown(ui.safe_markdown(response.rendered()))
+    if response.standalone:  # the rewrite is shown, so a wrong one is easy to spot and rephrase
+        st.caption(f":material/search: Searched for: {ui.safe_markdown(response.standalone)}")
     st.caption(describe_scope(msg["scope"], indexed))
     sources.cards(response, msg["id"])
     if msg.get("audio"):
@@ -92,7 +97,9 @@ def show_answer(msg: dict, *, last: bool) -> None:
 
 
 def ask(question: str, scope: list[str]) -> dict:
-    """Run one question through qwn.answer, showing each stage in st.status."""
+    """Run one question through qwn.answer, showing each stage in st.status. Earlier exchanges
+    go with it as history, for the rewrite of a follow-up."""
+    turns = ui.conversation(st.session_state.messages, history_turns)
     msg: dict = {"id": uuid.uuid4().hex[:12], "role": "assistant", "question": question}
     msg["scope"] = scope
     with st.status(STAGES["guard_prompt"], expanded=False) as status:
@@ -104,7 +111,9 @@ def ask(question: str, scope: list[str]) -> dict:
         try:
             answerer = ui.answerer(svc)
             doc_ids = answerer.retriever.scope([Path(p) for p in scope]) if scope else None
-            msg["response"] = answerer.ask(question, doc_ids=doc_ids, on_stage=on_stage)
+            msg["response"] = answerer.ask(
+                question, history=turns, doc_ids=doc_ids, on_stage=on_stage
+            )
             status.update(label="Done", state="complete")
         except EmptyScope as e:
             msg["error"] = str(e)
@@ -171,7 +180,15 @@ if not docs:
         icon=":material/info:",
     )
 
+
+def new_conversation() -> None:
+    """Forget the history (and its highlights); the scope stays."""
+    st.session_state.messages = []
+    st.session_state.boxes = {}
+
+
 choices = scope_choices(sorted(indexed))
+reset = st.empty()  # "New conversation", once there's a conversation (filled in at the end)
 scope = st.multiselect(
     "Search in",
     choices,
@@ -183,7 +200,14 @@ scope = st.multiselect(
     disabled=not docs,
 )
 recording = st.audio_input("Ask out loud", key="recording", disabled=not docs)
-st.caption("Each question is answered on its own: earlier messages aren't sent to the model.")
+if history_turns > 0:
+    st.caption(
+        f"Follow-up questions use your last {history_turns} questions and answers."
+        if history_turns > 1
+        else "Follow-up questions use your last question and answer."
+    )
+else:
+    st.caption("Each question is answered on its own: earlier messages aren't sent to the model.")
 
 question = st.chat_input("Ask about your documents", disabled=not docs, submit_mode="disable")
 question = question or st.session_state.pop("pending", None)
@@ -208,3 +232,5 @@ if question:
             show_answer(msg, last=True)
             if spoken:
                 speak(msg)
+if st.session_state.messages:
+    reset.button("New conversation", icon=":material/add_comment:", on_click=new_conversation)

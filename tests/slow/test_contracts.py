@@ -5,7 +5,7 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 from samples import CAKE, PAGE
 
-from qwn.interfaces import Item, Source
+from qwn.interfaces import Item, Source, Turn
 from qwn.prompts import ABSTAIN_TEXT
 
 QUESTION = "How much did revenue grow in Q3?"
@@ -151,3 +151,40 @@ def test_generator_locates_the_supporting_line_on_a_0_to_1000_scale(registry, tm
     assert box.x0 <= cx <= box.x1 and box.y0 <= cy <= box.y1
     assert box.y0 > 200 / 1754  # not the cake line
     assert registry.generator().locate(tmp_path / "page.png", claim) == box  # greedy
+
+
+# Generator.rewrite: a follow-up → one standalone question (format pinned by the probe, see
+# PLAN.md → Multi-turn questions → Parsing: one bare line, no label, quotes or fence)
+
+REVENUE = Turn(
+    "What was Halvorsen Marine's total revenue in 2024?",
+    "Halvorsen Marine's total revenue in 2024 was 196.9 million.",
+)
+
+
+@pytest.mark.parametrize(
+    ("history", "message", "must", "must_not"),
+    [
+        ([REVENUE], "And in 2025?", ["2025", "revenue", "Halvorsen"], ["2024"]),  # ellipsis
+        (
+            [Turn("What is the monthly fee under contract SA-7713?", "It is 3,400 a month.")],
+            "What does the 2026 amendment set it to?",
+            ["SA-7713", "2026"],
+            [],
+        ),  # pronoun
+        ([REVENUE], "Which port does the server listen on?", ["port"], ["Halvorsen", "revenue"]),
+    ],
+    ids=["ellipsis", "pronoun", "switch"],
+)
+def test_generator_rewrites_a_follow_up_into_one_standalone_line(
+    registry, history, message, must, must_not
+):
+    from qwn.answer import parse_standalone
+
+    generator = registry.generator()
+    standalone = generator.rewrite(history, message)
+    assert "\n" not in standalone and parse_standalone(standalone, message) == standalone
+    lowered = standalone.casefold()
+    assert all(term.casefold() in lowered for term in must), standalone
+    assert not any(term.casefold() in lowered for term in must_not), standalone
+    assert generator.rewrite(history, message) == standalone  # greedy

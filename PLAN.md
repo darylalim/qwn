@@ -33,10 +33,12 @@ PDF pages for the embedder and reranker; Evaluation → Version awareness result
 0.940, MRR 0.965). Two `multi` answers got worse on better-ranked sources and are recorded as
 VL-8B reading limits.
 
-**Open follow-ups:** **multi-turn questions** (planned 2026-10-23; Evaluation → Multi-turn
-questions). A follow-up message is rewritten into a standalone question by VL-8B, then answered
-by the unchanged single-turn pipeline; Chat page only; measured on a new `turns` eval set over
-the hard corpus. Branch `followup/multi-turn`, no version bump.
+The multi-turn questions follow-up is done (Chat rewrites a follow-up into a standalone question
+with VL-8B; `qwn eval --set turns`, a measurement set over the hard corpus; Evaluation →
+Multi-turn results; turns recall@5 1.000, `rewrite_hit` 0.970). A rewrite that drops every word
+of the message falls back to the message (`keeps_message`).
+
+**Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -149,12 +151,17 @@ INGEST   PDF ─► pypdfium2 ─► page WebP (150 dpi) + page text ─┐
          image / screenshot ─► normalised WebP copy ─────────┼─► Embedder ─► 1024-d, L2-norm ─► SQLite + sqlite-vec
          .md / .txt ─► ~800-token chunks (heading-aware) ───┘
 
-QUERY    question ─► Guard.check_prompt ─┬─► Embedder(is_query) ─► vector top_k=50 ─┐
-                                         └─► FTS5 keyword (bm25) top fts_k=50 ──────┴─► RRF fuse ─► top_k=50
+QUERY    question ─► Guard.check_prompt ─► [Chat history?] Generator.rewrite ─► standalone question
+                    ─┬─► Embedder(is_query) ─► vector top_k=50 ─┐
+                     └─► FTS5 keyword (bm25) top fts_k=50 ──────┴─► RRF fuse ─► top_k=50
                     ─► Reranker (first rerank_candidates=10) ─► rerank_k=5 ─► Generator (≤ max_images page images + text)
          (optional scope: --in PATH / Chat "Search in" limits both searches to those documents)
                     ─► answer with [S#] citations ─► Guard.check_response ─► rendered "[file p.N]"
 ```
+
+A follow-up in Chat is rewritten into a standalone question first (multi-turn follow-up,
+Evaluation → Multi-turn questions); without history, `ask` is single-turn and skips the rewrite.
+Everything after the rewrite sees only the standalone question, never the history.
 
 **What each chunk embeds (one vector per chunk):**
 
@@ -245,6 +252,14 @@ class Generator(Protocol):
     # greedy=True: temperature 0, for reproducible eval runs
     def locate(self, image_path: Path, claim: str) -> "Box | None": ...
     # phase 6: region of the page that supports `claim`; None if the model can't say (greedy)
+    def rewrite(self, history: list[Turn], question: str) -> str: ...
+    # multi-turn: follow-up → standalone question (greedy, text only, max_tokens=96);
+    # `question` itself if the reply doesn't parse (answer.parse_standalone)
+
+@dataclass(frozen=True)
+class Turn:                        # multi-turn; one earlier exchange
+    question: str                  # the message as typed or transcribed, not its rewrite
+    answer: str                    # the reply with [S#] markers stripped
 
 @dataclass(frozen=True)
 class Box:                         # phase 6; relative coordinates, 0..1, origin top-left
@@ -378,10 +393,15 @@ class Tts(Protocol):
   showing text before it passes would defeat the check. The UI shows the stages in `st.status`
   instead. If waiting proves painful in daily use, the fix is to stream and check sentence by
   sentence, which is a design change for a later PR, not an implementation detail.
-- **Single-turn questions (decided for v1):** each question is answered on its own. Chat history
-  is shown but not sent to retrieval or the model, so "and in Q4?" won't work. The Chat page says
-  so under the input box (`st.caption`). Multi-turn means rewriting the question with the history
-  before retrieval; planned as a follow-up (Evaluation → Multi-turn questions).
+- **Follow-up questions (multi-turn follow-up, 2026-10-23):** in Chat, a message after earlier
+  exchanges is rewritten into one standalone question by the generator (`REWRITE_PROMPT`, system
+  turn; user turn `rewrite_text`: the last `history_turns` exchanges as escaped `<turn>` blocks,
+  answers cut to 600 characters, then `Last message: …`). Greedy, text only, `max_tokens=96`.
+  Retrieval, the answer prompt and Guard's response check all use the standalone question; the
+  answer generator never sees the history, so `SYSTEM_PROMPT` and its injection defences are
+  unchanged. A reply that doesn't parse, or drops every word of the message, falls back to the
+  message (logged). `qwn ask` stays
+  single-turn. Details, probe and results under Evaluation → Multi-turn questions.
 - **Citations**: the model cites `[S#]`. `qwn.answer.parse_citations` extracts the labels, and the
   UI/CLI renders them as `[file p.N]`. Labels the model makes up (not in `sources`) are dropped and
   logged.
@@ -580,7 +600,7 @@ qwn ask QUESTION [--sources] [--no-guard] [--in PATH]... [--json]   # --in: only
                                            # --no-guard: skip Guard for this question (default: guard_enabled)
 qwn ask --audio IN.wav [--speak OUT.wav]   # phase 4: voice question in, optional spoken answer out
                                            # (QUESTION is optional; give exactly one of QUESTION / --audio)
-qwn eval [--set public|private (default: public)] [--no-rerank] [--no-hybrid] [--no-generate] [--guard] [--locate] [--update-baseline] [--force] [--clean]
+qwn eval [--set public|private|hard|turns (default: public)] [--no-rerank] [--no-hybrid] [--no-generate] [--guard] [--locate] [--update-baseline] [--force] [--clean]
 qwn eval review       # phase 5: turn 👍/👎 drafts from the Chat page into private eval queries
 qwn status            # index stats, embed model/dim, loaded models, MLX memory, model cache state
 qwn models pull [--voice] [--update]   # download every model at its pinned revision (the only
@@ -625,9 +645,20 @@ injection point) and `ui/sources.py` (source cards and the "Open page" dialog). 
   with its citation card in 35–40 s on a just-started app (eval p50 is 19 s once warm).
 
 - **Chat**
-  - History in `st.chat_message`. Each question is answered on its own (single-turn in v1; see
-    Prompts and parameters), and an `st.caption` under the input says so.
-  - `st.status` shows the steps: Guard → Retrieving → Reranking → Answering → Guard.
+  - History in `st.chat_message`. A follow-up is rewritten with the last `history_turns`
+    completed exchanges (Prompts and parameters → Follow-up questions); exchanges blocked by Guard
+    or failed with an error are left out, abstentions stay. The caption under the input says
+    "Follow-up questions use your last 3 questions and answers." (`history_turns = 0`: "Each
+    question is answered on its own…").
+  - **Searched for:** under an answer whose question was rewritten,
+    `:material/search: Searched for: …` above the scope caption, so a wrong rewrite is easy to
+    spot and rephrase.
+  - **New conversation** (`:material/add_comment:`) above "Search in", shown once there is a
+    conversation: clears the messages (and their highlights), keeps the scope. The button's slot
+    is an `st.empty` filled at the end of the script, so it appears on the run that answers the
+    first question.
+  - `st.status` shows the steps: Guard → Reading the conversation (follow-ups only) → Retrieving
+    → Reranking → Answering → Guard.
   - Sources appear as compact **cards** (96 px page thumbnail, `file · p.N`, rerank-score badge,
     "Open page" button). The button opens the full page in an `st.dialog` (see Responsive layout).
   - Guard results: Controversial → `st.warning`, Unsafe → a blocked-message bubble.
@@ -639,7 +670,8 @@ injection point) and `ui/sources.py` (source cards and the "Open page" dialog). 
     which is exactly the kind of question the eval needs. A click appends a draft to
     `eval/private/candidates.jsonl`; see Evaluation → Growing the private set. The rating is
     stored in `st.session_state` with the message so a rerun doesn't write it twice; changing
-    your mind rewrites that draft.
+    your mind rewrites that draft. A follow-up's draft has `query` = its standalone question and
+    `asked` = the message as typed; `qwn eval review` shows both.
 - **Library**
   - `st.file_uploader` (pdf/png/jpg/jpeg/webp/md/txt) saves files into `data_dir`, then ingests
     them with `st.progress`. Name clash: identical content is "already in your library"; different
@@ -1038,6 +1070,8 @@ class Settings(BaseSettings):
     warm_load: bool = True               # qwn ui loads the core models in the background at start
     guard_enabled: bool = True
     controversial: Literal["warn", "block"] = "warn"
+    history_turns: int = 3          # Chat exchanges a follow-up is rewritten with; 0 = single-turn
+                                    # (runtime only: not in RESULT_KEYS, eval passes each query's history)
     # phase 4 (voice)
     asr_model: str = "mlx-community/Qwen3-ASR-1.7B-8bit"
     tts_model: str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit"
@@ -2134,6 +2168,12 @@ kept whole. Then `Last message: …`.
 line. Strip surrounding quotes or backticks and a leading label (`Standalone question:`,
 `Question:`, `Rewritten:`, case-insensitive), then collapse whitespace. Return `None` (fallback
 to `question`) if the result is empty, longer than 400 characters, or contains `ABSTAIN_TEXT`.
+**It must also keep a word of the message** (`answer.keeps_message`, agreed 2026-10-23 after the
+first `turns` run): if the message has content words (not in `_FILLER`, compared by their first
+`STEM_CHARS = 5` characters) and the rewrite has none of them, it is rejected. The first run's
+turn-027 ("Sprint 14 velocity?" after a revenue exchange) came back as the earlier revenue
+question word for word, so the app would have answered the old question. A real rewrite keeps the
+user's words; a message of filler only ("and then?") isn't checked.
 **Before writing the parser, run the format probe** (CLAUDE.md → Model output formats): greedy, on
 10–12 scratch conversations over the hard corpus that cover every tag below. Record the raw
 replies' shape in the PR, then pin it with a `slow` test (`tests/slow/`: three conversations
@@ -2151,7 +2191,7 @@ expected terms, and leaves the switch alone).
   failed with an error. Abstentions are kept: "I couldn't find this" is useful context, and the
   next message often rephrases. Each turn's `question` is the message as typed or transcribed,
   not its rewrite.
-- **"New conversation"** button (`st.button`, `:material/add_comment:`), next to "Search in". It
+- **"New conversation"** button (`st.button`, `:material/add_comment:`), above "Search in". It
   clears `messages`, keeps the scope and shows nothing while history is empty. Changing the
   scope doesn't clear the history.
 - The input caption becomes "Follow-up questions use your last 3 questions and answers." (the
@@ -2222,7 +2262,8 @@ that still need one referent.
 **Tests (with the code, fakes only):**
 
 - `parse_standalone`: first line taken; quotes, backticks and labels stripped; whitespace
-  collapsed; empty, over 400 characters or `ABSTAIN_TEXT` → `None`.
+  collapsed; empty, over 400 characters or `ABSTAIN_TEXT` → `None`; a rewrite that drops every
+  content word of the message → `None` (`keeps_message`).
 - `rewrite_text`: turns in order, escaped (a `</turn>` in an answer can't close the block),
   answers cut at 600, questions whole.
 - `Answerer.ask`: no history → no rewrite call, no `"rewrite"` stage, `standalone is None`, and
@@ -2243,8 +2284,11 @@ that still need one referent.
 
 1. **`turns`** (`qwn eval --set turns --locate --update-baseline`, first baseline), compared
    with the no-history probe:
-   - recall@5 ≥ 0.90 overall, and at least 0.30 above the no-history run on the non-`switch`
-     answerable queries.
+   - recall@5 ≥ 0.90 overall, and every non-`switch` answerable query that misses the top 5
+     in the no-history run hits with history. (Changed 2026-10-23 from "at least 0.30 above
+     the no-history run": most follow-ups still name something distinctive, so on the hard
+     corpus no-history recall@5 was already 0.870 and +0.30 was out of reach. Making the
+     queries vaguer to show a gain would be editing the set because of a result.)
    - `switch` recall@5 and answer_contains no lower than in the no-history run.
    - answer_contains ≥ 0.85; abstention on `unanswerable` ≥ 0.75; false abstention ≤ 0.10; both
      `injection` queries pass as in the public set.
@@ -2269,6 +2313,60 @@ that still need one referent.
 **Out of scope:** multi-turn `qwn ask` or a `qwn chat` REPL; sending history to the answer
 generator; conversation memory across sessions (history lives in `st.session_state` only);
 token streaming.
+
+### Multi-turn results (2026-10-23, M2 Max)
+
+**Format probe** (12 scratch conversations, greedy): every reply was one bare line (no label,
+quotes or fence), 0.6–1.1 s. 11/12 resolved, the injection conversation included; "and a
+croissant?" came back unchanged. A prompt variant with explicit short-ellipsis examples did worse
+("What about Loading bay 3?" also came back unchanged), so the planned wording stays.
+
+**First `turns` run** (rejected): two targets failed. turn-027 ("Sprint 14 velocity?" after a
+revenue exchange) was rewritten into the earlier revenue question word for word, so `switch`
+recall@5 fell to 0.833 against 1.000 without history. That led to `keeps_message` (Prompts and
+parameters → Follow-up questions; Parsing above), which, replayed on the run's 33 rewrites,
+rejects exactly turn-027. The +0.30 gain target was out of reach by design of the set (no-history
+recall@5 on non-`switch` answerable queries was already 0.870) and was replaced (Done when).
+
+**`turns`** (`--locate --update-baseline`, with `keeps_message`), against the no-history probe:
+
+| turns | no history | with history |
+|---|---|---|
+| recall@5 / recall@1 / MRR | 0.897 / 0.690 / 0.792 | **1.000 / 0.897 / 0.948** |
+| non-`switch` answerable recall@5 (n=23) | 0.870 | **1.000** |
+| `switch` recall@5 / answer_contains (n=6) | 1.000 / 1.000 | 1.000 / 1.000 |
+| citation_hit | 0.828 | **0.897** |
+| answer_contains | 0.862 | **0.931** |
+| abstention (n=4) / false abstention | 0.500 / 0.103 | **0.750 / 0.034** |
+| injection_pass | 2/2 | 2/2 |
+| rewrite_hit | – | 0.970 (26/33 rewritten) |
+| rewrite p50 / p95 | – | 0.73 s / 1.05 s |
+| locate_hit / no usable box (n=15) | – | 0.733 / 0.133 |
+
+- **Rescued by history:** turn-011, -013, -014 ranked 35, 15 and 19 without history; now 1, 1, 2.
+  Every other non-`switch` follow-up names something distinctive enough ("Loading bay 3",
+  "Saturday morning", "2026 amendment") to find its page alone on this corpus.
+- **Misses, accepted:**
+  - turn-003 ("and a croissant?"): not rewritten (as in the probe; `rewrite_hit` miss). Rank 2,
+    and the answer gives both price lists' prices, 2.95 included.
+  - turn-010: rewrite right ("…operate in 2024?"), rank 1; the model reads 37 vessels (2025's
+    figure) instead of 35. A VL-8B reading limit, as hard-015.
+  - turn-014: rewrite right ("…for compostable lids?"), rank 2; the answer repeats PO-48287 from
+    the history question instead of naming PO-48212.
+  - turn-018: rewrite right ("…the Leeds warehouse…"), rank 1; the model says the original
+    agreement doesn't give the date (counted as false abstention). answer_contains passes only
+    because the refusal mentions April from purchase orders.
+  - turn-030 (Cold store E, unanswerable): answers that the store isn't in service and has no
+    interval yet, which is true but isn't counted as an abstention.
+- **Public** (`--guard --locate`): every exit criterion passes, no per-query changes, baseline
+  not updated. **Hard** (`--no-generate`): settings_hash differs from the generated baseline, so
+  compared by hand: no rank changes.
+- **Browser** (`qwn ui` with `QWN_DATA_DIR=data/eval-hard`, `QWN_INDEX_DIR` the hard index):
+  2024 revenue → "And in 2025?" (Searched for: "…total revenue in 2025?", 214.6) → "How many
+  vessels did the company operate that year?" (Searched for: "…in 2025?") → "Sprint 14
+  velocity?" (no Searched for, 41). "New conversation" clears it, and a bare "And in 2025?" is
+  then answered on its own. A spoken "And in 2025?" after the 2024 question (checked by the
+  user) showed "Searched for" the 2025 revenue question. Layout at 390 px via `test_responsive.py`.
 
 ## Phases
 

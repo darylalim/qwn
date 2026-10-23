@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     warm_load: bool = True  # qwn ui loads the core models in the background at start
     guard_enabled: bool = True
     controversial: Literal["warn", "block"] = "warn"
+    history_turns: int = 3  # earlier Chat exchanges a follow-up is rewritten with; 0 = single-turn
     # phase 4 (voice)
     asr_model: str = "mlx-community/Qwen3-ASR-1.7B-8bit"
     tts_model: str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit"

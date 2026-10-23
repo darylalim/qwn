@@ -1,6 +1,7 @@
 """Growing the private set: Chat ratings → drafts → `qwn eval review` → queries."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,19 @@ def test_make_draft_keeps_cited_pages_not_answer_text(home):
     ]
     assert d["scope"] == ["notes"] and d["abstained"] is False
     assert set(d) == {"draft_id", "created", "query", "rating", "scope", "cited", "abstained"}
+
+
+def test_a_follow_up_draft_keeps_its_standalone_question_and_what_was_asked(home):
+    follow_up = replace(response(home), standalone="What was revenue in 2025?")
+    d = ev.make_draft("m1", "And in 2025?", "up", [], follow_up, home / "data")
+    assert d["query"] == "What was revenue in 2025?" and d["asked"] == "And in 2025?"
+
+
+def test_review_shows_what_a_follow_up_asked(paths):
+    drafts, _ = paths
+    ev.save_draft(drafts, draft("a", asked="And in 2025?"))
+    result = review("q\n")
+    assert "question: question a?\n  asked:    And in 2025?" in result.output
 
 
 def test_save_draft_rewrites_the_same_id_and_remove_drops_it(paths):
@@ -145,3 +159,29 @@ def test_unanswerable_skip_discard_and_quit(paths):
     [q] = lines(queries)
     assert q["query"] == "question a?" and q["expected"] == [] and q["tags"] == ["unanswerable"]
     assert [d["draft_id"] for d in lines(drafts)] == ["b", "d"]  # skipped and unreviewed stay
+
+
+def test_conversation_keeps_completed_exchanges_oldest_first():
+    from types import SimpleNamespace
+
+    from qwn.ui.services import conversation
+
+    def answered(q, text, blocked=None):
+        return {"role": "assistant", "question": q,
+                "response": SimpleNamespace(text=text, blocked=blocked)}  # fmt: skip
+
+    messages = [
+        {"role": "user", "content": "q1"},
+        answered("q1", "a1 [S1]."),
+        answered("q2", "Blocked", blocked=object()),  # Guard blocked it
+        {"role": "assistant", "question": "q3", "error": "The model failed"},
+        answered("q4", "I couldn't find this in your documents."),  # abstentions stay
+        answered("q5", "a5 [S2]"),
+    ]
+    assert [(t.question, t.answer) for t in conversation(messages, 3)] == [
+        ("q1", "a1."),
+        ("q4", "I couldn't find this in your documents."),
+        ("q5", "a5"),
+    ]
+    assert [t.question for t in conversation(messages, 2)] == ["q4", "q5"]
+    assert conversation(messages, 0) == []

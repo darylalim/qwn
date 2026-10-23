@@ -8,7 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from qwn.answer import parse_citations
-from qwn.interfaces import Answer, Box, Item, Source, Verdict
+from qwn.interfaces import Answer, Box, Item, Source, Turn, Verdict
 
 
 def _words(text: str | None) -> set[str]:
@@ -47,7 +47,8 @@ class FakeGenerator:
     """Cites the first source sharing a content word (5+ letters) with the question, quoting it;
     abstains when none does; with `explain`, the refusal first quotes and cites S1 (an explained
     refusal). `extra` is appended verbatim (e.g. an invented "[S9]"). `locate` returns `box` and
-    records each (image_path, claim)."""
+    records each (image_path, claim). `rewrite` records each (history, question): a message of 5
+    or fewer words is prefixed with the last turn's question, a longer one comes back as is."""
 
     model_id = "fake/generator@0"
 
@@ -57,6 +58,7 @@ class FakeGenerator:
         self.box = box
         self.calls: list[list[Source]] = []
         self.located: list[tuple[Path, str]] = []
+        self.rewrites: list[tuple[list[Turn], str]] = []
 
     def answer(self, question: str, sources: list[Source], *, greedy: bool = False) -> Answer:
         self.calls.append(sources)
@@ -75,6 +77,12 @@ class FakeGenerator:
     def locate(self, image_path: Path, claim: str) -> Box | None:
         self.located.append((image_path, claim))
         return self.box
+
+    def rewrite(self, history: list[Turn], question: str) -> str:
+        self.rewrites.append((history, question))
+        if len(question.split()) <= 5:
+            return f"{history[-1].question} {question}"
+        return question
 
 
 class FakeGuard:

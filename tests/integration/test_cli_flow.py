@@ -208,3 +208,33 @@ def test_eval_locate_scores_highlights_on_cited_pages(cli, home, monkeypatch):
 def test_eval_locate_needs_answers(cli, home):
     r = cli("eval", "--locate", "--no-generate")
     assert r.exit_code == 1 and "drop --no-generate" in r.output
+
+
+def test_eval_rewrites_follow_ups_and_scores_rewrite_hit(cli, home):
+    docs = _private_set(home)
+    path = home / "eval" / "private" / "queries.jsonl"
+    history = [{"question": "Single sign-on", "answer": "The Enterprise plan has it."}]
+    follow_ups = [
+        {"id": "f1", "query": "which plan?", "history": history, "tags": ["ellipsis"],
+         "expected": [{"path": "docs/pricing.md", "heading": "Enterprise"}],
+         "rewrite_contains": ["sign-on"]},
+        {"id": "f2", "query": "What does the quarterly report say about revenue?",
+         "history": history, "expected": [{"path": "docs/report.pdf", "page": 1}],
+         "tags": ["switch"], "rewrite_must_not_contain": ["sign-on"]},
+    ]  # fmt: skip
+    with path.open("a") as f:
+        f.write("".join(json.dumps(q) + "\n" for q in follow_ups))
+    cli("ingest", str(docs))
+    r = cli("eval", "--set", "private")
+    assert r.exit_code == 0, r.output
+    assert "Follow-ups (1/2 rewritten)" in r.output and "rewrite " in r.output
+    [results] = (home / "eval" / "results").glob("*-private.json")
+    result = json.loads(results.read_text())
+    rows = {r["id"]: r for r in result["per_query"]}
+    assert rows["f1"]["rewritten"] and rows["f1"]["rewrite_hit"] and rows["f1"]["rank"] == 1
+    assert not rows["f2"]["rewritten"] and rows["f2"]["rewrite_hit"]
+    assert "rewritten" not in rows["p1"] and "rewrite_hit" not in rows["p1"]
+    assert not any("standalone_text" in r for r in rows.values())  # private: no text kept
+    assert result["rewrite"]["summary"]["rewrite_hit"]["value"] == 1.0
+    assert set(result["rewrite"]["by_tag"]) == {"ellipsis", "switch"}
+    assert "rewrite" in result["latency"]
