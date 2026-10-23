@@ -41,11 +41,12 @@ of the message falls back to the message (`keeps_message`).
 **Released as v0.8.0** (2026-10-23): every follow-up above since v0.7.0 (Versioning).
 Version awareness changed `ingest_hash`, so an index from v0.7.0 needs `qwn ingest --reindex`.
 
-**Open follow-ups:** **abstention wording** (planned 2026-10-23; Evaluation → Abstention
-wording). Probe two `SYSTEM_PROMPT` wordings against today's on uncertain queries (public charts,
-tables and scans, plus scratch queries on the hard corpus's degraded pages); a fixed rule picks
-one, and it ships only if the evals improve something and break nothing. Branch
-`followup/abstention-wording`, no version bump, no reindex.
+The abstention wording follow-up is closed with no prompt change (Evaluation → Abstention
+wording results): both probed wordings brought back answer-then-refuse replies and dropped the
+sentence from a Cold store E explanation, so `SYSTEM_PROMPT` is unchanged and hard-055/turn-030
+stay recorded misses.
+
+**Open follow-ups:** none. A new one starts with a planning session.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -2484,6 +2485,43 @@ why.
 
 If the full runs fail 2–4, drop the prompt change as in Explained abstention → Outcome and record
 why.
+
+### Abstention wording results (2026-10-23, M2 Max, probe only)
+
+**Neither wording passes the probe, so `SYSTEM_PROMPT` stays as it is** (no code, no baseline
+change, no full runs). Probe: 41 public queries plus 12 frozen scratch queries on the hard
+corpus's degraded pages (8 answerable, 4 unanswerable next to lures; listed in the PR, not
+committed), greedy, through `ev.run`. A was wrapped at different line breaks so the prompt fits
+the 100-column limit; the words are as agreed.
+
+| | today | M | A |
+|---|---|---|---|
+| answer-then-refuse (criterion 1) | 0 | 1 | 2 |
+| answerable losing `answer_contains` (2) | — | 1 | 0 |
+| unanswerable abstaining (3), public + scratch | 10 + 4 | 10 + 3 | 10 + 3 |
+| invented (4) | 0 | 0 | 0 |
+| explained refusals (choice rule), public + scratch | 0 + 0 | 0 + 0 | 7 + 3 |
+| false abstention fixed | — | 1 | 1 |
+
+- **Answer-then-refuse:** M on pub-032 (the week 8 ticket count from the chart, then the
+  sentence); A on pub-024 (the 12-month burr answer, then the sentence) and on a scratch rainfall
+  bar (reads about 52 mm, then the sentence). The failure that dropped the explained-abstention
+  prompt came back under both wordings.
+- **Wrong answer:** M on a scratch timetable cell reads 11:03 instead of 12:03, then adds the
+  sentence.
+- **The target got worse:** a scratch Cold store E question (who is responsible) gets the bare
+  sentence today. Under both M and A it explains that the store is planned, citing the manual,
+  and **drops** the sentence: the hard-055 failure, caused on a query that was fine.
+- **Improvements (not enough to pass):** under both wordings, a scratch occupancy query that
+  today ends in the sentence now reads the chart (about 58 %, within tolerance). A turns 10 of
+  14 unanswerable replies into cited explanations that end with the sentence.
+
+**Outcome.** Wording alone can't separate "the answer is uncertain" from "the answer isn't
+there" for greedy VL-8B: both wordings that mention an explained refusal make it append the
+sentence to confident answers and drop it from the explanations it was meant for. hard-055 and
+turn-030 stay as recorded misses. A fix, if wanted, is a deterministic check after the model
+(CLAUDE.md → Model output formats), not more prompt text, and would need its own planning
+session.
 
 ## Phases
 
