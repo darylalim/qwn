@@ -28,13 +28,12 @@ Judge tuning changes on it; the public set still guards regressions. The explain
 follow-up is done, scoring only (Evaluation → Explained abstention results; hard abstention
 0.900): a cited refusal ending with `ABSTAIN_TEXT` counts, and eval results keep `answer_text` for
 the public and hard sets. The planned prompt change was dropped after it raised hard false
-abstention to 0.120.
+abstention to 0.120. The version awareness follow-up is done (`pdf_context`, a title header on
+PDF pages for the embedder and reranker; Evaluation → Version awareness results; hard recall@1
+0.940, MRR 0.965). Two `multi` answers got worse on better-ranked sources and are recorded as
+VL-8B reading limits.
 
-**Open follow-ups (in order):**
-
-1. **Version awareness** (planned 2026-10-22, Evaluation → Version awareness): a document title
-   header on PDF pages for the embedder and reranker (`pdf_context`), not the generator. Branch
-   `followup/version-awareness`.
+**Open follow-ups:** none planned.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -158,7 +157,7 @@ QUERY    question ─► Guard.check_prompt ─┬─► Embedder(is_query) ─�
 
 | Chunk kind | Embedder input (`Item`) | Why |
 |---|---|---|
-| `pdf_page` | `Item(image_path=page.webp, text=page_text[:2000])`, i.e. image **and** text in one input. A page with no text layer sends the image alone | The image carries layout, charts and scans; the text layer makes exact terms (names, numbers) searchable. Qwen3-VL-Embedding accepts both in one input |
+| `pdf_page` | `Item(image_path=page.webp, text=page_text[:2000])`, i.e. image **and** text in one input, headed by `"{file name} › {title}"` when the document has a title (see Contextual chunk headers below). A page with no text layer, in a document with no title, sends the image alone | The image carries layout, charts and scans; the text layer makes exact terms (names, numbers) searchable. Qwen3-VL-Embedding accepts both in one input |
 | `image` | `Item(image_path=…)` | No text layer; the visual path does the work |
 | `text` | `Item(text=header + chunk)` (see Contextual chunk headers below) | Markdown/text chunks |
 
@@ -169,6 +168,17 @@ embedder and reranker see the prefix: `chunks.text` stores the chunk alone (for 
 `<source>` excerpt), and `chunks.heading_path` stores the path (also used by eval's `heading`
 match and shown on source cards). `chunk_context=False` turns it off, and phase 1 reports
 `markdown` recall@5 with and without it; it's in `ingest_hash`, since it changes the vectors.
+
+**PDF title headers (version awareness follow-up):** a PDF page is embedded with no document
+context, so two editions of a report look alike on every page but the first. Each `pdf_page` of a
+document with a title is embedded as `"{file name} › {title}\n\n{page_text[:2000]}"`, page 1
+included. The title (`ingest.doc_title`) is the first line of page 1's text layer that is
+non-empty and survives `prompts.drop_ai_directed_lines`, whitespace collapsed, cut to 120
+characters; a scanned page 1 gives no title. The reranker derives it at query time from the
+stored page-1 chunk text (`Index.page_one_text`, once per rerank call), so it's never stored
+separately. The generator's `<source>` block doesn't get it (a probe showed it fixed nothing and
+broke two answers). `pdf_context=False` turns it off; it's in `ingest_hash`. Results under
+Evaluation → Version awareness results.
 
 The 2000-character cap keeps a dense page from crowding out the image in the embedder's context.
 **Phase 1 ablation:** run the public eval once with `pdf_page` embedded as image-only and once as
@@ -509,7 +519,7 @@ CREATE TRIGGER chunks_au AFTER UPDATE OF text ON chunks BEGIN
   - `embed_revision` is the pinned SHA from `models_lock.py`. A repo name alone isn't enough:
     `qwn models pull --update` can change the vectors under the same name.
   - `ingest_hash` hashes every setting that changes what's stored: `pdf_dpi`, `max_pixels`,
-    `chunk_tokens`, `chunk_context`, `pdf_embed`, `embed_dim`. Without it, changing `pdf_dpi`
+    `chunk_tokens`, `chunk_context`, `pdf_context`, `pdf_embed`, `embed_dim`. Without it, changing `pdf_dpi`
     would silently mix old and new chunks in one index.
   - Eval's `corpus_hash` includes `embed_revision` and `ingest_hash`, so baselines notice too.
 - **Search** (hybrid by default; `hybrid=False` / `--no-hybrid` gives vector only):
@@ -1021,6 +1031,7 @@ class Settings(BaseSettings):
     pdf_dpi: int = 150
     chunk_tokens: int = 800
     chunk_context: bool = True           # "file › heading path" prefix on md/txt chunks
+    pdf_context: bool = True             # "file › title" prefix on PDF pages (embedder + reranker)
     warm_load: bool = True               # qwn ui loads the core models in the background at start
     guard_enabled: bool = True
     controversial: Literal["warn", "block"] = "warn"
@@ -1956,7 +1967,7 @@ numbers and the choice in the results.
 hard-038 (rank 2 in the probe; the model answered from the 2024 page even with its title shown),
 hard-010 and hard-019 (the right page is ranked first, and the model refuses because page 2 is an
 order rather than a clause; probe 1 showed that a title doesn't change that). Don't tune anything
-for them.
+for them. hard-015 joined them after the run (Version awareness results).
 
 **Comparability:** `pdf_context` changes `ingest_hash`, so it changes `corpus_hash` for both
 sets and `qwn eval` won't compare against the baselines. Run with `--force`, and diff
@@ -1983,7 +1994,10 @@ baselines). In the rerank-only fallback, `settings_hash` changes instead; same p
    rises above 0.763. answer_contains (0.978), citation_hit (0.960), `citation_all` (1.000) and
    abstention (0.900) don't drop, and false abstention doesn't rise above 0.060. Every query
    whose rank, citation, answer or abstention changed is listed and explained, by reading
-   `answer_text` (CLAUDE.md → Eval baselines).
+   `answer_text` (CLAUDE.md → Eval baselines). **Amended 2026-10-22 (agreed after the run):**
+   the answer metrics may drop where the only cause is a reply to a better-ranked, unchanged
+   set of sources that VL-8B misreads (hard-015, hard-019; see Version awareness results).
+   Retrieval gains are kept; the reading limit is recorded, not tuned.
 2. **Public set** (`qwn eval --set public --guard --locate --force --update-baseline`): every exit
    criterion passes, and the hand diff shows no per-query changes (the probe left every public
    rank unchanged). Corpus files stay byte-identical (only `ingest_hash` moves `corpus_hash`).
@@ -1992,6 +2006,54 @@ baselines). In the rerank-only fallback, `settings_hash` changes instead; same p
    Contextual chunk headers), Settings (`pdf_context`), Data model (`ingest_hash` keys) and Start
    here.
 4. Fast tests, ruff, ty and the slow tests pass.
+
+### Version awareness results (2026-10-22, M2 Max)
+
+**Embed ablation** (`qwn eval --set hard --no-generate --force`, `pdf_context` on): both overall
+before-rerank values rose, so **the embed form stays** (no rerank-only fallback).
+
+| hard | baseline | `pdf_context` |
+|---|---|---|
+| recall@1 before rerank | 0.640 | **0.660** |
+| MRR before rerank | 0.761 | **0.783** |
+| `version` recall@1 / MRR before rerank | 0.381 / 0.586 | **0.429 / 0.647** |
+
+**Full runs** (`--locate --force --update-baseline`):
+
+| hard | baseline | now |
+|---|---|---|
+| recall@1 (after rerank) | 0.820 | **0.940** |
+| MRR | 0.891 | **0.965** |
+| `version` / `multi` / `paraphrase` MRR | 0.763 / 0.778 / 0.862 | **0.917 / 1.000 / 0.904** |
+| rerank W/L/T | 14/1/35 | 15/1/34 |
+| citation_hit | 0.960 | 0.920 |
+| `citation_all` (n=9) | 1.000 | 0.778 |
+| answer_contains | 0.978 | 0.957 |
+| abstention | 0.900 | 0.900 |
+| false abstention | 0.060 | 0.080 |
+| locate_hit / no usable box | 0.773 / 0.136 | **0.857 / 0.071** |
+| rerank p50 | 12.2 s | 12.7 s |
+
+- **Hard, rank up:** hard-003, -005, -014, -015, -018, -041 (to rank 1), hard-039 (5 → 4),
+  exactly as the rerank probe predicted. Before rerank only: hard-002 (4 → 2) up, hard-042
+  (1 → 3) down, back to rank 1 after rerank. No final rank dropped.
+- **Hard, answers worse (accepted as VL-8B reading limits, criterion amended):**
+  - hard-015 (vessels in 2024 and 2025, `multi`): both pages now rank first, and the reply is a
+    bare "I couldn't find this in your documents." It answered "35 [S3] … 37 [S4]" in both
+    earlier runs, so this is a reaction to the new source order, not noise. It alone moves
+    citation_hit, `citation_all`, answer_contains and false abstention.
+  - hard-019 (original vs 2026 Nordlys amendment, already expected to stay missed): rank
+    unchanged; its refusal used to cite the two purchase orders and now names them uncited, so
+    it loses citation_hit and `citation_all`.
+- **Hard, other changes:** hard-014 and the scans hard-028 and hard-033 now get a usable box
+  (`locate_hit`). hard-014's answer and scores are unchanged apart from the box. hard-037 still refuses but now cites five
+  sources instead of one. hard-039 cites both editions' page 2 instead of the 2024 pages 1-2
+  (still answers 35, still scored as before).
+- **Public:** every exit criterion passes. The hand diff shows only before-rerank ranks moving
+  (pub-013 2 → 1, pub-025 3 → 2, pub-049 1 → 2); final ranks, citations, answers and highlights
+  are identical. Corpus files byte-identical; only `ingest_hash` moved `corpus_hash`. Rerank p50
+  rose from 5.9 s to 7.6 s (longer page inputs); p95 unchanged (13.5 s).
+- **Personal indexes** stop with "`ingest_hash` changed, run `--reindex`" on first use.
 
 ## Phases
 

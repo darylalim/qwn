@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     pdf_dpi: int = 150
     chunk_tokens: int = 800
     chunk_context: bool = True  # "file > heading path" prefix on md/txt chunks
+    pdf_context: bool = True  # "file > title" prefix on PDF pages, for embedder and reranker
     warm_load: bool = True  # qwn ui loads the core models in the background at start
     guard_enabled: bool = True
     controversial: Literal["warn", "block"] = "warn"

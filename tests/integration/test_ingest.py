@@ -16,6 +16,7 @@ from sample_corpus import MD, CountingEmbedder
 from qwn.config import Settings
 from qwn.index import IndexMismatch, page_dir
 from qwn.ingest import HEADING_SEP, Ingester, ModelUnavailable, open_index
+from qwn.interfaces import Item
 from qwn.models import ModelsInUse, Registry
 from qwn.models_lock import PinnedModel
 
@@ -119,6 +120,55 @@ def test_duplicate_copies_collapse_in_search(settings, ingester, index, corpus, 
     keys = [(h.chunk.sha256, h.chunk.page, h.chunk.chunk_idx) for h in hits]
     assert len(keys) == len(set(keys))
     assert sum(h.chunk.heading_path.endswith("Enterprise") for h in hits) == 1
+
+
+class RecordingEmbedder(CountingEmbedder):
+    def __init__(self, dim: int) -> None:
+        super().__init__(dim)
+        self.seen: list[Item] = []
+
+    def embed(self, items, *, is_query):
+        if not is_query:
+            self.seen.extend(items)
+        return super().embed(items, is_query=is_query)
+
+
+def test_pdf_pages_embed_and_rerank_with_the_document_title(settings, index, home):
+    from qwn.retrieve import Hit, Retriever
+
+    docs = home / "docs"
+    write_pdf(docs / "review.pdf", [["", "Annual Review 2024", "Results"], ["Outlook", "Dividend"]])
+    write_pdf(docs / "scan.pdf", [[], ["Outlook"]])  # page 1 has no text layer
+    (docs / "pricing.md").write_text(MD)
+    embedder = RecordingEmbedder(settings.embed_dim)
+    registry = Registry(settings, overrides={"embedder": embedder})
+    assert not Ingester(settings, index, registry.embedder).run([docs]).failed
+
+    review = index.document(str(docs / "review.pdf"))
+    scan = index.document(str(docs / "scan.pdf"))
+    pricing = index.document(str(docs / "pricing.md"))
+    assert review and scan and pricing
+    pages = index.page_one_text([review.doc_id, scan.doc_id, pricing.doc_id])
+    assert set(pages) == {review.doc_id, scan.doc_id}
+    assert "Annual Review 2024" in pages[review.doc_id] and not pages[scan.doc_id].strip()
+
+    header = f"review.pdf{HEADING_SEP}Annual Review 2024\n\n"
+    titled = [t for i in embedder.seen if (t := i.text) and t.startswith(header)]
+    assert len(titled) == 2 and "Dividend" in titled[1]  # page 1 repeats its own title
+
+    # the reranker sees what the embedder saw, title included (taken from the page-1 chunk)
+    retriever = Retriever(settings, index, registry)
+    chunks = [c for d in (pricing, review, scan) for c in index.doc_chunks(d.doc_id)]  # path order
+    hits = [
+        Hit(chunk=c, image_path=index.root / c.image_path if c.image_path else None, score=0.0)
+        for c in chunks
+    ]
+    titles = retriever.titles(hits)
+    assert titles == {review.doc_id: "Annual Review 2024"}
+    reranked = [retriever.rerank_input(h, titles.get(h.chunk.doc_id)) for h in hits]
+    assert [(i.text, i.image_path and i.image_path.name) for i in reranked] == [
+        (i.text, i.image_path and i.image_path.name) for i in embedder.seen
+    ]
 
 
 def test_changed_settings_trigger_rebuild_message(settings, corpus, ingester):

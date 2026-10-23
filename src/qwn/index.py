@@ -407,6 +407,15 @@ class Index:
         ).fetchall()
         return [Chunk(*row) for row in rows]
 
+    def page_one_text(self, doc_ids: list[str]) -> dict[str, str]:
+        """Page 1's stored text for each PDF in `doc_ids` (images and md/txt have no page 1)."""
+        rows = self.conn.execute(
+            "SELECT doc_id, text FROM chunks WHERE kind = 'pdf_page' AND page = 1 "
+            "AND doc_id IN (SELECT value FROM json_each(?))",
+            (json.dumps(doc_ids),),
+        ).fetchall()
+        return dict(rows)
+
     # maintenance
 
     def counts(self) -> dict[str, int]:
