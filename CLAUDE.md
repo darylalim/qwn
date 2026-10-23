@@ -62,7 +62,8 @@ uv version --bump minor               # one minor release per completed phase (f
 - **Eval baselines** change only via `qwn eval --update-baseline`, in the same PR as the change
   that moved them, with the per-query changes explained in the PR.
   If `queries.jsonl` changed (`eval_set_hash`), the tool won't compare runs: diff `per_query`
-  against `git show HEAD:eval/<set>/baseline.json` by hand. Corpus files must stay
+  against `git show HEAD:eval/<set>/baseline.json` by hand (also after changing an `INGEST_KEYS`
+  setting: `ingest_hash` is part of `corpus_hash`; use `--force`). Corpus files must stay
   byte-identical (`corpus_hash`) unless the change is intended.
   A change that only affects scoring (e.g. `region`) can be predicted exactly by re-scoring the
   committed baseline's `per_query` (e.g. `locate_box`) before the full eval run.
@@ -72,6 +73,7 @@ uv version --bump minor               # one minor release per completed phase (f
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
+  One run reports both before- and after-rerank metrics (`mrr_before_rerank`): no `--no-rerank` run needed.
 - **Corpus generators:** draw new facts from their own `random.Random` stream (as
   `SEED_DECOYS` in `eval/hard/build_corpus.py`), never from an existing one, so every existing
   document stays byte-identical. Unit tests that need a corpus build use the session fixture
@@ -82,6 +84,9 @@ uv version --bump minor               # one minor release per completed phase (f
   A prompt-change probe needs answerable queries the model is unsure of (degraded charts,
   dense tables), not just clean ones: those are where it hedges. Run a subset through the real
   path with `dataclasses.replace(ev.eval_set(settings, "public"), queries=<scratch jsonl>)`.
+  Probe a retrieval idea without a reindex by monkeypatching `Retriever.rerank_input` and
+  running `ev.run(..., ev.Options())` (no generation; ~20 min for hard + public). Probe the
+  generator side separately: extra prompt text that helps ranking can break answers.
 - **Before every commit:** format, lint, ty and fast tests pass (hook H4 enforces this at stop; CI
   repeats it). Before merging a phase: slow tests, eval and the PLAN.md merge checklist.
 
