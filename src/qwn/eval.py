@@ -73,6 +73,7 @@ RESULT_KEYS = (
     "max_tokens",
     "pdf_embed",
     "chunk_context",
+    "pdf_context",
     "embed_dim",
     "pdf_dpi",
     "chunk_tokens",

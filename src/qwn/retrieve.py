@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 from qwn.config import Settings
 from qwn.index import Chunk, Index, fts_query
-from qwn.ingest import embed_input
+from qwn.ingest import doc_title, embed_input
 from qwn.interfaces import Item
 from qwn.models import Registry
 
@@ -175,10 +175,16 @@ class Retriever:
         fused = self._hits(fused_ids)[: self.settings.top_k]
         return Candidates(vector, keyword, fused)
 
-    def rerank_input(self, hit: Hit) -> Item:
+    def titles(self, hits: list[Hit]) -> dict[str, str]:
+        """doc_id → `doc_title` for the PDFs among `hits`, from their stored page-1 text."""
+        doc_ids = sorted({h.chunk.doc_id for h in hits if h.chunk.kind == "pdf_page"})
+        pages = self.index.page_one_text(doc_ids) if doc_ids else {}
+        return {doc_id: t for doc_id, text in pages.items() if (t := doc_title(text))}
+
+    def rerank_input(self, hit: Hit, title: str | None = None) -> Item:
         c = hit.chunk
         return embed_input(
-            c.kind, c.text, hit.image_path, c.heading_path, Path(c.path).name, self.settings
+            c.kind, c.text, hit.image_path, c.heading_path, Path(c.path).name, self.settings, title
         )
 
     def rerank(self, query: str, hits: list[Hit], n: int | None = None) -> list[Hit]:
@@ -191,9 +197,9 @@ class Retriever:
         head, tail = hits[:n], hits[n:]
         if not head:
             return tail
-        scores = self.registry.reranker().score(
-            Item(text=query), [self.rerank_input(h) for h in head]
-        )
+        titles = self.titles(head) if self.settings.pdf_context else {}
+        inputs = [self.rerank_input(h, titles.get(h.chunk.doc_id)) for h in head]
+        scores = self.registry.reranker().score(Item(text=query), inputs)
         scored = [replace(h, rerank_score=s) for h, s in zip(head, scores, strict=True)]
         return sorted(scored, key=lambda h: -(h.rerank_score or 0.0)) + tail
 

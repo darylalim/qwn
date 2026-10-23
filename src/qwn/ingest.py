@@ -32,6 +32,7 @@ from qwn.index import (
 )
 from qwn.interfaces import Embedder, Item
 from qwn.models_lock import pinned
+from qwn.prompts import drop_ai_directed_lines
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +49,21 @@ EXTENSIONS: dict[str, DocKind] = {
 SLIDES = {".pptx", ".ppt", ".key"}
 CHARS_PER_TOKEN = 4  # chunk_tokens is approximate: no tokenizer needed to chunk
 EMBED_TEXT_CHARS = 2000  # page text sent with a page image (PLAN.md → Data flow)
+TITLE_CHARS = 120  # cap on a PDF's title header (PLAN.md → Evaluation → Version awareness)
 HEADING_SEP = " \u203a "  # single right-pointing angle quote, as in PLAN.md
 BATCH = {"pdf": 8, "image": 8, "text": 32}  # items per embed call
 TMP_PREFIX = ".tmp-"
 
 # Settings that change what's stored. A change means a rebuild (PLAN.md → Rebuild trigger).
-INGEST_KEYS = ("pdf_dpi", "max_pixels", "chunk_tokens", "chunk_context", "pdf_embed", "embed_dim")
+INGEST_KEYS = (
+    "pdf_dpi",
+    "max_pixels",
+    "chunk_tokens",
+    "chunk_context",
+    "pdf_context",
+    "pdf_embed",
+    "embed_dim",
+)
 
 
 def ingest_hash(settings: Settings) -> str:
@@ -155,6 +165,18 @@ def context_header(file_name: str, heading_path: str) -> str:
     return HEADING_SEP.join(p for p in (file_name, heading_path) if p)
 
 
+def doc_title(page_one_text: str) -> str | None:
+    """A PDF's title: the first line of page 1 that has text and doesn't address an AI reader.
+
+    None for a page with no text layer (a scan).
+    """
+    kept, _ = drop_ai_directed_lines(page_one_text)
+    for line in kept.split("\n"):
+        if title := " ".join(line.split()):
+            return title[:TITLE_CHARS]
+    return None
+
+
 def embed_input(
     kind: str,
     text: str,
@@ -162,10 +184,18 @@ def embed_input(
     heading_path: str,
     file_name: str,
     settings: Settings,
+    title: str | None = None,
 ) -> Item:
-    """What the embedder (and the reranker, which mirrors it) sees for one chunk."""
+    """What the embedder (and the reranker, which mirrors it) sees for one chunk.
+
+    `title` is the document's `doc_title`; it heads a PDF page's text with `pdf_context` on.
+    """
     if kind == "pdf_page":
-        page_text = text[:EMBED_TEXT_CHARS] if settings.pdf_embed == "image+text" else ""
+        if settings.pdf_embed != "image+text":
+            return Item(image_path=image_path)
+        page_text = text[:EMBED_TEXT_CHARS]
+        if title and settings.pdf_context:
+            page_text = f"{context_header(file_name, title)}\n\n{page_text}"
         return Item(text=page_text or None, image_path=image_path)
     if kind == "image":
         return Item(image_path=image_path)
@@ -378,10 +408,11 @@ class Ingester:
                 )
             except pdf.PdfRejected as e:
                 raise Rejected(str(e)) from None
+            title = doc_title(pages[0].text) if pages and pages[0].number == 1 else None
             for p in pages:
                 name = p.image_path.name
                 chunks.append(NewChunk("pdf_page", p.number, 0, "", p.text, f"{stored}/{name}"))
-                items.append(embed_input("pdf_page", p.text, p.image_path, "", path.name, s))
+                items.append(embed_input("pdf_page", p.text, p.image_path, "", path.name, s, title))
         elif kind == "image":
             from qwn.adapters import images
 

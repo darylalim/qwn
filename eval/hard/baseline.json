@@ -2,29 +2,29 @@
  "meta": {
   "set": "hard",
   "eval_set_hash": "0732f1aa1606319b4a02158e33ae8b31e80de563ff3ee04fe95e037c670308cd",
-  "corpus_hash": "079c16cbfef64133c09de3fddb6d9c46ff288023234858d0c6241cd10d59b176",
+  "corpus_hash": "491a5c22eb4f7aa139281090edaf3c382ae1076204816e7ac9fed89d46953f5e",
   "models": {
    "gen": "mlx-community/Qwen3-VL-8B-Instruct-4bit@defcdea7cc7a4b0858fea563cbbce171d328e457",
    "embed": "mlx-community/Qwen3-VL-Embedding-2B-8bit@b4c9add3544248e763e515c6dd1d1de3ac7d032d",
    "rerank": "mlx-community/Qwen3-VL-Reranker-2B-8bit@e9cd8bbefa68882550b30cfe1c9905b882965888",
    "guard": "mlx-community/Qwen3Guard-Gen-0.6B-MLX@919a45777b667714648ee3d10d4560538b5b8bc8"
   },
-  "settings_hash": "909151213fee6d8bf75a7b650229b5236f4afc1149325f99587afffbbcd7aae0",
+  "settings_hash": "19e96aa16f67b86dc6d0dece73f3a941aab99e35b89184f1f82bce882a0dc87a",
   "options": {
    "rerank": true,
    "hybrid": true,
    "generate": true
   },
-  "git_sha": "ef4e9dfc60023a55e0f9ffbcdd39a7cdca76907a",
+  "git_sha": "9a66b0f23c84235d9f7a29367a018b3c6428c8b3",
   "qwn_version": "0.7.0",
-  "created": "2026-10-22T22:33:52+00:00"
+  "created": "2026-10-23T03:22:06+00:00"
  },
  "summary": {
   "recall@1": {
-   "value": 0.82,
+   "value": 0.94,
    "ci95": [
-    0.692,
-    0.9023
+    0.8378,
+    0.9794
    ],
    "n": 50
   },
@@ -45,10 +45,10 @@
    "n": 50
   },
   "mrr": {
-   "value": 0.8906666666666666,
+   "value": 0.965,
    "ci95": [
-    0.8193,
-    0.9533
+    0.92,
+    1.0
    ],
    "n": 50
   },
@@ -69,17 +69,17 @@
    "n": 50
   },
   "mrr_before_rerank": {
-   "value": 0.7609999999999999,
+   "value": 0.7833333333333333,
    "ci95": [
-    0.6723,
-    0.8507
+    0.6983,
+    0.865
    ],
    "n": 50
   },
   "rerank_wlt": {
-   "win": 14,
+   "win": 15,
    "loss": 1,
-   "tie": 35
+   "tie": 34
   },
   "recall@5_vector": {
    "value": 1.0,
@@ -99,17 +99,17 @@
   },
   "hybrid_wlt": {
    "win": 0,
-   "loss": 12,
-   "tie": 38
+   "loss": 13,
+   "tie": 37
   }
  },
  "by_tag": {
   "text": {
    "recall@1": {
-    "value": 0.6896551724137931,
+    "value": 0.896551724137931,
     "ci95": [
-     0.5077,
-     0.8272
+     0.7361,
+     0.9642
     ],
     "n": 29
    },
@@ -130,10 +130,10 @@
     "n": 29
    },
    "mrr": {
-    "value": 0.8114942528735632,
+    "value": 0.9396551724137931,
     "ci95": [
-     0.7103,
-     0.9138
+     0.8621,
+     1.0
     ],
     "n": 29
    },
@@ -154,17 +154,17 @@
     "n": 29
    },
    "mrr_before_rerank": {
-    "value": 0.7000000000000001,
+    "value": 0.7385057471264368,
     "ci95": [
-     0.5839,
-     0.8213
+     0.6236,
+     0.8477
     ],
     "n": 29
    },
    "rerank_wlt": {
-    "win": 9,
+    "win": 10,
     "loss": 1,
-    "tie": 19
+    "tie": 18
    },
    "recall@5_vector": {
     "value": 1.0,
@@ -184,8 +184,8 @@
    },
    "hybrid_wlt": {
     "win": 0,
-    "loss": 8,
-    "tie": 21
+    "loss": 9,
+    "tie": 20
    }
   },
   "scan": {
@@ -526,10 +526,10 @@
   },
   "version": {
    "recall@1": {
-    "value": 0.6190476190476191,
+    "value": 0.8571428571428571,
     "ci95": [
-     0.4088,
-     0.7925
+     0.6536,
+     0.9502
     ],
     "n": 21
    },
@@ -550,10 +550,10 @@
     "n": 21
    },
    "mrr": {
-    "value": 0.7634920634920636,
+    "value": 0.9166666666666666,
     "ci95": [
-     0.6286,
-     0.8905
+     0.8214,
+     1.0
     ],
     "n": 21
    },
@@ -574,10 +574,10 @@
     "n": 21
    },
    "mrr_before_rerank": {
-    "value": 0.5857142857142857,
+    "value": 0.6468253968253969,
     "ci95": [
-     0.4476,
-     0.7349
+     0.5198,
+     0.7778
     ],
     "n": 21
    },
@@ -604,16 +604,16 @@
    },
    "hybrid_wlt": {
     "win": 0,
-    "loss": 8,
-    "tie": 13
+    "loss": 9,
+    "tie": 12
    }
   },
   "multi": {
    "recall@1": {
-    "value": 0.6666666666666666,
+    "value": 1.0,
     "ci95": [
-     0.3542,
-     0.8794
+     0.7008,
+     1.0
     ],
     "n": 9
    },
@@ -634,9 +634,9 @@
     "n": 9
    },
    "mrr": {
-    "value": 0.7777777777777778,
+    "value": 1.0,
     "ci95": [
-     0.5556,
+     1.0,
      1.0
     ],
     "n": 9
@@ -658,10 +658,10 @@
     "n": 9
    },
    "mrr_before_rerank": {
-    "value": 0.674074074074074,
+    "value": 0.7592592592592592,
     "ci95": [
-     0.4222,
-     0.9111
+     0.5185,
+     0.9259
     ],
     "n": 9
    },
@@ -862,10 +862,10 @@
   },
   "paraphrase": {
    "recall@1": {
-    "value": 0.7692307692307693,
+    "value": 0.8461538461538461,
     "ci95": [
-     0.4974,
-     0.9182
+     0.5776,
+     0.9567
     ],
     "n": 13
    },
@@ -886,9 +886,9 @@
     "n": 13
    },
    "mrr": {
-    "value": 0.8615384615384615,
+    "value": 0.9038461538461539,
     "ci95": [
-     0.7,
+     0.7692,
      1.0
     ],
     "n": 13
@@ -910,17 +910,17 @@
     "n": 13
    },
    "mrr_before_rerank": {
-    "value": 0.8653846153846154,
+    "value": 0.8525641025641026,
     "ci95": [
-     0.7115,
+     0.6859,
      1.0
     ],
     "n": 13
    },
    "rerank_wlt": {
-    "win": 1,
+    "win": 2,
     "loss": 1,
-    "tie": 11
+    "tie": 10
    },
    "recall@5_vector": {
     "value": 1.0,
@@ -948,34 +948,34 @@
  "answer": {
   "summary": {
    "citation_hit": {
-    "value": 0.96,
+    "value": 0.92,
     "ci95": [
-     0.8654,
-     0.989
+     0.8116,
+     0.9685
     ],
     "n": 50
    },
    "answer_contains": {
-    "value": 0.9782608695652174,
+    "value": 0.9565217391304348,
     "ci95": [
-     0.8866,
-     0.9962
+     0.8547,
+     0.988
     ],
     "n": 46
    },
    "false_abstention": {
-    "value": 0.06,
+    "value": 0.08,
     "ci95": [
-     0.0206,
-     0.1622
+     0.0315,
+     0.1884
     ],
     "n": 50
    },
    "citation_all": {
-    "value": 1.0,
+    "value": 0.7777777777777778,
     "ci95": [
-     0.7008,
-     1.0
+     0.4526,
+     0.9368
     ],
     "n": 9
    },
@@ -1000,6 +1000,14 @@
   "by_tag": {
    "text": {
     "citation_hit": {
+     "value": 0.8620689655172413,
+     "ci95": [
+      0.6944,
+      0.945
+     ],
+     "n": 29
+    },
+    "answer_contains": {
      "value": 0.9310344827586207,
      "ci95": [
       0.7804,
@@ -1007,27 +1015,19 @@
      ],
      "n": 29
     },
-    "answer_contains": {
-     "value": 0.9655172413793104,
-     "ci95": [
-      0.8282,
-      0.9939
-     ],
-     "n": 29
-    },
     "false_abstention": {
-     "value": 0.06896551724137931,
+     "value": 0.10344827586206896,
      "ci95": [
-      0.0191,
-      0.2196
+      0.0358,
+      0.2639
      ],
      "n": 29
     },
     "citation_all": {
-     "value": 1.0,
+     "value": 0.75,
      "ci95": [
-      0.6756,
-      1.0
+      0.4093,
+      0.9285
      ],
      "n": 8
     },
@@ -1215,6 +1215,14 @@
    },
    "version": {
     "citation_hit": {
+     "value": 0.8095238095238095,
+     "ci95": [
+      0.6,
+      0.9233
+     ],
+     "n": 21
+    },
+    "answer_contains": {
      "value": 0.9047619047619048,
      "ci95": [
       0.7109,
@@ -1222,27 +1230,19 @@
      ],
      "n": 21
     },
-    "answer_contains": {
-     "value": 0.9523809523809523,
-     "ci95": [
-      0.7733,
-      0.9915
-     ],
-     "n": 21
-    },
     "false_abstention": {
-     "value": 0.09523809523809523,
+     "value": 0.14285714285714285,
      "ci95": [
-      0.0265,
-      0.2891
+      0.0498,
+      0.3464
      ],
      "n": 21
     },
     "citation_all": {
-     "value": 1.0,
+     "value": 0.7142857142857143,
      "ci95": [
-      0.6457,
-      1.0
+      0.3589,
+      0.9178
      ],
      "n": 7
     },
@@ -1258,34 +1258,34 @@
    },
    "multi": {
     "citation_hit": {
-     "value": 1.0,
+     "value": 0.7777777777777778,
      "ci95": [
-      0.7008,
-      1.0
+      0.4526,
+      0.9368
      ],
      "n": 9
     },
     "answer_contains": {
-     "value": 1.0,
+     "value": 0.8888888888888888,
      "ci95": [
-      0.7008,
-      1.0
+      0.565,
+      0.9801
      ],
      "n": 9
     },
     "false_abstention": {
-     "value": 0.1111111111111111,
+     "value": 0.2222222222222222,
      "ci95": [
-      0.0199,
-      0.435
+      0.0632,
+      0.5474
      ],
      "n": 9
     },
     "citation_all": {
-     "value": 1.0,
+     "value": 0.7777777777777778,
      "ci95": [
-      0.7008,
-      1.0
+      0.4526,
+      0.9368
      ],
      "n": 9
     },
@@ -1486,51 +1486,51 @@
  },
  "locate": {
   "summary": {
-   "not_cited": 2,
+   "not_cited": 4,
    "locate_hit": {
-    "value": 0.7727272727272727,
+    "value": 0.8571428571428571,
     "ci95": [
-     0.6301,
-     0.8716
+     0.7216,
+     0.9328
     ],
-    "n": 44
+    "n": 42
    },
    "no_box": {
-    "value": 0.13636363636363635,
+    "value": 0.07142857142857142,
     "ci95": [
-     0.064,
-     0.2671
+     0.0246,
+     0.1901
     ],
-    "n": 44
+    "n": 42
    }
   },
   "by_tag": {
    "text": {
-    "not_cited": 2,
+    "not_cited": 4,
     "locate_hit": {
-     "value": 0.8148148148148148,
+     "value": 0.88,
      "ci95": [
-      0.633,
-      0.9182
+      0.7004,
+      0.9583
      ],
-     "n": 27
+     "n": 25
     },
     "no_box": {
-     "value": 0.18518518518518517,
+     "value": 0.12,
      "ci95": [
-      0.0818,
-      0.367
+      0.0417,
+      0.2996
      ],
-     "n": 27
+     "n": 25
     }
    },
    "scan": {
     "not_cited": 0,
     "locate_hit": {
-     "value": 0.875,
+     "value": 1.0,
      "ci95": [
-      0.5291,
-      0.9776
+      0.6756,
+      1.0
      ],
      "n": 8
     },
@@ -1554,10 +1554,10 @@
      "n": 2
     },
     "no_box": {
-     "value": 0.5,
+     "value": 0.0,
      "ci95": [
-      0.0945,
-      0.9055
+      0.0,
+      0.6576
      ],
      "n": 2
     }
@@ -1565,10 +1565,10 @@
    "table": {
     "not_cited": 0,
     "locate_hit": {
-     "value": 0.5714285714285714,
+     "value": 0.7142857142857143,
      "ci95": [
-      0.2505,
-      0.8418
+      0.3589,
+      0.9178
      ],
      "n": 7
     },
@@ -1584,10 +1584,10 @@
    "exact": {
     "not_cited": 0,
     "locate_hit": {
-     "value": 0.7142857142857143,
+     "value": 0.8571428571428571,
      "ci95": [
-      0.3589,
-      0.9178
+      0.4869,
+      0.9743
      ],
      "n": 7
     },
@@ -1601,58 +1601,58 @@
     }
    },
    "version": {
-    "not_cited": 2,
+    "not_cited": 4,
     "locate_hit": {
-     "value": 0.7368421052631579,
+     "value": 0.8235294117647058,
      "ci95": [
-      0.5121,
-      0.8819
+      0.5897,
+      0.9381
      ],
-     "n": 19
+     "n": 17
     },
     "no_box": {
-     "value": 0.2631578947368421,
+     "value": 0.17647058823529413,
      "ci95": [
-      0.1181,
-      0.4879
+      0.0619,
+      0.4103
      ],
-     "n": 19
+     "n": 17
     }
    },
    "multi": {
-    "not_cited": 0,
+    "not_cited": 2,
     "locate_hit": {
-     "value": 0.5555555555555556,
+     "value": 0.7142857142857143,
      "ci95": [
-      0.2666,
-      0.8112
+      0.3589,
+      0.9178
      ],
-     "n": 9
+     "n": 7
     },
     "no_box": {
-     "value": 0.4444444444444444,
+     "value": 0.2857142857142857,
      "ci95": [
-      0.1888,
-      0.7334
+      0.0822,
+      0.6411
      ],
-     "n": 9
+     "n": 7
     }
    },
    "degraded": {
     "not_cited": 0,
     "locate_hit": {
-     "value": 0.5454545454545454,
+     "value": 0.7272727272727273,
      "ci95": [
-      0.2801,
-      0.7873
+      0.4343,
+      0.9025
      ],
      "n": 11
     },
     "no_box": {
-     "value": 0.09090909090909091,
+     "value": 0.0,
      "ci95": [
-      0.0162,
-      0.3774
+      0.0,
+      0.2588
      ],
      "n": 11
     }
@@ -1699,31 +1699,31 @@
  },
  "latency": {
   "embed": {
-   "p50_ms": 39.736458000334096,
-   "p95_ms": 49.743667001166614
+   "p50_ms": 37.49995900579961,
+   "p95_ms": 44.65949999575969
   },
   "search": {
-   "p50_ms": 1.8618340000102762,
-   "p95_ms": 4.0091669998219
+   "p50_ms": 1.7903330008266494,
+   "p95_ms": 2.6299160017515533
   },
   "rerank": {
-   "p50_ms": 12199.484916000074,
-   "p95_ms": 13637.865917000454
+   "p50_ms": 12689.542207997874,
+   "p95_ms": 13706.785832997411
   },
   "generate": {
-   "p50_ms": 20677.27591700168,
-   "p95_ms": 22338.239583999894
+   "p50_ms": 20667.4124590063,
+   "p95_ms": 22364.400416001445
   },
   "ask": {
-   "p50_ms": 32917.42433300533,
-   "p95_ms": 35833.92691700101
+   "p50_ms": 33490.21012600133,
+   "p95_ms": 35951.57879100225
   },
   "locate": {
-   "p50_ms": 5301.56979199819,
-   "p95_ms": 5404.075165999529
+   "p50_ms": 5303.810916004295,
+   "p95_ms": 5331.1005829964415
   },
-  "model_load_s": 5.790259834000608,
-  "peak_memory_gb": 12.986146828
+  "model_load_s": 5.777252791998762,
+  "peak_memory_gb": 12.990013452
  },
  "per_query": [
   {
@@ -1766,9 +1766,9 @@
     "version"
    ],
    "answerable": true,
-   "rank_vector": 4,
-   "rank_hybrid": 4,
-   "rank_embed": 4,
+   "rank_vector": 1,
+   "rank_hybrid": 2,
+   "rank_embed": 2,
    "rank_rerank": 1,
    "rank": 1,
    "cited": [
@@ -1779,15 +1779,15 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5723,
-   "completion_tokens": 34,
+   "prompt_tokens": 5711,
+   "completion_tokens": 32,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
    "locate_box": [
     0.116,
     0.152,
-    0.715,
+    0.712,
     0.172
    ],
    "locate_hit": true
@@ -1799,11 +1799,11 @@
     "version"
    ],
    "answerable": true,
-   "rank_vector": 3,
-   "rank_hybrid": 5,
-   "rank_embed": 5,
-   "rank_rerank": 2,
-   "rank": 2,
+   "rank_vector": 1,
+   "rank_hybrid": 3,
+   "rank_embed": 3,
+   "rank_rerank": 1,
+   "rank": 1,
    "cited": [
     {
      "path": "reports/annual-review.pdf",
@@ -1812,7 +1812,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5718,
+   "prompt_tokens": 5679,
    "completion_tokens": 30,
    "citation_hit": true,
    "answer_contains": true,
@@ -1840,7 +1840,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5677,
+   "prompt_tokens": 5664,
    "completion_tokens": 19,
    "citation_hit": true,
    "answer_contains": true,
@@ -1860,11 +1860,11 @@
     "version"
    ],
    "answerable": true,
-   "rank_vector": 3,
-   "rank_hybrid": 5,
-   "rank_embed": 5,
-   "rank_rerank": 3,
-   "rank": 3,
+   "rank_vector": 1,
+   "rank_hybrid": 3,
+   "rank_embed": 3,
+   "rank_rerank": 1,
+   "rank": 1,
    "cited": [
     {
      "path": "reports/annual-review.pdf",
@@ -1873,8 +1873,8 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5724,
-   "completion_tokens": 20,
+   "prompt_tokens": 5680,
+   "completion_tokens": 34,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
@@ -1882,7 +1882,7 @@
     0.116,
     0.095,
     0.705,
-    0.112
+    0.113
    ],
    "locate_hit": true
   },
@@ -2029,7 +2029,7 @@
     "version"
    ],
    "answerable": true,
-   "rank_vector": 2,
+   "rank_vector": 1,
    "rank_hybrid": 3,
    "rank_embed": 3,
    "rank_rerank": 1,
@@ -2037,8 +2037,8 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 5670,
-   "completion_tokens": 96,
+   "prompt_tokens": 5656,
+   "completion_tokens": 105,
    "citation_hit": false,
    "answer_contains": true,
    "locate": "not_cited"
@@ -2063,7 +2063,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5657,
+   "prompt_tokens": 5659,
    "completion_tokens": 29,
    "citation_hit": true,
    "answer_contains": true,
@@ -2096,15 +2096,15 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5726,
-   "completion_tokens": 21,
+   "prompt_tokens": 5712,
+   "completion_tokens": 24,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
    "locate_box": [
     0.117,
     0.133,
-    0.725,
+    0.728,
     0.15
    ],
    "locate_hit": true
@@ -2135,7 +2135,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5726,
+   "prompt_tokens": 5730,
    "completion_tokens": 49,
    "citation_hit": true,
    "citation_all": true,
@@ -2157,12 +2157,12 @@
     "multi"
    ],
    "answerable": true,
-   "rank_vector": 3,
-   "rank_hybrid": 3,
-   "rank_embed": 3,
-   "rank_rerank": 3,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
    "all_in_top": true,
-   "rank": 3,
+   "rank": 1,
    "cited": [
     {
      "path": "reports/annual-review-2024.pdf",
@@ -2175,14 +2175,19 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5732,
-   "completion_tokens": 114,
+   "prompt_tokens": 5677,
+   "completion_tokens": 131,
    "citation_hit": true,
    "citation_all": true,
    "answer_contains": true,
    "locate": "scored",
-   "locate_box": null,
-   "locate_hit": false
+   "locate_box": [
+    0.115,
+    0.096,
+    0.638,
+    0.113
+   ],
+   "locate_hit": true
   },
   {
    "id": "hard-015",
@@ -2192,37 +2197,21 @@
     "multi"
    ],
    "answerable": true,
-   "rank_vector": 3,
-   "rank_hybrid": 5,
-   "rank_embed": 5,
-   "rank_rerank": 3,
+   "rank_vector": 1,
+   "rank_hybrid": 4,
+   "rank_embed": 4,
+   "rank_rerank": 1,
    "all_in_top": true,
-   "rank": 3,
-   "cited": [
-    {
-     "path": "reports/annual-review-2024.pdf",
-     "page": 2
-    },
-    {
-     "path": "reports/annual-review.pdf",
-     "page": 2
-    }
-   ],
-   "abstained": false,
+   "rank": 1,
+   "cited": [],
+   "abstained": true,
    "invented": 0,
-   "prompt_tokens": 5726,
-   "completion_tokens": 40,
-   "citation_hit": true,
-   "citation_all": true,
-   "answer_contains": true,
-   "locate": "scored",
-   "locate_box": [
-    0.116,
-    0.096,
-    0.583,
-    0.113
-   ],
-   "locate_hit": true
+   "prompt_tokens": 5675,
+   "completion_tokens": 10,
+   "citation_hit": false,
+   "citation_all": false,
+   "answer_contains": false,
+   "locate": "not_cited"
   },
   {
    "id": "hard-016",
@@ -2306,12 +2295,12 @@
     "multi"
    ],
    "answerable": true,
-   "rank_vector": 3,
-   "rank_hybrid": 5,
-   "rank_embed": 5,
-   "rank_rerank": 3,
+   "rank_vector": 1,
+   "rank_hybrid": 4,
+   "rank_embed": 4,
+   "rank_rerank": 1,
    "all_in_top": true,
-   "rank": 3,
+   "rank": 1,
    "cited": [
     {
      "path": "reports/annual-review-2024.pdf",
@@ -2324,8 +2313,8 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5724,
-   "completion_tokens": 54,
+   "prompt_tokens": 5673,
+   "completion_tokens": 73,
    "citation_hit": true,
    "citation_all": true,
    "answer_contains": true,
@@ -2347,30 +2336,15 @@
    "rank_rerank": 1,
    "all_in_top": true,
    "rank": 1,
-   "cited": [
-    {
-     "path": "contracts/service-agreement.pdf",
-     "page": 2
-    },
-    {
-     "path": "contracts/service-agreement-2026.pdf",
-     "page": 2
-    },
-    {
-     "path": "contracts/service-agreement-2026.pdf",
-     "page": 1
-    }
-   ],
+   "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 5670,
-   "completion_tokens": 186,
-   "citation_hit": true,
-   "citation_all": true,
+   "prompt_tokens": 5656,
+   "completion_tokens": 90,
+   "citation_hit": false,
+   "citation_all": false,
    "answer_contains": true,
-   "locate": "scored",
-   "locate_box": null,
-   "locate_hit": false
+   "locate": "not_cited"
   },
   {
    "id": "hard-020",
@@ -2540,7 +2514,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5733,
+   "prompt_tokens": 5732,
    "completion_tokens": 18,
    "citation_hit": true,
    "answer_contains": true,
@@ -2573,7 +2547,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5730,
+   "prompt_tokens": 5728,
    "completion_tokens": 14,
    "citation_hit": true,
    "answer_contains": true,
@@ -2640,7 +2614,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5532,
+   "prompt_tokens": 5535,
    "completion_tokens": 26,
    "citation_hit": true,
    "answer_contains": true,
@@ -2674,18 +2648,18 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5584,
-   "completion_tokens": 19,
+   "prompt_tokens": 5586,
+   "completion_tokens": 22,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
    "locate_box": [
     0.068,
-    0.154,
-    0.31,
-    0.185
+    0.101,
+    0.405,
+    0.135
    ],
-   "locate_hit": false
+   "locate_hit": true
   },
   {
    "id": "hard-029",
@@ -2707,16 +2681,16 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 1677,
-   "completion_tokens": 17,
+   "prompt_tokens": 4252,
+   "completion_tokens": 60,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
    "locate_box": [
     0.103,
-    0.295,
-    0.865,
-    0.319
+    0.292,
+    0.868,
+    0.328
    ],
    "locate_hit": true
   },
@@ -2773,7 +2747,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5664,
+   "prompt_tokens": 5643,
    "completion_tokens": 29,
    "citation_hit": true,
    "answer_contains": true,
@@ -2837,18 +2811,18 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5217,
-   "completion_tokens": 23,
+   "prompt_tokens": 5193,
+   "completion_tokens": 19,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
    "locate_box": [
-    0.788,
+    0.82,
     0.8,
-    0.888,
-    0.83
+    0.92,
+    0.828
    ],
-   "locate_hit": false
+   "locate_hit": true
   },
   {
    "id": "hard-034",
@@ -2869,7 +2843,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 4889,
+   "prompt_tokens": 4912,
    "completion_tokens": 68,
    "citation_hit": true,
    "answer_approx": true
@@ -2893,12 +2867,17 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 4578,
-   "completion_tokens": 173,
+   "prompt_tokens": 4601,
+   "completion_tokens": 19,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
-   "locate_box": null,
+   "locate_box": [
+    0.687,
+    0.527,
+    0.787,
+    0.868
+   ],
    "locate_hit": false
   },
   {
@@ -2920,8 +2899,8 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 4932,
-   "completion_tokens": 112,
+   "prompt_tokens": 5298,
+   "completion_tokens": 113,
    "citation_hit": true,
    "answer_approx": true
   },
@@ -2940,12 +2919,28 @@
    "cited": [
     {
      "path": "charts/occupancy-unlabelled.png"
+    },
+    {
+     "path": "reports/annual-review.pdf",
+     "page": 4
+    },
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 4
+    },
+    {
+     "path": "reports/annual-review.pdf",
+     "page": 2
+    },
+    {
+     "path": "reports/annual-review.pdf",
+     "page": 3
     }
    ],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 5289,
-   "completion_tokens": 141,
+   "prompt_tokens": 5298,
+   "completion_tokens": 104,
    "citation_hit": true,
    "answer_approx": false
   },
@@ -2970,7 +2965,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5645,
+   "prompt_tokens": 5674,
    "completion_tokens": 24,
    "citation_hit": false,
    "answer_contains": false,
@@ -2987,29 +2982,29 @@
    "rank_vector": 2,
    "rank_hybrid": 2,
    "rank_embed": 2,
-   "rank_rerank": 5,
-   "rank": 5,
+   "rank_rerank": 4,
+   "rank": 4,
    "cited": [
     {
      "path": "reports/annual-review-2024.pdf",
-     "page": 1
+     "page": 2
     },
     {
-     "path": "reports/annual-review-2024.pdf",
+     "path": "reports/annual-review.pdf",
      "page": 2
     }
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5718,
-   "completion_tokens": 87,
+   "prompt_tokens": 5663,
+   "completion_tokens": 105,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
    "locate_box": [
     0.116,
     0.095,
-    0.748,
+    0.615,
     0.113
    ],
    "locate_hit": true
@@ -3054,11 +3049,11 @@
     "paraphrase"
    ],
    "answerable": true,
-   "rank_vector": 2,
-   "rank_hybrid": 2,
-   "rank_embed": 2,
-   "rank_rerank": 2,
-   "rank": 2,
+   "rank_vector": 1,
+   "rank_hybrid": 1,
+   "rank_embed": 1,
+   "rank_rerank": 1,
+   "rank": 1,
    "cited": [
     {
      "path": "reports/clinic-study.pdf",
@@ -3068,7 +3063,7 @@
    "abstained": false,
    "invented": 0,
    "prompt_tokens": 4274,
-   "completion_tokens": 40,
+   "completion_tokens": 39,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
@@ -3076,7 +3071,7 @@
     0.116,
     0.135,
     0.488,
-    0.152
+    0.151
    ],
    "locate_hit": true
   },
@@ -3087,9 +3082,9 @@
     "paraphrase"
    ],
    "answerable": true,
-   "rank_vector": 1,
-   "rank_hybrid": 1,
-   "rank_embed": 1,
+   "rank_vector": 3,
+   "rank_hybrid": 3,
+   "rank_embed": 3,
    "rank_rerank": 1,
    "rank": 1,
    "cited": [
@@ -3134,8 +3129,8 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5619,
-   "completion_tokens": 28,
+   "prompt_tokens": 5627,
+   "completion_tokens": 24,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
@@ -3202,7 +3197,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5735,
+   "prompt_tokens": 5731,
    "completion_tokens": 33,
    "citation_hit": true,
    "answer_contains": true,
@@ -3268,8 +3263,8 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 4978,
-   "completion_tokens": 61,
+   "prompt_tokens": 4979,
+   "completion_tokens": 64,
    "citation_hit": true,
    "answer_approx": true
   },
@@ -3325,7 +3320,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 3936,
+   "prompt_tokens": 3975,
    "completion_tokens": 27,
    "citation_hit": true,
    "answer_contains": true,
@@ -3357,15 +3352,15 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 3964,
-   "completion_tokens": 36,
+   "prompt_tokens": 3936,
+   "completion_tokens": 35,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
    "locate_box": [
     0.078,
     0.727,
-    0.927,
+    0.93,
     0.835
    ],
    "locate_hit": true
@@ -3381,7 +3376,7 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 5724,
+   "prompt_tokens": 5713,
    "completion_tokens": 10
   },
   {
@@ -3395,7 +3390,7 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 3915,
+   "prompt_tokens": 3888,
    "completion_tokens": 10
   },
   {
@@ -3409,7 +3404,7 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 5696,
+   "prompt_tokens": 5699,
    "completion_tokens": 10
   },
   {
@@ -3442,7 +3437,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5701,
+   "prompt_tokens": 5702,
    "completion_tokens": 52
   },
   {
@@ -3470,7 +3465,7 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 5219,
+   "prompt_tokens": 5237,
    "completion_tokens": 10
   },
   {
@@ -3484,7 +3479,7 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 4868,
+   "prompt_tokens": 4917,
    "completion_tokens": 10
   },
   {
@@ -3526,8 +3521,8 @@
    ],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 5608,
-   "completion_tokens": 72
+   "prompt_tokens": 5480,
+   "completion_tokens": 80
   }
  ],
  "criteria": []
