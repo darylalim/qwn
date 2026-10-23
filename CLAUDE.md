@@ -74,6 +74,7 @@ uv version --bump minor               # one minor release per completed phase (f
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
   One run reports both before- and after-rerank metrics (`mrr_before_rerank`): no `--no-rerank` run needed.
+  Recall@1 before rerank isn't in the summary: count `rank_embed == 1` in `per_query`.
 - **Corpus generators:** draw new facts from their own `random.Random` stream (as
   `SEED_DECOYS` in `eval/hard/build_corpus.py`), never from an existing one, so every existing
   document stays byte-identical. Unit tests that need a corpus build use the session fixture
@@ -84,9 +85,11 @@ uv version --bump minor               # one minor release per completed phase (f
   A prompt-change probe needs answerable queries the model is unsure of (degraded charts,
   dense tables), not just clean ones: those are where it hedges. Run a subset through the real
   path with `dataclasses.replace(ev.eval_set(settings, "public"), queries=<scratch jsonl>)`.
-  Probe a retrieval idea without a reindex by monkeypatching `Retriever.rerank_input` and
-  running `ev.run(..., ev.Options())` (no generation; ~20 min for hard + public). Probe the
+  Probe a retrieval idea without a reindex by monkeypatching `Retriever.rerank_input(hit, title)`
+  and running `ev.run(..., ev.Options())` (no generation; ~20 min for hard + public). Probe the
   generator side separately: extra prompt text that helps ranking can break answers.
+  A `--no-generate` probe predicts ranks exactly but not answers: a better ranking reorders the
+  sources, and greedy VL-8B can refuse on the new order (hard-015). Only the full run shows it.
 - **Before every commit:** format, lint, ty and fast tests pass (hook H4 enforces this at stop; CI
   repeats it). Before merging a phase: slow tests, eval and the PLAN.md merge checklist.
 
