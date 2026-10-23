@@ -37,6 +37,18 @@ _FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 
 _LABEL = re.compile(r"^(?:standalone question|question|rewritten)\s*:\s*", re.IGNORECASE)
 _QUOTES = "\"'`\N{LEFT DOUBLE QUOTATION MARK}\N{RIGHT DOUBLE QUOTATION MARK}"
+_WORD = re.compile(r"\w+")
+# words a follow-up uses to point back at the conversation, not at what it asks about
+_FILLER = frozenset({
+    "a", "about", "again", "also", "an", "and", "any", "are", "as", "at", "be", "been", "but",
+    "by", "can", "could", "did", "do", "does", "else", "for", "from", "going", "he", "her",
+    "hers", "him", "his", "how", "i", "if", "in", "is", "it", "its", "me", "more", "my", "no",
+    "not", "now", "of", "on", "one", "or", "other", "our", "please", "same", "she", "so", "some",
+    "tell", "than", "that", "the", "their", "them", "then", "there", "these", "they", "this",
+    "those", "to", "too", "us", "was", "we", "were", "what", "when", "where", "which", "who",
+    "whom", "whose", "why", "will", "with", "would", "yes", "you", "your",
+})  # fmt: skip
+STEM_CHARS = 5  # "inspected" keeps "inspect", "enrolled" keeps "enrol"
 
 MAX_BOX_AREA = 0.6  # a box covering more of the page than this highlights nothing useful
 MAX_STANDALONE_CHARS = 400  # a longer rewrite is the model answering, not rewriting
@@ -107,17 +119,36 @@ def _collapse(text: str) -> str:
     return " ".join(text.split())
 
 
+def _content_words(text: str) -> set[str]:
+    words = (w for w in _WORD.findall(text.lower()) if w not in _FILLER)
+    return {w[:STEM_CHARS] for w in words if len(w) > 1 or w.isdigit()}
+
+
+def keeps_message(standalone: str, question: str) -> bool:
+    """Whether a rewrite keeps at least one of the message's own words (by `STEM_CHARS` prefix).
+
+    A rewrite that drops all of them usually repeats an earlier question ("Sprint 14 velocity?"
+    after a revenue question came back as the revenue question). A message of filler words only
+    ("and then?") has nothing to check, so any rewrite keeps it.
+    """
+    asked = _content_words(question)
+    return not asked or bool(asked & _content_words(standalone))
+
+
 def parse_standalone(text: str, question: str) -> str | None:
     """The standalone question in a rewrite reply, or None (the caller falls back to `question`).
 
     The first non-empty line, without surrounding quotes or backticks or a leading label, with
-    whitespace collapsed. Empty, over `MAX_STANDALONE_CHARS` or an abstention is rejected: the
-    reply is untrusted, and at worst it changes what is searched for.
+    whitespace collapsed. Empty, over `MAX_STANDALONE_CHARS`, an abstention or a question that
+    drops every word of the message (`keeps_message`) is rejected: the reply is untrusted, and at
+    worst it changes what is searched for.
     """
     line = next((ln for ln in text.splitlines() if ln.strip()), "")
     line = _LABEL.sub("", line.strip().strip(_QUOTES).strip())
     line = _collapse(line.strip(_QUOTES))
     if not line or len(line) > MAX_STANDALONE_CHARS or abstained(line):
+        return None
+    if not keeps_message(line, question):
         return None
     return line
 

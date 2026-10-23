@@ -9,7 +9,7 @@ import pytest
 from qwn.adapters.mlx_lm_guard import parse_verdict
 from qwn.adapters.mlx_vlm_embed import messages as embed_messages
 from qwn.adapters.mlx_vlm_embed import truncate_and_normalize
-from qwn.answer import parse_citations, parse_standalone, plan_sources
+from qwn.answer import keeps_message, parse_citations, parse_standalone, plan_sources
 from qwn.interfaces import Item, Source, Turn
 from qwn.prompts import (
     ABSTAIN_TEXT,
@@ -246,11 +246,32 @@ def test_rewrite_prompt_fences_the_conversation_as_data():
     ],
 )
 def test_parse_standalone_takes_the_first_line_without_quotes_or_labels(reply, expected):
-    assert parse_standalone(reply, "and in 2025?") == expected
+    assert parse_standalone(reply, "and the revenue?") == expected
 
 
 @pytest.mark.parametrize(
     "reply", ["", "  \n ", '""', "Question:", "x" * 401, f"Sorry. {ABSTAIN_TEXT}"]
 )
 def test_parse_standalone_rejects_empty_long_or_abstaining_replies(reply):
-    assert parse_standalone(reply, "and in 2025?") is None
+    assert parse_standalone(reply, "and the revenue?") is None
+
+
+@pytest.mark.parametrize(
+    ("standalone", "message"),
+    [
+        ("How many participants did trial RCT-2291-B enrol?", "How many did it enrol?"),
+        ("How often is Cold store B inspected?", "How often is it inspected?"),  # same stem
+        ("What was the revenue in 2025?", "And in 2025?"),
+        ("Which port does the server listen on?", "Which port does the server listen on?"),
+        ("What was revenue in 2024 after the merger?", "and then?"),  # filler only: no check
+        ("What was revenue in 2024?", "Why?"),
+    ],
+)
+def test_keeps_message_when_a_word_of_the_message_survives(standalone, message):
+    assert keeps_message(standalone, message)
+
+
+def test_a_rewrite_that_repeats_an_earlier_question_falls_back_to_the_message():
+    earlier = "What was the total revenue in 2024?"
+    assert not keeps_message(earlier, "Sprint 14 velocity?")
+    assert parse_standalone(earlier, "Sprint 14 velocity?") is None

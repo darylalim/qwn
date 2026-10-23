@@ -31,6 +31,7 @@ READY = {  # wait for a page-specific element, not a fixed delay
 }
 CHAT_MAX_PX = 736
 QUESTION = "How much did revenue grow?"
+FOLLOW_UP = "And in 2025?"
 
 
 def _free_port() -> int:
@@ -116,6 +117,10 @@ def test_layout(server, browser, name, width, scheme):
             box.fill(QUESTION)
             box.press("Enter")
             page.get_by_role("button", name="Open page").first.wait_for(timeout=20_000)
+            box.fill(FOLLOW_UP)  # a rewritten follow-up: "Searched for" and "New conversation"
+            box.press("Enter")
+            page.get_by_text("Searched for:").wait_for(timeout=20_000)
+            page.get_by_role("button", name="New conversation").wait_for(timeout=5_000)
         page.wait_for_timeout(300)  # let the layout settle after the last element arrives
         page.screenshot(path=SHOTS / f"{name}-{width}-{scheme}.png", full_page=True)
 
