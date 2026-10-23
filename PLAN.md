@@ -38,6 +38,9 @@ with VL-8B; `qwn eval --set turns`, a measurement set over the hard corpus; Eval
 Multi-turn results; turns recall@5 1.000, `rewrite_hit` 0.970). A rewrite that drops every word
 of the message falls back to the message (`keeps_message`).
 
+**Released as v0.8.0** (2026-10-23): every follow-up above since v0.7.0 (Versioning).
+Version awareness changed `ingest_hash`, so an index from v0.7.0 needs `qwn ingest --reindex`.
+
 **Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
@@ -2761,6 +2764,10 @@ job.
   yet tagged), phase 1 → `0.2.0`, … phase 6 → `0.7.0`, then `1.0.0` once you use it daily. Fixes
   between phases → patch. **Phase 0 does not bump:** its merge releases the existing `0.1.0`.
   Bumping (`uv version --bump minor`) starts with phase 1.
+- **Follow-ups (agreed 2026-10-23):** a follow-up PR doesn't bump. When the open follow-ups are
+  done, or a merged follow-up forces a reindex, a separate release PR (`release/vX.Y.Z`) bumps
+  minor. `0.8.0` releases every follow-up merged after `0.7.0` (injection filter, tighter
+  regions, hard eval tier, explained abstention, version awareness, multi-turn questions).
 - **Flow:** bump on the phase branch → PR (CI) → merge to `main` → `release.yml` → tag `vX.Y.Z` +
   GitHub Release.
 - **Note:** `0.1.0` has no tag, so the **first** merge to `main` that touches `pyproject.toml`
