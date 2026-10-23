@@ -11,7 +11,9 @@ and per PR**, in order, and stop when that phase's exit criteria are met. If the
 unclear, stop and ask; don't improvise around it. When the user agrees to a change, update
 `PLAN.md` in the same PR.
 All phases are merged (v0.7.0); new work is the follow-ups listed in "Start here", one PR each.
-Follow-ups update "Start here" in the same PR (no separate plan PR) and don't bump the version.
+Follow-ups update "Start here" in the same PR (no separate plan PR) and don't bump the version
+individually: when the open follow-ups are done, or one forces a reindex, a separate release PR
+bumps minor (PLAN.md → Versioning).
 A follow-up marked "needs a planning session" is the exception: plan it on `plan/<name>` (only
 `PLAN.md` changes), merge that PR, then implement in a new session.
 After a phase merges, a separate `plan/phase-N-merged` PR updates "Start here". The user merges
