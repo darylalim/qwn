@@ -33,6 +33,7 @@ uv run python eval/public/build_corpus.py <scratch>/new   # then diff -r against
 uv run qwn eval --set hard --locate   # measurement set, no exit criteria; ~35 min: run in background
 QWN_RERANK_CANDIDATES=5 uv run qwn eval --set hard --no-generate --force   # any setting via QWN_* env, for sweeps
 uv run qwn ui                         # Streamlit (localhost only)
+QWN_DATA_DIR=data/eval-hard QWN_INDEX_DIR=index/eval-hard/<hash> uv run qwn ui   # browser check on known facts; your library untouched
 uv version --bump minor               # one minor release per completed phase (from phase 1)
 ```
 
@@ -58,7 +59,8 @@ uv version --bump minor               # one minor release per completed phase (f
   `index.delete(ids)` and remove each `index.root / page_dir(id)`.
 - **UI:** styling comes from `.streamlit/config.toml` only. No custom CSS/HTML, no web fonts.
   Status colours always come with an icon and words. Check layouts at the widths in PLAN.md →
-  Responsive layout.
+  Responsive layout. A real-model browser check runs on an eval corpus via `QWN_DATA_DIR` and
+  `QWN_INDEX_DIR` (see Commands); a spoken check needs the user's microphone, so ask them.
 - **Eval baselines** change only via `qwn eval --update-baseline`, in the same PR as the change
   that moved them, with the per-query changes explained in the PR.
   If `queries.jsonl` changed (`eval_set_hash`), the tool won't compare runs: diff `per_query`
@@ -75,6 +77,8 @@ uv version --bump minor               # one minor release per completed phase (f
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
   One run reports both before- and after-rerank metrics (`mrr_before_rerank`): no `--no-rerank` run needed.
   Recall@1 before rerank isn't in the summary: count `rank_embed == 1` in `per_query`.
+  `--no-generate` changes `settings_hash`, so checking hard ranks against the generated baseline
+  is a hand diff of `rank`/`rank_embed` in `per_query`.
 - **Corpus generators:** draw new facts from their own `random.Random` stream (as
   `SEED_DECOYS` in `eval/hard/build_corpus.py`), never from an existing one, so every existing
   document stays byte-identical. Unit tests that need a corpus build use the session fixture
@@ -90,6 +94,10 @@ uv version --bump minor               # one minor release per completed phase (f
   generator side separately: extra prompt text that helps ranking can break answers.
   A `--no-generate` probe predicts ranks exactly but not answers: a better ranking reorders the
   sources, and greedy VL-8B can refuse on the new order (hard-015). Only the full run shows it.
+  A reply that is well formed but wrong (a rewrite that repeats an earlier question) is better
+  caught by a deterministic check after the model than by more prompt examples, which made the
+  rewrite probe worse. Replay a new check on the last run's `standalone_text`/`answer_text`
+  before re-running: it predicts the eval exactly.
 - **Before every commit:** format, lint, ty and fast tests pass (hook H4 enforces this at stop; CI
   repeats it). Before merging a phase: slow tests, eval and the PLAN.md merge checklist.
 
