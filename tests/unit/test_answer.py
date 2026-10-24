@@ -125,3 +125,34 @@ def test_answer_logs_never_contain_question_source_or_answer_text(home, caplog):
     assert sentinel in r.text  # the fake quoted it, so the test would catch a leak
     assert "answer: question_len=" in caplog.text
     assert sentinel not in caplog.text
+
+
+def test_conversation_keeps_completed_exchanges_oldest_first():
+    from types import SimpleNamespace
+
+    from qwn.answer import conversation
+
+    def answered(q, text, blocked=None):
+        return (q, SimpleNamespace(text=text, blocked=blocked))
+
+    exchanges = [
+        answered("q1", "a1 [S1]."),
+        answered("q2", "Blocked", blocked=object()),  # Guard blocked it
+        answered("q4", "I couldn't find this in your documents."),  # abstentions stay
+        answered("q5", "a5 [S2]"),
+    ]  # a failed question (q3) has no Response, so it's never an exchange
+    assert [(t.question, t.answer) for t in conversation(exchanges, 3)] == [
+        ("q1", "a1."),
+        ("q4", "I couldn't find this in your documents."),
+        ("q5", "a5"),
+    ]
+    assert [t.question for t in conversation(exchanges, 2)] == ["q4", "q5"]
+    assert conversation(exchanges, 0) == []
+
+
+def test_stage_labels_cover_every_stage():
+    from typing import get_args
+
+    from qwn.answer import STAGE_LABELS, Stage
+
+    assert set(STAGE_LABELS) == set(get_args(Stage))

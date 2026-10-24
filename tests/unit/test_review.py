@@ -159,29 +159,3 @@ def test_unanswerable_skip_discard_and_quit(paths):
     [q] = lines(queries)
     assert q["query"] == "question a?" and q["expected"] == [] and q["tags"] == ["unanswerable"]
     assert [d["draft_id"] for d in lines(drafts)] == ["b", "d"]  # skipped and unreviewed stay
-
-
-def test_conversation_keeps_completed_exchanges_oldest_first():
-    from types import SimpleNamespace
-
-    from qwn.ui.services import conversation
-
-    def answered(q, text, blocked=None):
-        return {"role": "assistant", "question": q,
-                "response": SimpleNamespace(text=text, blocked=blocked)}  # fmt: skip
-
-    messages = [
-        {"role": "user", "content": "q1"},
-        answered("q1", "a1 [S1]."),
-        answered("q2", "Blocked", blocked=object()),  # Guard blocked it
-        {"role": "assistant", "question": "q3", "error": "The model failed"},
-        answered("q4", "I couldn't find this in your documents."),  # abstentions stay
-        answered("q5", "a5 [S2]"),
-    ]
-    assert [(t.question, t.answer) for t in conversation(messages, 3)] == [
-        ("q1", "a1."),
-        ("q4", "I couldn't find this in your documents."),
-        ("q5", "a5"),
-    ]
-    assert [t.question for t in conversation(messages, 2)] == ["q4", "q5"]
-    assert conversation(messages, 0) == []

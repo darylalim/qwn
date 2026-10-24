@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -15,8 +16,10 @@ from qwn.models import InsufficientMemory, ModelsInUse, Registry
 from qwn.models_lock import MODELS, PinnedModel
 
 if TYPE_CHECKING:
+    from qwn.answer import Answerer, Response
     from qwn.ingest import Failure, PrunePlan
     from qwn.interfaces import Source
+    from qwn.models import WarmLoad
     from qwn.retrieve import Hit, Retriever
 
 # Offline unless a command opts in (only `qwn models pull`). huggingface_hub reads this once, at
@@ -417,25 +420,255 @@ def ask(
             out["speech"] = None if spoken is None else str(speak)
         typer.echo(json.dumps(out, indent=2, ensure_ascii=False))
         return
+    _print_response(response, all_sources=show_sources)
+    if response.blocked is not None and speak is not None:
+        typer.echo(f"Nothing spoken: {speak} not written.", err=True)
+    elif spoken is not None:
+        typer.echo(f"Spoken answer: {speak} ({len(spoken) / SAMPLE_RATE:.1f} s)", err=True)
+
+
+# ANSI escape sequences (CSI, OSC, two-byte), then any other C0/C1 control but newline and tab
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-_]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _plain(text: str) -> str:
+    """Model or document text made safe to print: an echoed answer can't move the cursor or
+    rewrite earlier lines (PLAN.md → CLI → `qwn chat`, Privacy and security)."""
+    return _CONTROL.sub("", _ANSI.sub("", text))
+
+
+def _print_response(response: "Response", *, all_sources: bool) -> None:
+    """`qwn ask` and `qwn chat` output: the rewrite (if any), Guard warnings, then a block or
+    the answer and its sources."""
+    if response.standalone:
+        typer.secho(f"Searched for: {_plain(response.standalone)}", dim=True)
     for check in response.warnings:
         typer.secho(f"⚠ {check.message()}", fg="yellow", err=True)
     if (block := response.blocked) is not None:
         typer.secho(f"⛔ {block.message()}", fg="red")
-        if speak is not None:
-            typer.echo(f"Nothing spoken: {speak} not written.", err=True)
         return
-    typer.echo(response.rendered())
-    if spoken is not None:
-        typer.echo(f"Spoken answer: {speak} ({len(spoken) / SAMPLE_RATE:.1f} s)", err=True)
-    listed = pairs if show_sources else response.cited_sources()
+    typer.echo(_plain(response.rendered()))
+    _print_sources(response, all_sources=all_sources)
+
+
+def _print_sources(response: "Response", *, all_sources: bool) -> None:
+    """The cited sources, or with `all_sources` every source the model was given (cited `*`)."""
+    from qwn.answer import cite_label
+
+    pairs = list(zip(response.sources, response.hits, strict=True))
+    listed = pairs if all_sources else response.cited_sources()
     if listed:
         typer.echo("")
-        typer.secho("Sources:" if show_sources else "Cited:", bold=True)
+        typer.secho("Sources:" if all_sources else "Cited:", bold=True)
     cited = set(response.cited)
     for source, hit in listed:
-        mark = "*" if show_sources and source.label in cited else " "
+        mark = "*" if all_sources and source.label in cited else " "
         where = f"  p.{source.page}" if source.page is not None else ""
-        typer.echo(f" {mark}[{cite_label(source, hit)}]  {source.path}{where}")
+        typer.echo(_plain(f" {mark}[{cite_label(source, hit)}]  {source.path}{where}"))
+
+
+CHAT_HELP = """Commands:
+  /help         this list
+  /quit         leave (or Ctrl-D)
+  /new          start a new conversation (keeps the scope)
+  /sources      every source the last answer was given, cited ones marked *
+  /in PATH...   search only these files or folders (no PATH: everything); keeps the history
+  /history      what the next follow-up is rewritten with
+Keys: Ctrl-C clears the line, or cancels an answer; ↑ recalls earlier questions."""
+HISTORY_CHARS = 120  # /history cuts each answer here
+PROMPT = "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK} "
+
+
+@app.command()
+def chat(
+    ctx: typer.Context,
+    scope: ScopeOption = None,
+    top_k: Annotated[int | None, typer.Option(help="Candidates before reranking.")] = None,
+    rerank_k: Annotated[int | None, typer.Option(help="Sources given to the model.")] = None,
+    max_images: Annotated[int | None, typer.Option(help="Page images sent to the model.")] = None,
+    guard: Annotated[
+        bool | None,
+        typer.Option(
+            "--guard/--no-guard",
+            help="Check questions and answers with Guard (default: the guard_enabled setting).",
+        ),
+    ] = None,
+) -> None:
+    """Ask questions in a conversation: follow-ups like "and in 2025?" use the earlier ones."""
+    import sys
+
+    from qwn.answer import Answerer, history_caption
+    from qwn.models import WarmLoad
+
+    settings = _overrides(ctx.obj, top_k=top_k, rerank_k=rerank_k, max_images=max_images)
+    retriever, doc_ids = _retriever(settings, scope)
+    registry = retriever.registry
+    try:
+        registry.process_lock.acquire()  # as `qwn ui`: one process owns the models
+    except ModelsInUse as e:
+        raise _fail(str(e)) from None
+    try:
+        answerer = Answerer(settings, retriever, registry)
+        session = _Chat(answerer, settings.history_turns, scope or [], doc_ids, guard)
+        typer.echo("qwn chat: ask about your documents. /help for commands, Ctrl-D to quit.")
+        typer.echo(f"{session.scope_line()} · {history_caption(settings.history_turns)}")
+        warm = WarmLoad(registry)
+        if settings.warm_load:
+            warm.start()
+            typer.secho("Loading models in the background…", dim=True)
+        session.run(warm, interactive=sys.stdin.isatty(), status=sys.stderr.isatty())
+    finally:
+        registry.process_lock.release()
+
+
+class _Chat:
+    """One `qwn chat` session: the scope and the completed exchanges, in memory only."""
+
+    def __init__(
+        self,
+        answerer: "Answerer",
+        history_turns: int,
+        scope: list[Path],
+        doc_ids: list[str] | None,
+        guard: bool | None,
+    ) -> None:
+        self.answerer = answerer
+        self.history_turns = history_turns
+        self.scope = scope
+        self.doc_ids = doc_ids
+        self.guard = guard
+        self.exchanges: list[tuple[str, Response]] = []
+        self.last: Response | None = None  # for /sources: None before an answer, after a block
+
+    def scope_line(self) -> str:
+        if self.doc_ids is None:
+            n = self.answerer.retriever.index.counts()["documents"]
+            return f"Searching in: all documents ({n})"
+        paths = ", ".join(str(p) for p in self.scope)
+        n = len(self.doc_ids)
+        return f"Searching in: {paths} ({n} document{'s' if n != 1 else ''})"
+
+    def run(self, warm: "WarmLoad", *, interactive: bool, status: bool) -> None:
+        if interactive:
+            import readline  # noqa: F401  (arrow keys and ↑ history for input(); no history file)
+        self.status = status
+        warned = False
+        while True:
+            if warm.state == "failed" and not warned:  # e.g. not enough memory: load lazily
+                typer.secho(f"Couldn't preload the models: {warm.error}", fg="yellow", err=True)
+                warned = True
+            try:
+                line = input(PROMPT if interactive else "")
+            except EOFError:
+                if interactive:
+                    typer.echo("")
+                return
+            except KeyboardInterrupt:  # discards the line
+                typer.echo("")
+                continue
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("/"):
+                if self.command(line) == "quit":
+                    return
+                continue
+            self.ask(line, warm)
+
+    def command(self, line: str) -> str | None:
+        import shlex
+
+        from qwn.retrieve import EmptyScope
+
+        try:
+            name, *args = shlex.split(line)
+        except ValueError as e:  # an unclosed quote
+            typer.secho(f"Can't read that command: {e}.", fg="red", err=True)
+            return None
+        if name == "/quit":
+            return "quit"
+        if name == "/help":
+            typer.echo(CHAT_HELP)
+        elif name == "/new":
+            self.exchanges, self.last = [], None
+            typer.echo("New conversation.")
+        elif name == "/sources":
+            if self.last is None:
+                typer.echo("No answer yet.")
+            else:
+                _print_sources(self.last, all_sources=True)
+        elif name == "/in":
+            paths = [Path(a) for a in args]
+            try:
+                doc_ids = self.answerer.retriever.scope(paths) if paths else None
+            except EmptyScope as e:
+                typer.secho(str(e), fg="red", err=True)
+                return None
+            self.scope, self.doc_ids = paths, doc_ids
+            typer.echo(self.scope_line())
+        elif name == "/history":
+            self.show_history()
+        else:
+            typer.echo(f"Unknown command {_plain(name)}. Type /help.")
+        return None
+
+    def show_history(self) -> None:
+        from qwn.answer import conversation
+
+        if self.history_turns == 0:
+            typer.echo("Follow-ups aren't rewritten: each question is answered on its own.")
+            return
+        turns = conversation(self.exchanges, self.history_turns)
+        if not turns:
+            typer.echo("No history yet.")
+        for turn in turns:
+            answer = " ".join(turn.answer.split())
+            if len(answer) > HISTORY_CHARS:
+                answer = answer[: HISTORY_CHARS - 1] + "…"
+            typer.echo(_plain(f"{PROMPT}{turn.question}"))
+            typer.secho(f"  {_plain(answer)}", dim=True)
+
+    def ask(self, question: str, warm: "WarmLoad") -> None:
+        from qwn.answer import STAGE_LABELS, Stage, conversation
+        from qwn.retrieve import EmptyScope
+
+        registry = self.answerer.registry
+
+        def on_stage(stage: "Stage") -> None:
+            if self.status:
+                busy = registry.lock.locked() or warm.state == "loading"
+                label = "Waiting for the model…" if busy else STAGE_LABELS[stage]
+                typer.echo("\r\x1b[2K" + typer.style(label, dim=True), nl=False, err=True)
+
+        history = conversation(self.exchanges, self.history_turns)
+        try:
+            response = self.answerer.ask(
+                question, history=history, doc_ids=self.doc_ids, guard=self.guard, on_stage=on_stage
+            )
+        except KeyboardInterrupt:
+            self._clear_status()
+            typer.echo("Cancelled.")
+            return
+        except (EmptyScope, *EXPECTED_ERRORS) as e:
+            self._clear_status()
+            typer.secho(str(e), fg="red", err=True)
+            self.last = None
+            return
+        except Exception as e:  # a model error: report it, keep the traceback in the log
+            self._clear_status()
+            logging.getLogger(__name__).exception("chat: ask failed")
+            typer.secho(f"The model failed: {type(e).__name__}: {e}", fg="red", err=True)
+            self.last = None
+            return
+        self._clear_status()
+        _print_response(response, all_sources=False)
+        self.exchanges.append((question, response))
+        self.last = response if response.blocked is None else None
+
+    def _clear_status(self) -> None:
+        if self.status:
+            typer.echo("\r\x1b[2K", nl=False, err=True)
 
 
 @app.command()

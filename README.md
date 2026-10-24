@@ -32,6 +32,7 @@ uv run qwn search "APAC revenue"              # show the best-matching pages and
 uv run qwn ask "What was APAC revenue in Q3?" # answer with citations, e.g. [report.pdf p.4]
 uv run qwn ask "..." --in ~/Documents/papers  # only search these files or folders
 uv run qwn ask --audio question.wav --speak answer.wav  # ask out loud, hear the answer
+uv run qwn chat                               # a conversation: follow-ups like "and in 2025?"
 uv run qwn status                             # index, model cache and memory
 uv run qwn eval review                        # turn 👍/👎 Chat ratings into private eval questions
 ```

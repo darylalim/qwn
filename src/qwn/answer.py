@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 
 Stage = Literal["guard_prompt", "rewrite", "retrieve", "rerank", "generate", "guard_response"]
 OnStage = Callable[[Stage], None]
+# what the Chat page and `qwn chat` show while each stage runs
+STAGE_LABELS: dict[Stage, str] = {
+    "guard_prompt": "Checking the question (Guard)…",
+    "rewrite": "Reading the conversation…",
+    "retrieve": "Retrieving…",
+    "rerank": "Reranking…",
+    "generate": "Answering…",
+    "guard_response": "Checking the answer (Guard)…",
+}
 
 _CITATION = re.compile(r"\[(S\d+)\]")
 _MARKER = re.compile(r"(\s?)\[(S\d+)\]")
@@ -250,6 +259,29 @@ class Response:
             return f"{m.group(1)}[{label}]" if label else ""
 
         return _MARKER.sub(sub, self.text).strip()
+
+
+def conversation(exchanges: Iterable[tuple[str, Response]], turns: int) -> list[Turn]:
+    """The last `turns` completed exchanges, oldest first: what a follow-up is rewritten with.
+
+    `exchanges` are (question as typed, Response) pairs. Guard blocks are left out; abstentions
+    stay (useful context). Failed questions have no Response, so callers never pass them.
+    """
+    out = [
+        Turn(question, strip_citations(response.text))
+        for question, response in exchanges
+        if response.blocked is None
+    ]
+    return out[-turns:] if turns > 0 else []
+
+
+def history_caption(turns: int) -> str:
+    """How follow-ups use the conversation, for `history_turns = turns` (Chat and `qwn chat`)."""
+    if turns > 1:
+        return f"Follow-up questions use your last {turns} questions and answers."
+    if turns == 1:
+        return "Follow-up questions use your last question and answer."
+    return "Each question is answered on its own: earlier messages aren't sent to the model."
 
 
 class Answerer:
