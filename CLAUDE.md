@@ -82,6 +82,9 @@ uv version --bump minor               # one minor release per completed phase (f
   Before planning latency work, split the wait with the last public result: `latency.generate`
   (12.7 s p50) against `completion_tokens` in `per_query` (p50 17, ~0.3 s at 59 tok/s) shows
   prefill dominates. Hard results with `--no-generate` have no `generate` latency.
+  In a `stream_generate` probe, time to first token matched the last result's
+  `prompt_tokens / prompt_tps` within 0.4 s (24 of 25): that estimate is the prefill. Streaming
+  closed at its gate (long answers decode 2.57 s median): shorten prefill instead.
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
@@ -119,6 +122,8 @@ uv version --bump minor               # one minor release per completed phase (f
   Don't try another abstention wording: three that mention an explained refusal (PLAN.md →
   Explained abstention, Abstention wording results) made VL-8B append `ABSTAIN_TEXT` to
   confident answers and drop it from explanations. Fix abstention after the model instead.
+  A check on calls made inside the token loop (Guard per sentence) needs multi-sentence answers
+  ("Summarise …"): on one-sentence factoid answers nothing runs mid-stream and it passes vacuously.
 - **Before every commit:** format, lint, ty and fast tests pass (hook H4 enforces this at stop; CI
   repeats it). Before merging a phase: slow tests, eval and the PLAN.md merge checklist.
 
