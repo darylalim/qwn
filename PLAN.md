@@ -54,6 +54,11 @@ the multi-turn pipeline, text only, with `/help`, `/quit`, `/new`, `/sources`, `
 abstention wording probe (no prompt change) and `qwn chat`. No reindex: an index from v0.8.0 works
 as is.
 
+The quiet stderr follow-up is done (Runtime robustness → Logging): `logging_setup.configure`
+drops transformers' `Kwargs passed to processor.__call__` warning (12 lines per `qwn ask` on the
+hard corpus before, none after), and on a terminal a qwn warning clears the status line before it
+prints, so `qwn chat`'s stage line no longer runs into it.
+
 **Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
@@ -785,7 +790,7 @@ multi-line input; token streaming; changing `history_turns` from inside the REPL
   follows the session example (the paths as typed plus a document count; "all documents (N)"),
   not `describe_scope`, which names no paths. The history caption moved with `conversation` to
   `qwn.answer.history_caption`, so Chat and the REPL share the text.
-- **Seen, not changed:** stderr shows the adapters' `[transformers] Kwargs passed to
+- **Seen, not changed** (fixed later by the quiet stderr follow-up, Runtime robustness → Logging): stderr shows the adapters' `[transformers] Kwargs passed to
   processor.__call__…` warning on every model call (as `qwn ask` already does) and qwn's own
   WARNING lines (e.g. an unparseable rewrite), so the stage line isn't always a single line.
   Quieting them is an adapter/logging change, out of scope here.
@@ -1380,6 +1385,12 @@ shown in the Library page and `qwn ingest` output, and the run continues with th
   also prints warnings and errors to stderr.
 - **Level:** `INFO` by default; `QWN_LOG_LEVEL=DEBUG` for more. Set up once in `qwn.logging_setup`,
   called by the CLI and UI entry points; library modules only call `logging.getLogger(__name__)`.
+- **Known noise:** `configure` drops third-party warnings that fire on every model call and that a
+  user can't act on (`logging_setup.KNOWN_NOISE`, matched by logger and message prefix; today only
+  transformers' `Kwargs passed to processor.__call__`, raised because mlx-vlm passes template
+  kwargs loosely). Other transformers warnings still print. On a TTY, the stderr handler clears
+  the current line (`\r\x1b[2K`) before each record, so a warning replaces `qwn chat`'s stage
+  line instead of running on after it.
 - **Never logged, at any level:** document or page text, chunk text, questions, answers, transcripts.
   Log IDs, paths, counts, timings, scores and error types instead (e.g. `question_len=42`). This
   keeps the privacy rule true even when a log file is attached to a bug report.
