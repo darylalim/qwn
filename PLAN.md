@@ -59,7 +59,14 @@ drops transformers' `Kwargs passed to processor.__call__` warning (12 lines per 
 hard corpus before, none after), and on a terminal a qwn warning clears the status line before it
 prints, so `qwn chat`'s stage line no longer runs into it.
 
-**Open follow-ups:** none.
+**Open follow-ups:**
+
+- **Streaming answers in `qwn chat`** (planned 2026-10-24: CLI → Streaming answers in
+  `qwn chat`). It **starts with a measurement gate**: answers are short (public p50 17
+  completion tokens, ~0.3 s of decoding) and `generate`'s 12.7 s p50 is mostly prefill, so a
+  scratch probe first measures time to first token against decode time. Streaming is built only
+  if long answers decode for ≥ 3 s; otherwise the follow-up closes with the numbers and no code.
+  Branch `followup/chat-streaming`.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -78,6 +85,9 @@ prints, so `qwn chat`'s stage line no longer runs into it.
 7. **Once, at any point:** Repository setup (after first push).
 8. **`qwn chat` follow-up:** CLI (incl. `qwn chat`), Evaluation → Multi-turn questions (Pipeline,
    History), Runtime robustness → Memory policy (warm load).
+9. **Streaming follow-up:** CLI → `qwn chat` and Streaming answers in `qwn chat`, Model
+   interfaces (`Generator`, adapter notes, Prompts and parameters → No token streaming in v1,
+   Guard parsing), Runtime robustness → Memory policy (the MLX lock).
 
 **Workflow for each phase:**
 
@@ -416,6 +426,8 @@ class Tts(Protocol):
   showing text before it passes would defeat the check. The UI shows the stages in `st.status`
   instead. If waiting proves painful in daily use, the fix is to stream and check sentence by
   sentence, which is a design change for a later PR, not an implementation detail.
+  *(2026-10-24)* That design is planned for `qwn chat` only, behind a measurement gate: CLI →
+  Streaming answers in `qwn chat`. The Chat page and `qwn ask` keep this rule.
 - **Follow-up questions (multi-turn follow-up, 2026-10-23):** in Chat, a message after earlier
   exchanges is rewritten into one standalone question by the generator (`REWRITE_PROMPT`, system
   turn; user turn `rewrite_text`: the last `history_turns` exchanges as escaped `<turn>` blocks,
@@ -765,7 +777,8 @@ document could otherwise move the cursor or rewrite earlier lines through an ech
    README gets one `qwn chat` line next to `qwn ask`.
 
 **Out of scope:** voice; saving or reloading conversations; `--json` or other machine output;
-multi-line input; token streaming; changing `history_turns` from inside the REPL.
+multi-line input; token streaming (its own follow-up: Streaming answers in `qwn chat`, below);
+changing `history_turns` from inside the REPL.
 
 **`qwn chat` results (2026-10-24, M2 Max):**
 
@@ -794,6 +807,142 @@ multi-line input; token streaming; changing `history_turns` from inside the REPL
   processor.__call__…` warning on every model call (as `qwn ask` already does) and qwn's own
   WARNING lines (e.g. an unparseable rewrite), so the stage line isn't always a single line.
   Quieting them is an adapter/logging change, out of scope here.
+
+### Streaming answers in `qwn chat` (follow-up, planned 2026-10-24)
+
+**Why:** `qwn chat` prints nothing until the whole answer is generated and checked. The question
+is whether showing the answer as it is written would shorten the wait you actually feel.
+**The numbers say it may not:** in the last public eval run, `generate` took 12.7 s p50 / 21.1 s
+p95, but the median answer is 17 completion tokens (p90 29; the longest non-runaway answer is 51).
+At 59 tok/s that is ~0.3 s of decoding. The rest is prefill: up to `max_images` page images
+(~1,280 visual tokens each) plus the source excerpts, all encoded before the first token.
+Streaming shortens only the decode part, so for factoid questions the first word would show at
+~12.4 s instead of the full answer at ~12.7 s. Long answers (summaries, comparisons, lists) are
+where it could help, and the eval sets have almost none. Guard's response check takes 0.17 s p50,
+so it isn't the bottleneck either.
+
+So this follow-up **measures first** (step 1) and builds streaming (step 2) only if the gate
+passes. One follow-up PR (branch `followup/chat-streaming`) either way, no version bump. No
+change to retrieval, prompts, the rewrite, eval or the Chat page.
+
+**Step 1: probe (scratchpad, not the repo; real models; ~15 min).** On the hard corpus
+(`QWN_DATA_DIR=data/eval-hard QWN_INDEX_DIR=index/eval-hard/<hash>`), with default sampling and
+Guard on, as `qwn chat` runs:
+
+- **Questions:** 15 hard queries across the tags (factoid), plus 10 long-answer questions written
+  for the probe over the same corpus ("Summarise …", "Compare the 2024 and 2025 …", "List every
+  … in the table on …"). They live in the scratchpad only, are never committed, and never
+  become eval queries.
+- **Per question:** `prompt_tokens`; time to first token (the first `GenerationResult` from
+  `mlx_vlm.stream_generate`, cross-checked with `prompt_tokens / prompt_tps`); decode time (first
+  token to last); completion tokens; sentence count (`_SENTENCE_END`); Guard response-check time
+  on the full answer and on each sentence prefix (the cost of step 2's checks).
+- **Nested call check:** on 3 public-corpus pages, greedy: stream an answer and call
+  `Guard.check_response` from inside the token loop after each complete sentence, in the same
+  thread. The streamed text must equal plain greedy `generate` text for the same prompt, and each
+  verdict must equal the verdict of the same check run on its own. This shows whether two MLX
+  models can interleave in one thread, which step 2's design depends on.
+- **Gate:** build step 2 if the long-answer questions' **median decode time is ≥ 3.0 s**, i.e.
+  streaming would show text at least 3 s before the answer is complete. **Otherwise stop:**
+  record the numbers under this section as results, mark the follow-up closed with no code
+  change (as Evaluation → Abstention wording results), and open the PR with `PLAN.md` only. If
+  the nested call check fails, also stop and propose a design (e.g. stream only with
+  `--no-guard`); don't build around it.
+
+**Step 2: design (only if the gate passes; decisions agreed 2026-10-24).**
+
+- **Generator:** `answer(question, sources, *, greedy=False, on_text=None)`. With `on_text`, the
+  adapter calls `mlx_vlm.stream_generate` with the same keyword arguments as today and passes
+  each new text segment to `on_text`. It returns the same `Answer` (text = the concatenated
+  segments, token counts from the last result). mlx-vlm 0.7.6's `generate` is itself a loop over
+  `stream_generate`, so greedy streamed text equals greedy plain text (a `slow` test pins it).
+  Without `on_text`, nothing changes: eval, `qwn ask` and the Chat page don't pass it, so no
+  baseline can move. `locate` and `rewrite` don't stream.
+- **Release by sentence, in `qwn.answer`** (the CLI stays thin): `Answerer.ask` and
+  `Answerer.answer` take `on_text: Callable[[str], None] | None`. The raw text is buffered.
+  Each time `_SENTENCE_END` completes a sentence, that sentence is released: rendered with
+  `[file p.N]` labels by a shared `render(text, sources, hits)` (moved out of
+  `Response.rendered`, which calls it; invented markers dropped as today) and passed to `on_text`.
+  Text after the last sentence end is released when generation ends. A sentence's citation
+  markers are always complete, so a half-written `[S` is never shown. Leading whitespace of the
+  first piece is dropped (as `rendered()` strips).
+- **Guard, sentence by sentence:** with Guard on, a sentence is released only after
+  `screen.response(searched, strip_citations(released + sentence))` allows or warns. Each check
+  covers the whole answer so far, so a sentence is judged in context, and the check on the last
+  piece is exactly today's full-answer check. **Block:** nothing more is released, generation
+  stops (a private exception raised from `on_text` ends the token loop and is caught in
+  `Answerer`), and `ask` returns the withheld `Response` as today. What was already shown passed
+  every check up to it. **Warn:** the sentence is released and the warning is kept.
+  `Response.checks` holds the prompt check, any prefix check that warned or blocked, and the
+  final check. Cost: one 0.17 s check per sentence, taken out of decoding (the probe measures
+  it). Guard off: sentences are released as they complete.
+- **MLX lock:** the Guard check runs inside `on_text`, so it is a Guard call made while the
+  generator call holds `Registry.lock`. `Registry.lock` becomes a `threading.RLock`: the same
+  thread may nest calls; other threads still wait (warm load, eviction, the Chat page in another
+  session). `RLock` has no `locked()` in Python 3.12, and `qwn chat` and the Chat page use
+  `registry.lock.locked()` for "Waiting for the model…": replace it with a `Registry.busy()`
+  helper (a non-blocking acquire that releases at once), with a unit test for both cases.
+- **Searched for:** `Answerer.ask` takes `on_standalone: Callable[[str], None] | None`, called
+  once after the rewrite when the standalone question differs from the message, so `qwn chat`
+  can print `Searched for:` before the answer starts.
+- **`qwn chat` output:** the stage line shows until the first piece arrives, then it's cleared and
+  pieces print as they come (`_plain` on each piece, `nl=False`, flushed). `_CONTROL` removes ESC
+  itself, so an escape sequence split across pieces loses its ESC and prints as harmless text.
+  After `ask` returns: a newline, Guard warnings (stderr, as today but after the answer), a block
+  message if Guard stopped the answer part way, then the Cited list. A question blocked before
+  any text is shown (the prompt check, or the first sentence) prints as today through
+  `_print_response`. The history, `/sources` and the "exchange not recorded" rules are unchanged;
+  a partly shown, then blocked answer counts as a block (left out of the history, `/sources` says
+  "No answer yet.").
+- **Ctrl-C during an answer:** as today, plus a newline if text was shown: "Cancelled." on its
+  own line. The partial text stays on screen and isn't recorded.
+- **Piped output** (stdout not a TTY) uses the same path: printing pieces to a pipe is harmless,
+  and the end result is the same text as before plus the Cited list.
+
+**Tests (with the code, fakes only):**
+
+- `FakeGenerator.answer` takes `on_text` and emits its answer in word-sized pieces; without it,
+  nothing changes (existing tests pass as is).
+- `qwn chat` with streaming prints the same answer text and Cited list as the non-streaming
+  output for the same fake answer; `Searched for:` comes before the answer.
+- Release: no piece ends inside a sentence or a citation marker; markers render as
+  `[file p.N]`; an invented marker is dropped; trailing text without an end mark is released at
+  the end.
+- Guard: one prefix check per sentence (the fake guard records them), and none when Guard is off
+  or `on_text` isn't passed. A fake guard that blocks on a word in the third sentence: the first
+  two are printed, then the block message; the exchange isn't in the history; `/sources` says
+  "No answer yet."; the generator's token loop stopped (the fake records how many pieces it
+  emitted). A warning on a prefix prints after the answer.
+- `KeyboardInterrupt` from the fake generator part way through prints the partial text, then
+  "Cancelled." on its own line; the history is unchanged and the next question answers.
+- An ANSI sequence split across two pieces doesn't reach the output.
+- `Registry.busy()`: false when idle, true while another thread holds the lock, and a nested call
+  in the same thread doesn't deadlock (fake models).
+- **Slow:** greedy `answer(..., on_text=…)` on a public page returns the same text as without
+  it, and the concatenated pieces equal it; a Guard check from inside `on_text` returns the same
+  verdict as on its own.
+
+**Done when:**
+
+1. Step 1's numbers are recorded under this section (both outcomes).
+2. Gate failed: `PLAN.md` only (results, Start here: follow-up closed). Gate passed: fast tests,
+   ruff, ty and the slow tests pass.
+3. **No eval run** in either case: without `on_text`, `Answerer.ask` and the generator do what
+   they do today, and eval never passes it. The `RLock` change is covered by the unit tests and
+   the slow tests.
+4. **Checked by hand in the terminal** (gate passed), with real models on the hard corpus through
+   a pseudo-terminal: a factoid question (the stage line, then the answer at once), a
+   long-answer question from the probe (sentences appear one by one; time to first sentence and
+   to the end recorded), a follow-up (`Searched for:` first), Ctrl-C part way through a long
+   answer followed by a question that answers normally, and `--no-guard` on the same long
+   question (time to first sentence compared).
+5. `PLAN.md` updated in the same PR: this section (results under it), Start here,
+   Prompts and parameters → No token streaming in v1, Runtime robustness → Memory policy (the
+   `RLock`). README: one line that `qwn chat` streams answers (gate passed).
+
+**Out of scope:** streaming in the Chat page (`st.write_stream`) or `qwn ask`; making prefill
+faster (fewer or smaller images change answer quality and are judged on the hard set: a separate
+follow-up); streaming `rewrite` or `locate`; showing the sources before the answer.
 
 ## Streamlit UI (`src/qwn/ui/`)
 
