@@ -79,6 +79,9 @@ uv version --bump minor               # one minor release per completed phase (f
   Run with `--update-baseline` straight away: changes print before the write, and
   `git checkout eval/<set>/baseline.json` rejects them. To explain a change, read `answer_text`
   in `eval/results/*-{public,hard}.json`; baselines have none.
+  Before planning latency work, split the wait with the last public result: `latency.generate`
+  (12.7 s p50) against `completion_tokens` in `per_query` (p50 17, ~0.3 s at 59 tok/s) shows
+  prefill dominates. Hard results with `--no-generate` have no `generate` latency.
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
