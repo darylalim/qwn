@@ -59,14 +59,15 @@ drops transformers' `Kwargs passed to processor.__call__` warning (12 lines per 
 hard corpus before, none after), and on a terminal a qwn warning clears the status line before it
 prints, so `qwn chat`'s stage line no longer runs into it.
 
-**Open follow-ups:**
+The streaming answers in `qwn chat` follow-up is closed at its measurement gate with no code
+change (CLI → Streaming answers in `qwn chat` → Streaming probe results): long answers decode
+for 2.57 s median against a 3.0 s gate, and prefill (time to first token 18.6 s median on the
+hard corpus) is the wait. The probe's nested call check passed, so a later streaming design
+isn't blocked by MLX.
 
-- **Streaming answers in `qwn chat`** (planned 2026-10-24: CLI → Streaming answers in
-  `qwn chat`). It **starts with a measurement gate**: answers are short (public p50 17
-  completion tokens, ~0.3 s of decoding) and `generate`'s 12.7 s p50 is mostly prefill, so a
-  scratch probe first measures time to first token against decode time. Streaming is built only
-  if long answers decode for ≥ 3 s; otherwise the follow-up closes with the numbers and no code.
-  Branch `followup/chat-streaming`.
+**Open follow-ups:** none. Unreleased since v0.9.0: quiet stderr (and this probe, no code). A
+release PR bumps minor per Versioning; the user asked (2026-10-24) to hold v0.10.0 until more
+follow-ups land.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -428,6 +429,7 @@ class Tts(Protocol):
   sentence, which is a design change for a later PR, not an implementation detail.
   *(2026-10-24)* That design is planned for `qwn chat` only, behind a measurement gate: CLI →
   Streaming answers in `qwn chat`. The Chat page and `qwn ask` keep this rule.
+  *(2026-10-24)* The gate failed (Streaming probe results), so `qwn chat` keeps it too.
 - **Follow-up questions (multi-turn follow-up, 2026-10-23):** in Chat, a message after earlier
   exchanges is rewritten into one standalone question by the generator (`REWRITE_PROMPT`, system
   turn; user turn `rewrite_text`: the last `history_turns` exchanges as escaped `<turn>` blocks,
@@ -808,7 +810,7 @@ changing `history_turns` from inside the REPL.
   WARNING lines (e.g. an unparseable rewrite), so the stage line isn't always a single line.
   Quieting them is an adapter/logging change, out of scope here.
 
-### Streaming answers in `qwn chat` (follow-up, planned 2026-10-24)
+### Streaming answers in `qwn chat` (follow-up, planned 2026-10-24, closed at the gate 2026-10-24)
 
 **Why:** `qwn chat` prints nothing until the whole answer is generated and checked. The question
 is whether showing the answer as it is written would shorten the wait you actually feel.
@@ -943,6 +945,40 @@ Guard on, as `qwn chat` runs:
 **Out of scope:** streaming in the Chat page (`st.write_stream`) or `qwn ask`; making prefill
 faster (fewer or smaller images change answer quality and are judged on the hard set: a separate
 follow-up); streaming `rewrite` or `locate`; showing the sources before the answer.
+
+#### Streaming probe results (2026-10-24, M2 Max, probe only)
+
+**The gate fails, so step 2 isn't built** (no code, no eval run, no baseline change). Probe:
+hard corpus, default sampling, Guard on, retrieval as `qwn chat` runs it; 15 factoid hard
+queries (hard-001, 006, 008, 013, 017, 020, 024, 027, 030, 032, 034, 036, 040, 049, 050) and 10
+long-answer questions written for the probe (summaries, a two-year comparison, full lists from a
+price list, the operations manual and the route 7 timetable; listed in the PR, not committed).
+Time to first token is the first `stream_generate` result; decode is first token to last.
+
+| median | time to first token | decode | completion tokens | sentences | Guard, full answer | Guard, every sentence prefix |
+|---|---|---|---|---|---|---|
+| factoid (15) | 18.63 s | 0.64 s | 32 | 1 | 0.19 s | 0.15 s |
+| long (10) | 20.36 s | **2.57 s** | 135 | 5.5 | 0.21 s | 0.86 s |
+
+- **Prefill is the wait.** Time to first token was within 0.4 s of mlx-vlm's own
+  `prompt_tokens / prompt_tps` on 24 of 25 questions (long-08: 1.3 s): nothing else hides in
+  it. Prompts with five page images run ~5,700 tokens and ~20 s to the first token; a single
+  table image, ~1,400 tokens and ~4.4 s. Decoding is ~11 % of a long answer's wait.
+- **What streaming would have bought:** text 2.57 s earlier on a ~23 s long answer, less the
+  sentence checks (0.86 s median, 3.25 s on long-08's 20-sentence timetable list), so about
+  1.7 s. 4 of 10 long answers decoded for ≥ 4 s (max 6.22 s); factoid answers 0.64 s.
+- **Nested call check: passed.** Three multi-sentence greedy questions over public-corpus pages
+  (the annual review, the handbook, the clinic study): 16 Guard checks from inside the token
+  loop, each verdict equal to the same check run alone, and each streamed text byte-identical
+  to plain greedy `generate`. A first try with one-sentence factoid answers ran no check inside
+  the loop and proved nothing; the check needs answers with more than one sentence.
+- Every answer, and every sentence prefix, was allowed by Guard.
+
+**Outcome.** For this corpus and these prompts the felt wait is prefill, so streaming the
+decode doesn't pay for its design cost. The step 2 design stays above for reference; if long
+answers become common in daily use, re-run this probe before building it. Shortening prefill
+(fewer or smaller images, a cached prompt prefix) is the lever, judged on the hard set as a
+separate follow-up with its own planning session.
 
 ## Streamlit UI (`src/qwn/ui/`)
 
