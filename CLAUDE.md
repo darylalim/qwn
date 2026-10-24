@@ -91,6 +91,9 @@ uv version --bump minor               # one minor release per completed phase (f
   A prompt-change probe needs answerable queries the model is unsure of (degraded charts,
   dense tables), not just clean ones: those are where it hedges. Run a subset through the real
   path with `dataclasses.replace(ev.eval_set(settings, "public"), queries=<scratch jsonl>)`.
+  To compare wordings in one process, set `qwn.adapters.mlx_vlm_gen.SYSTEM_PROMPT` (it's
+  imported by name) per run; assert the swapped-out text was found. Diff each run against
+  today's prompt as it lands: one failing criterion ends the probe (~25 min per 41 queries).
   Probe a retrieval idea without a reindex by monkeypatching `Retriever.rerank_input(hit, title)`
   and running `ev.run(..., ev.Options())` (no generation; ~20 min for hard + public). Probe the
   generator side separately: extra prompt text that helps ranking can break answers.
@@ -100,6 +103,9 @@ uv version --bump minor               # one minor release per completed phase (f
   caught by a deterministic check after the model than by more prompt examples, which made the
   rewrite probe worse. Replay a new check on the last run's `standalone_text`/`answer_text`
   before re-running: it predicts the eval exactly.
+  Don't try another abstention wording: three that mention an explained refusal (PLAN.md →
+  Explained abstention, Abstention wording results) made VL-8B append `ABSTAIN_TEXT` to
+  confident answers and drop it from explanations. Fix abstention after the model instead.
 - **Before every commit:** format, lint, ty and fast tests pass (hook H4 enforces this at stop; CI
   repeats it). Before merging a phase: slow tests, eval and the PLAN.md merge checklist.
 
