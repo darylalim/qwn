@@ -49,6 +49,9 @@ uv version --bump minor               # one minor release per completed phase (f
   layers over `qwn.*`, with no model or retrieval logic of their own.
 - **Tests:** unit tests use `tests/fakes.py` and never import MLX or load models. Anything that
   loads a real model is `@pytest.mark.slow`. Write the test with the code, not after.
+  `CliRunner` output includes stderr. Ruff rejects literal `›` (RUF001): write
+  `"\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}"`. `FakeGenerator.rewrite` records every call
+  with history, even when it returns the message unchanged.
 - **Privacy:** the app is localhost-only and offline at runtime (`HF_HUB_OFFLINE=1`; models pinned
   in `src/qwn/models_lock.py`). Never commit `data/`, `index/`, `eval/private/`, `qwn.toml` or
   `.env`. Don't put real document content in tests, fixtures, logs or commit messages.
@@ -63,6 +66,8 @@ uv version --bump minor               # one minor release per completed phase (f
   Status colours always come with an icon and words. Check layouts at the widths in PLAN.md →
   Responsive layout. A real-model browser check runs on an eval corpus via `QWN_DATA_DIR` and
   `QWN_INDEX_DIR` (see Commands); a spoken check needs the user's microphone, so ask them.
+  `qwn ui` takes the model lock only when a page opens (`services()` runs per session): to test
+  "models in use", open a headless Playwright page first.
 - **Eval baselines** change only via `qwn eval --update-baseline`, in the same PR as the change
   that moved them, with the per-query changes explained in the PR.
   If `queries.jsonl` changed (`eval_set_hash`), the tool won't compare runs: diff `per_query`
@@ -85,6 +90,11 @@ uv version --bump minor               # one minor release per completed phase (f
   `SEED_DECOYS` in `eval/hard/build_corpus.py`), never from an existing one, so every existing
   document stays byte-identical. Unit tests that need a corpus build use the session fixture
   `public_corpus` in `tests/unit/conftest.py`; a second build costs ~1 s of the fast-test budget.
+- **Terminal checks:** drive an interactive command with real models through `pty.openpty()`
+  (prompt, readline and stderr status lines need a TTY), and send Ctrl-C with
+  `os.killpg(pid, SIGINT)`: `uv run` is the parent process. The hard index is
+  `index/eval-hard/<hash>` (`ls index/eval-hard`). `[transformers] Kwargs passed to
+  processor.__call__` on stderr is known noise, not a failure.
 - **Model output formats:** before parsing a new kind of model reply, run a scratch probe with
   greedy decoding on a few public-corpus pages (scratchpad, not the repo), then pin the format
   with a `slow` test.
