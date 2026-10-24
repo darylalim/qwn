@@ -46,9 +46,10 @@ wording results): both probed wordings brought back answer-then-refuse replies a
 sentence from a Cold store E explanation, so `SYSTEM_PROMPT` is unchanged and hard-055/turn-030
 stay recorded misses.
 
-**Open follow-up:** `qwn chat`, a terminal REPL for multi-turn questions (planned 2026-10-23:
-CLI → `qwn chat`). The next session implements it on `followup/qwn-chat`. It's the only open
-follow-up, so once it merges a release PR bumps to `0.9.0` (no reindex needed).
+The `qwn chat` follow-up is done (CLI → `qwn chat`, results under it): a terminal REPL over
+the multi-turn pipeline, text only, with `/help`, `/quit`, `/new`, `/sources`, `/in` and
+`/history`. No follow-up is open, so the next PR is the release PR that bumps to `0.9.0` (no
+reindex needed).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -620,13 +621,13 @@ qwn models pull [--voice] [--update]   # download every model at its pinned revi
                             # revisions and rewrites models_lock.py (review the diff)
 qwn models status     # pinned vs cached revisions, disk use
 qwn ui                # runs: streamlit run src/qwn/ui/app.py
-qwn chat [--in PATH]... [--no-guard]   # follow-up (planned 2026-10-23): multi-turn questions in
+qwn chat [--in PATH]... [--no-guard]   # follow-up (done 2026-10-24): multi-turn questions in
                             # the terminal; see `qwn chat` below
 ```
 
 Common flags override settings (`--top-k`, `--rerank-k`, `--max-images`, `--config PATH`).
 
-### `qwn chat` (follow-up, planned 2026-10-23)
+### `qwn chat` (follow-up, planned 2026-10-23, done 2026-10-24)
 
 **Why:** follow-up questions work only on the Chat page. `qwn ask` is single-turn on purpose
 (scripting), so in the terminal "and in 2025?" retrieves on words that name nothing. `qwn chat`
@@ -755,6 +756,34 @@ document could otherwise move the cursor or rewrite earlier lines through an ech
 
 **Out of scope:** voice; saving or reloading conversations; `--json` or other machine output;
 multi-line input; token streaming; changing `history_turns` from inside the REPL.
+
+**`qwn chat` results (2026-10-24, M2 Max):**
+
+- Fast tests 433 passed (`tests/integration/test_chat_flow.py` covers the Tests list), slow tests
+  66 passed, ruff and ty clean. No eval run (Done when 2).
+- **Terminal check** on the hard corpus, driven through a pseudo-terminal so the prompt, readline
+  and the stage line behave as typed. 2024 revenue: 196.9 (asked while the models were still
+  loading, so "Waiting for the model…" showed). "And in 2025?": Searched for "…total revenue in
+  2025?", 214.6. "How many vessels did the company operate that year?": Searched for "…operate in
+  2025?", 37. "Sprint 14 velocity?": no Searched for, 41. `/history` listed those last three
+  turns; `/sources` listed five sources with the cited one starred. `/in data/eval-hard/reports`
+  printed "Searching in: data/eval-hard/reports (3 documents)" and kept the history: "And the
+  number of vessels in 2024?" was rewritten to "…operate in 2024?" but answered 37 from the 2025
+  review, which is the VL-8B reading limit already recorded for turn-010 (Multi-turn results). After
+  `/new`, a bare "And in 2025?" was answered on its own (no rewrite). **Ctrl-C during an answer**
+  (SIGINT to the process group in the Answering stage) printed "Cancelled.", and the next question
+  answered normally (196.9): no change to the plan needed. `/quit` exited 0.
+- `qwn chat` while `qwn ui` had a page open exited 1 with "Models are in use by another qwn
+  process (pid …, probably `qwn ui`)".
+- **Implementation notes:** `qwn chat` takes the model process lock as it starts, as `qwn ui`
+  does, so `ModelsInUse` exits before the banner even with `warm_load = false`. The scope line
+  follows the session example (the paths as typed plus a document count; "all documents (N)"),
+  not `describe_scope`, which names no paths. The history caption moved with `conversation` to
+  `qwn.answer.history_caption`, so Chat and the REPL share the text.
+- **Seen, not changed:** stderr shows the adapters' `[transformers] Kwargs passed to
+  processor.__call__…` warning on every model call (as `qwn ask` already does) and qwn's own
+  WARNING lines (e.g. an unparseable rewrite), so the stage line isn't always a single line.
+  Quieting them is an adapter/logging change, out of scope here.
 
 ## Streamlit UI (`src/qwn/ui/`)
 

@@ -12,7 +12,7 @@ from pathlib import Path
 import streamlit as st
 
 from qwn import eval as ev
-from qwn.answer import Stage
+from qwn.answer import STAGE_LABELS, Stage, conversation, history_caption
 from qwn.models import InsufficientMemory, ModelsInUse
 from qwn.retrieve import EmptyScope, describe_scope, scope_choices
 from qwn.ui import services as ui
@@ -23,14 +23,6 @@ logger = logging.getLogger(__name__)
 
 USER = ":material/person:"
 ASSISTANT = ":material/menu_book:"
-STAGES: dict[Stage, str] = {
-    "guard_prompt": "Checking the question (Guard)…",
-    "rewrite": "Reading the conversation…",
-    "retrieve": "Retrieving…",
-    "rerank": "Reranking…",
-    "generate": "Answering…",
-    "guard_response": "Checking the answer (Guard)…",
-}
 RATINGS: dict[int, ev.Rating] = {0: "down", 1: "up"}  # st.feedback("thumbs") values
 
 st.set_page_config(page_title="qwn · Chat", layout="centered")
@@ -99,14 +91,19 @@ def show_answer(msg: dict, *, last: bool) -> None:
 def ask(question: str, scope: list[str]) -> dict:
     """Run one question through qwn.answer, showing each stage in st.status. Earlier exchanges
     go with it as history, for the rewrite of a follow-up."""
-    turns = ui.conversation(st.session_state.messages, history_turns)
+    exchanges = [
+        (m["question"], m["response"])
+        for m in st.session_state.messages
+        if m["role"] == "assistant" and "response" in m
+    ]
+    turns = conversation(exchanges, history_turns)
     msg: dict = {"id": uuid.uuid4().hex[:12], "role": "assistant", "question": question}
     msg["scope"] = scope
-    with st.status(STAGES["guard_prompt"], expanded=False) as status:
+    with st.status(STAGE_LABELS["guard_prompt"], expanded=False) as status:
 
         def on_stage(stage: Stage) -> None:
             busy = svc.registry.lock.locked() or svc.warm.state == "loading"
-            status.update(label="Waiting for the model…" if busy else STAGES[stage])
+            status.update(label="Waiting for the model…" if busy else STAGE_LABELS[stage])
 
         try:
             answerer = ui.answerer(svc)
@@ -200,14 +197,7 @@ scope = st.multiselect(
     disabled=not docs,
 )
 recording = st.audio_input("Ask out loud", key="recording", disabled=not docs)
-if history_turns > 0:
-    st.caption(
-        f"Follow-up questions use your last {history_turns} questions and answers."
-        if history_turns > 1
-        else "Follow-up questions use your last question and answer."
-    )
-else:
-    st.caption("Each question is answered on its own: earlier messages aren't sent to the model.")
+st.caption(history_caption(history_turns))
 
 question = st.chat_input("Ask about your documents", disabled=not docs, submit_mode="disable")
 question = question or st.session_state.pop("pending", None)
