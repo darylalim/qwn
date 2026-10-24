@@ -48,8 +48,13 @@ stay recorded misses.
 
 The `qwn chat` follow-up is done (CLI → `qwn chat`, results under it): a terminal REPL over
 the multi-turn pipeline, text only, with `/help`, `/quit`, `/new`, `/sources`, `/in` and
-`/history`. No follow-up is open, so the next PR is the release PR that bumps to `0.9.0` (no
-reindex needed).
+`/history`.
+
+**Released as v0.9.0** (2026-10-24): every follow-up above since v0.8.0 (Versioning): the
+abstention wording probe (no prompt change) and `qwn chat`. No reindex: an index from v0.8.0 works
+as is.
+
+**Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -3086,6 +3091,7 @@ job.
   done, or a merged follow-up forces a reindex, a separate release PR (`release/vX.Y.Z`) bumps
   minor. `0.8.0` releases every follow-up merged after `0.7.0` (injection filter, tighter
   regions, hard eval tier, explained abstention, version awareness, multi-turn questions).
+  `0.9.0` releases the abstention wording probe and `qwn chat` (no reindex).
 - **Flow:** bump on the phase branch → PR (CI) → merge to `main` → `release.yml` → tag `vX.Y.Z` +
   GitHub Release.
 - **Note:** `0.1.0` has no tag, so the **first** merge to `main` that touches `pyproject.toml`
