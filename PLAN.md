@@ -46,7 +46,9 @@ wording results): both probed wordings brought back answer-then-refuse replies a
 sentence from a Cold store E explanation, so `SYSTEM_PROMPT` is unchanged and hard-055/turn-030
 stay recorded misses.
 
-**Open follow-ups:** none. A new one starts with a planning session.
+**Open follow-up:** `qwn chat`, a terminal REPL for multi-turn questions (planned 2026-10-23:
+CLI → `qwn chat`). The next session implements it on `followup/qwn-chat`. It's the only open
+follow-up, so once it merges a release PR bumps to `0.9.0` (no reindex needed).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -63,6 +65,8 @@ stay recorded misses.
 6. **Phase 6:** Streamlit UI → Answer highlighting, Model interfaces (`locate`, `Box`),
    Evaluation (regions, `--locate`).
 7. **Once, at any point:** Repository setup (after first push).
+8. **`qwn chat` follow-up:** CLI (incl. `qwn chat`), Evaluation → Multi-turn questions (Pipeline,
+   History), Runtime robustness → Memory policy (warm load).
 
 **Workflow for each phase:**
 
@@ -616,9 +620,141 @@ qwn models pull [--voice] [--update]   # download every model at its pinned revi
                             # revisions and rewrites models_lock.py (review the diff)
 qwn models status     # pinned vs cached revisions, disk use
 qwn ui                # runs: streamlit run src/qwn/ui/app.py
+qwn chat [--in PATH]... [--no-guard]   # follow-up (planned 2026-10-23): multi-turn questions in
+                            # the terminal; see `qwn chat` below
 ```
 
 Common flags override settings (`--top-k`, `--rerank-k`, `--max-images`, `--config PATH`).
+
+### `qwn chat` (follow-up, planned 2026-10-23)
+
+**Why:** follow-up questions work only on the Chat page. `qwn ask` is single-turn on purpose
+(scripting), so in the terminal "and in 2025?" retrieves on words that name nothing. `qwn chat`
+is a small REPL over the multi-turn pipeline that already exists
+(`Answerer.ask(question, history=…)`, Evaluation → Multi-turn questions). **No change to
+retrieval, prompts, the rewrite or Guard.** One follow-up PR (branch `followup/qwn-chat`), no
+version bump.
+
+**Decisions (agreed 2026-10-23):**
+
+- **Text only.** No voice: one-off spoken questions use `qwn ask --audio`, and spoken
+  conversations use the Chat page. Live microphone capture would need a new dependency.
+- **Warm load at start.** The REPL starts `models.WarmLoad` as it opens, as `qwn ui` does, so the
+  ~13 GB core models load while you type. The Registry memory check applies as usual. Other CLI
+  commands stay lazy.
+- **stdlib line editing:** `input()` with `import readline` (macOS libedit) for arrow keys and
+  in-session ↑ history. No new dependency, and **no history file**: questions are never written
+  to disk.
+- **Commands:** `/help`, `/quit`, `/new`, `/sources`, `/in PATH…`, `/history`.
+
+**Session:**
+
+```
+$ qwn chat --in reports/
+qwn chat: ask about your documents. /help for commands, Ctrl-D to quit.
+Searching in: reports/ (3 documents) · Follow-ups use your last 3 questions and answers.
+Loading models in the background…
+› What was total revenue in 2024?
+Revenue was 196.9 million [annual-review.pdf p.1].
+
+Cited:
+  [annual-review.pdf p.1]  reports/annual-review.pdf  p.1
+› And in 2025?
+Searched for: What was total revenue in 2025?
+…
+```
+
+- **Banner:** the scope line (as the Chat page's scope caption) and the history line (the Chat
+  page's input caption text, from `history_turns`; with `history_turns = 0`, "Each question is
+  answered on its own.").
+- **Prompt:** `› ` on a TTY. Empty and whitespace-only lines are ignored.
+- **A question** runs `Answerer.ask(question, history=…, doc_ids=…, guard=…)`. While it runs, the
+  current stage shows as one dim status line on stderr (TTY only), using the Chat page's labels
+  ("Reading the conversation…", "Retrieving…", …), which move to `qwn.answer.STAGE_LABELS` so
+  both share them. A question asked during warm load waits for the model it needs, as in the UI.
+- **Output** is `qwn ask`'s: Guard warnings, a block message or the rendered answer, then the
+  Cited list. It's moved into one `_print_response(response, *, all_sources)` helper used by
+  both commands. When `response.standalone` is set, a dim `Searched for: {standalone}` line comes
+  first, so a wrong rewrite is visible.
+- **History** works as on the Chat page: the last `history_turns` completed exchanges, oldest
+  first. Guard blocks and errors are left out, abstentions kept, and `question` is the message as
+  typed. `ui.conversation` moves to `qwn.answer.conversation(exchanges, turns)`, which takes
+  `(question, Response)` pairs, so the CLI doesn't import `qwn.ui`. The Chat page calls it with
+  its messages. History lives in memory only and is gone on exit.
+- **Errors:** an expected error (`EXPECTED_ERRORS`, `EmptyScope`) or a model error prints
+  `qwn ask`'s message in red, and the exchange isn't recorded. The REPL continues: ask again to
+  retry. A model error's traceback goes to the log as in `ask`.
+- **Warm load:** if it fails with `ModelsInUse` (another process, e.g. `qwn ui`, owns the
+  models), `qwn chat` exits with that message, because no question could run. Any other failure
+  (e.g. `InsufficientMemory`) is printed once and the REPL continues with lazy loading, as the UI
+  does. A start-up problem (index missing, empty or mismatched, empty `--in` scope) exits before
+  the banner, through `_retriever`.
+- **Keys:** Ctrl-D or `/quit` exits (code 0). Ctrl-C at the prompt discards the line. **Ctrl-C
+  during an answer** cancels it: `KeyboardInterrupt` is caught around `ask`, "Cancelled." is
+  printed, the exchange isn't recorded and the prompt returns. The registry's MLX lock is a
+  `with` block, so it's released. Whether the generator answers the *next* question normally
+  after an interrupted generation is checked with the real model (Done when 3). If it doesn't,
+  stop and propose (e.g. Ctrl-C during an answer exits).
+
+**Commands** (a line starting with `/`; arguments split with `shlex`, so quoted paths work).
+An unknown `/word` prints "Unknown command /word. Type /help." and is never sent as a question.
+
+| Command | Does |
+|---|---|
+| `/help` | Lists the commands and keys |
+| `/quit` | Exits (as Ctrl-D) |
+| `/new` | Starts a new conversation: clears the history, keeps the scope. Prints "New conversation." |
+| `/sources` | Every source the last answer was given, cited ones marked `*` (`qwn ask --sources` format). "No answer yet." before the first answer, and after a block or an error |
+| `/in PATH…` | Changes the scope (resolved by `Retriever.scope`, like `--in`) and **keeps the history**, as the Chat page does. `/in` with no paths searches the whole library. `EmptyScope` prints its message and leaves the scope unchanged. Prints the new scope line |
+| `/history` | The turns the next follow-up will be rewritten with: each question, then its answer collapsed to one line and cut at 120 characters. "No history yet." when empty; with `history_turns = 0`, says follow-ups aren't rewritten |
+
+**Flags:** `--in PATH` (repeatable), `--guard/--no-guard`, and the common `--top-k`, `--rerank-k`,
+`--max-images`. No `--json`: `qwn ask --json` is for scripts.
+
+**Privacy and security:** unchanged from Chat. Logs record lengths and timings, never question
+or answer text (as `ask` does today). The REPL writes no transcript and no readline history.
+Answers are printed as plain text: `rendered()` output goes to the terminal as is, with ANSI
+escape sequences and other C0/C1 control characters (except newline and tab) removed first. A
+document could otherwise move the cursor or rewrite earlier lines through an echoed answer.
+`qwn ask`'s human output gets the same filter, through `_print_response`.
+
+**Tests (with the code, fakes only; `CliRunner` with `input=`):**
+
+- A second question passes the first exchange as history (`FakeGenerator.rewrite` records it),
+  and `Searched for:` is printed only when the rewrite differs from the message.
+- `/new` clears the history and keeps the scope; `/in` changes the scope, keeps the history, and
+  with no paths searches everything; `/in` on an empty scope leaves the scope unchanged;
+  `/history` and `/sources` print as specified, with their empty cases; an unknown command isn't
+  asked; blank lines are ignored; Ctrl-D (end of input) exits 0.
+- A Guard-blocked exchange and a failed exchange (a generator that raises once) are left out of
+  the history, and the REPL keeps going after the failure.
+- `KeyboardInterrupt` raised by the fake generator during `ask` prints "Cancelled.", leaves the
+  history unchanged, and the next question is answered.
+- Warm load: `ModelsInUse` exits with its message; another failure is printed once and the next
+  question still runs.
+- `history_turns = 0`: no rewrite call, and the banner says so.
+- Control characters in an answer are stripped from the output, for both `chat` and `ask`.
+- `qwn.answer.conversation`: the Chat page's existing tests keep passing against it (moved, not
+  rewritten); `STAGE_LABELS` covers every `Stage`.
+
+**Done when:**
+
+1. Fast tests, ruff, ty and the slow tests pass.
+2. **No eval run.** `Answerer.ask`, the prompts, the rewrite and retrieval don't change, so no
+   baseline can move. Moving `conversation` and the stage labels is covered by the UI tests.
+3. **Checked by hand in the terminal** with real models, on the hard corpus
+   (`QWN_DATA_DIR=data/eval-hard QWN_INDEX_DIR=index/eval-hard/<hash> uv run qwn chat`), with the
+   browser check's conversation from Multi-turn results: 2024 revenue → "And in 2025?" (Searched
+   for, 214.6) → "How many vessels did the company operate that year?" → "Sprint 14 velocity?"
+   (no Searched for). Then `/history`, `/sources`, `/in` onto one folder and a follow-up there,
+   `/new` followed by a bare "And in 2025?" (answered on its own), and Ctrl-C during an answer
+   followed by a question that answers normally. Also: `qwn chat` while `qwn ui` is running exits
+   with the models-in-use message.
+4. PLAN.md updated in the same PR: this section (results under it), CLI listing, Start here.
+   README gets one `qwn chat` line next to `qwn ask`.
+
+**Out of scope:** voice; saving or reloading conversations; `--json` or other machine output;
+multi-line input; token streaming; changing `history_turns` from inside the REPL.
 
 ## Streamlit UI (`src/qwn/ui/`)
 
@@ -2319,7 +2455,8 @@ that still need one referent.
    results) and Start here.
 6. Fast tests, ruff, ty and the slow tests pass.
 
-**Out of scope:** multi-turn `qwn ask` or a `qwn chat` REPL; sending history to the answer
+**Out of scope:** multi-turn `qwn ask` or a `qwn chat` REPL (the REPL is its own follow-up,
+planned 2026-10-23: CLI → `qwn chat`); sending history to the answer
 generator; conversation memory across sessions (history lives in `st.session_state` only);
 token streaming.
 
