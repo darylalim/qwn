@@ -93,8 +93,8 @@ uv version --bump minor               # one minor release per completed phase (f
 - **Terminal checks:** drive an interactive command with real models through `pty.openpty()`
   (prompt, readline and stderr status lines need a TTY), and send Ctrl-C with
   `os.killpg(pid, SIGINT)`: `uv run` is the parent process. The hard index is
-  `index/eval-hard/<hash>` (`ls index/eval-hard`). `[transformers] Kwargs passed to
-  processor.__call__` on stderr is known noise, not a failure.
+  `index/eval-hard/<hash>` (`ls index/eval-hard`). Repeated third-party warnings go in
+  `logging_setup.KNOWN_NOISE`, not in an adapter.
 - **Model output formats:** before parsing a new kind of model reply, run a scratch probe with
   greedy decoding on a few public-corpus pages (scratchpad, not the repo), then pin the format
   with a `slow` test.
