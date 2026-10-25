@@ -70,9 +70,11 @@ page images at 640 tokens (`rerank_max_pixels`, no reindex), with the same hard 
 p50 on the hard set 33.5 s → 26.7 s. Smaller generator images failed rule G on near-miss version
 questions, so `gen_max_pixels` stays at 1,280 tokens.
 
-**Open follow-ups:** none. Unreleased since v0.9.0: quiet stderr, faster prefill (and the
-streaming probe, no code). A release PR bumps minor per Versioning; the user asked (2026-10-24)
-to hold v0.10.0 until more follow-ups land.
+**Released as v0.10.0** (2026-10-25): every follow-up above since v0.9.0 (Versioning): quiet
+stderr, the streaming probe (no code) and faster prefill. No reindex: an index from v0.9.0 works
+as is.
+
+**Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -3523,6 +3525,7 @@ job.
   minor. `0.8.0` releases every follow-up merged after `0.7.0` (injection filter, tighter
   regions, hard eval tier, explained abstention, version awareness, multi-turn questions).
   `0.9.0` releases the abstention wording probe and `qwn chat` (no reindex).
+  `0.10.0` releases quiet stderr, the streaming probe (no code) and faster prefill (no reindex).
 - **Flow:** bump on the phase branch → PR (CI) → merge to `main` → `release.yml` → tag `vX.Y.Z` +
   GitHub Release.
 - **Note:** `0.1.0` has no tag, so the **first** merge to `main` that touches `pyproject.toml`
