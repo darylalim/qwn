@@ -18,6 +18,7 @@ class MlxVlmReranker:
         self.model = model
         self.processor = processor
         self.model_id = model_id
+        self.last_prompt_tokens = 0  # of the last score() call (slow test)
 
     @classmethod
     def load(cls, settings: Settings) -> "MlxVlmReranker":
@@ -27,7 +28,7 @@ class MlxVlmReranker:
 
         repo = settings.rerank_model
         model, processor = load_reranker(pinned_snapshot(repo))
-        processor.image_processor.max_pixels = settings.max_pixels
+        processor.image_processor.max_pixels = settings.rerank_max_pixels
         return cls(model, processor, f"{repo}@{pinned(repo).revision}")
 
     def score(self, query: Item, docs: list[Item]) -> list[float]:
@@ -39,7 +40,7 @@ class MlxVlmReranker:
 
         if not docs:
             return []
-        scores, _tokens = score_documents(
+        scores, self.last_prompt_tokens = score_documents(
             self.model,
             self.processor,
             self.model.config,

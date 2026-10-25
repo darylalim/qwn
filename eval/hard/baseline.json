@@ -9,15 +9,15 @@
    "rerank": "mlx-community/Qwen3-VL-Reranker-2B-8bit@e9cd8bbefa68882550b30cfe1c9905b882965888",
    "guard": "mlx-community/Qwen3Guard-Gen-0.6B-MLX@919a45777b667714648ee3d10d4560538b5b8bc8"
   },
-  "settings_hash": "19e96aa16f67b86dc6d0dece73f3a941aab99e35b89184f1f82bce882a0dc87a",
+  "settings_hash": "921796c5688d81a8fddbdcb098aedc2245108b5b3e9dd7e1a747e1f5a927df5c",
   "options": {
    "rerank": true,
    "hybrid": true,
    "generate": true
   },
-  "git_sha": "9a66b0f23c84235d9f7a29367a018b3c6428c8b3",
-  "qwn_version": "0.7.0",
-  "created": "2026-10-23T03:22:06+00:00"
+  "git_sha": "bf3469ba0a67b403a05dd7ee38dd9e6532f0632c",
+  "qwn_version": "0.9.0",
+  "created": "2026-10-25T19:53:01+00:00"
  },
  "summary": {
   "recall@1": {
@@ -945,13 +945,26 @@
    }
   }
  },
+ "rewrite": {
+  "summary": {
+   "rewrite_hit": {
+    "value": 0.0,
+    "ci95": [
+     0.0,
+     1.0
+    ],
+    "n": 0
+   }
+  },
+  "by_tag": {}
+ },
  "answer": {
   "summary": {
    "citation_hit": {
-    "value": 0.92,
+    "value": 0.94,
     "ci95": [
-     0.8116,
-     0.9685
+     0.8378,
+     0.9794
     ],
     "n": 50
    },
@@ -980,10 +993,10 @@
     "n": 9
    },
    "answer_approx": {
-    "value": 0.75,
+    "value": 1.0,
     "ci95": [
-     0.3006,
-     0.9544
+     0.5101,
+     1.0
     ],
     "n": 4
    },
@@ -1000,10 +1013,10 @@
   "by_tag": {
    "text": {
     "citation_hit": {
-     "value": 0.8620689655172413,
+     "value": 0.896551724137931,
      "ci95": [
-      0.6944,
-      0.945
+      0.7361,
+      0.9642
      ],
      "n": 29
     },
@@ -1118,10 +1131,10 @@
      "n": 0
     },
     "answer_approx": {
-     "value": 0.75,
+     "value": 1.0,
      "ci95": [
-      0.3006,
-      0.9544
+      0.5101,
+      1.0
      ],
      "n": 4
     },
@@ -1215,10 +1228,10 @@
    },
    "version": {
     "citation_hit": {
-     "value": 0.8095238095238095,
+     "value": 0.8571428571428571,
      "ci95": [
-      0.6,
-      0.9233
+      0.6536,
+      0.9502
      ],
      "n": 21
     },
@@ -1258,10 +1271,10 @@
    },
    "multi": {
     "citation_hit": {
-     "value": 0.7777777777777778,
+     "value": 0.8888888888888888,
      "ci95": [
-      0.4526,
-      0.9368
+      0.565,
+      0.9801
      ],
      "n": 9
     },
@@ -1333,10 +1346,10 @@
      "n": 0
     },
     "answer_approx": {
-     "value": 0.75,
+     "value": 1.0,
      "ci95": [
-      0.3006,
-      0.9544
+      0.5101,
+      1.0
      ],
      "n": 4
     },
@@ -1488,18 +1501,18 @@
   "summary": {
    "not_cited": 4,
    "locate_hit": {
-    "value": 0.8571428571428571,
+    "value": 0.8333333333333334,
     "ci95": [
-     0.7216,
-     0.9328
+     0.694,
+     0.9168
     ],
     "n": 42
    },
    "no_box": {
-    "value": 0.07142857142857142,
+    "value": 0.09523809523809523,
     "ci95": [
-     0.0246,
-     0.1901
+     0.0377,
+     0.2207
     ],
     "n": 42
    }
@@ -1565,18 +1578,18 @@
    "table": {
     "not_cited": 0,
     "locate_hit": {
-     "value": 0.7142857142857143,
+     "value": 0.5714285714285714,
      "ci95": [
-      0.3589,
-      0.9178
+      0.2505,
+      0.8418
      ],
      "n": 7
     },
     "no_box": {
-     "value": 0.0,
+     "value": 0.14285714285714285,
      "ci95": [
-      0.0,
-      0.3543
+      0.0257,
+      0.5131
      ],
      "n": 7
     }
@@ -1679,18 +1692,18 @@
    "paraphrase": {
     "not_cited": 1,
     "locate_hit": {
-     "value": 0.9090909090909091,
+     "value": 0.8181818181818182,
      "ci95": [
-      0.6226,
-      0.9838
+      0.523,
+      0.9486
      ],
      "n": 11
     },
     "no_box": {
-     "value": 0.0,
+     "value": 0.09090909090909091,
      "ci95": [
-      0.0,
-      0.2588
+      0.0162,
+      0.3774
      ],
      "n": 11
     }
@@ -1699,31 +1712,31 @@
  },
  "latency": {
   "embed": {
-   "p50_ms": 37.49995900579961,
-   "p95_ms": 44.65949999575969
+   "p50_ms": 37.28733400021156,
+   "p95_ms": 44.04620800050907
   },
   "search": {
-   "p50_ms": 1.7903330008266494,
-   "p95_ms": 2.6299160017515533
+   "p50_ms": 1.7791250011214288,
+   "p95_ms": 2.7952920008829096
   },
   "rerank": {
-   "p50_ms": 12689.542207997874,
-   "p95_ms": 13706.785832997411
+   "p50_ms": 6028.760124998371,
+   "p95_ms": 6429.720875001294
   },
   "generate": {
-   "p50_ms": 20667.4124590063,
-   "p95_ms": 22364.400416001445
+   "p50_ms": 20642.849249999927,
+   "p95_ms": 22519.816457999696
   },
   "ask": {
-   "p50_ms": 33490.21012600133,
-   "p95_ms": 35951.57879100225
+   "p50_ms": 26662.026873997092,
+   "p95_ms": 28830.034749000333
   },
   "locate": {
-   "p50_ms": 5303.810916004295,
-   "p95_ms": 5331.1005829964415
+   "p50_ms": 5314.676584001063,
+   "p95_ms": 5351.760166999156
   },
-  "model_load_s": 5.777252791998762,
-  "peak_memory_gb": 12.990013452
+  "model_load_s": 5.798803958001372,
+  "peak_memory_gb": 12.979167216
  },
  "per_query": [
   {
@@ -1840,7 +1853,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5664,
+   "prompt_tokens": 5669,
    "completion_tokens": 19,
    "citation_hit": true,
    "answer_contains": true,
@@ -1874,7 +1887,7 @@
    "abstained": false,
    "invented": 0,
    "prompt_tokens": 5680,
-   "completion_tokens": 34,
+   "completion_tokens": 20,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
@@ -1882,7 +1895,7 @@
     0.116,
     0.095,
     0.705,
-    0.113
+    0.112
    ],
    "locate_hit": true
   },
@@ -2037,8 +2050,8 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 5656,
-   "completion_tokens": 105,
+   "prompt_tokens": 5670,
+   "completion_tokens": 96,
    "citation_hit": false,
    "answer_contains": true,
    "locate": "not_cited"
@@ -2135,7 +2148,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5730,
+   "prompt_tokens": 5725,
    "completion_tokens": 49,
    "citation_hit": true,
    "citation_all": true,
@@ -2173,19 +2186,19 @@
      "page": 4
     }
    ],
-   "abstained": false,
+   "abstained": true,
    "invented": 0,
    "prompt_tokens": 5677,
-   "completion_tokens": 131,
+   "completion_tokens": 152,
    "citation_hit": true,
    "citation_all": true,
    "answer_contains": true,
    "locate": "scored",
    "locate_box": [
-    0.115,
-    0.096,
+    0.116,
+    0.095,
     0.638,
-    0.113
+    0.115
    ],
    "locate_hit": true
   },
@@ -2203,12 +2216,21 @@
    "rank_rerank": 1,
    "all_in_top": true,
    "rank": 1,
-   "cited": [],
-   "abstained": true,
+   "cited": [
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 2
+    },
+    {
+     "path": "reports/annual-review-2024.pdf",
+     "page": 4
+    }
+   ],
+   "abstained": false,
    "invented": 0,
    "prompt_tokens": 5675,
-   "completion_tokens": 10,
-   "citation_hit": false,
+   "completion_tokens": 284,
+   "citation_hit": true,
    "citation_all": false,
    "answer_contains": false,
    "locate": "not_cited"
@@ -2313,8 +2335,8 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5673,
-   "completion_tokens": 73,
+   "prompt_tokens": 5719,
+   "completion_tokens": 72,
    "citation_hit": true,
    "citation_all": true,
    "answer_contains": true,
@@ -2514,7 +2536,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5732,
+   "prompt_tokens": 5735,
    "completion_tokens": 18,
    "citation_hit": true,
    "answer_contains": true,
@@ -2547,7 +2569,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5728,
+   "prompt_tokens": 5733,
    "completion_tokens": 14,
    "citation_hit": true,
    "answer_contains": true,
@@ -2580,7 +2602,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5730,
+   "prompt_tokens": 5729,
    "completion_tokens": 16,
    "citation_hit": true,
    "answer_contains": true,
@@ -2614,7 +2636,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5535,
+   "prompt_tokens": 5541,
    "completion_tokens": 26,
    "citation_hit": true,
    "answer_contains": true,
@@ -2714,7 +2736,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5606,
+   "prompt_tokens": 5604,
    "completion_tokens": 55,
    "citation_hit": true,
    "answer_contains": true,
@@ -2747,7 +2769,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5643,
+   "prompt_tokens": 5644,
    "completion_tokens": 29,
    "citation_hit": true,
    "answer_contains": true,
@@ -2780,15 +2802,15 @@
    "abstained": false,
    "invented": 0,
    "prompt_tokens": 5238,
-   "completion_tokens": 19,
+   "completion_tokens": 29,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
    "locate_box": [
-    0.62,
-    0.587,
-    0.707,
-    0.625
+    0.058,
+    0.566,
+    0.968,
+    0.61
    ],
    "locate_hit": false
   },
@@ -2811,7 +2833,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5193,
+   "prompt_tokens": 5192,
    "completion_tokens": 19,
    "citation_hit": true,
    "answer_contains": true,
@@ -2843,8 +2865,8 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 4912,
-   "completion_tokens": 68,
+   "prompt_tokens": 4810,
+   "completion_tokens": 120,
    "citation_hit": true,
    "answer_approx": true
   },
@@ -2919,30 +2941,14 @@
    "cited": [
     {
      "path": "charts/occupancy-unlabelled.png"
-    },
-    {
-     "path": "reports/annual-review.pdf",
-     "page": 4
-    },
-    {
-     "path": "reports/annual-review-2024.pdf",
-     "page": 4
-    },
-    {
-     "path": "reports/annual-review.pdf",
-     "page": 2
-    },
-    {
-     "path": "reports/annual-review.pdf",
-     "page": 3
     }
    ],
    "abstained": true,
    "invented": 0,
    "prompt_tokens": 5298,
-   "completion_tokens": 104,
+   "completion_tokens": 210,
    "citation_hit": true,
-   "answer_approx": false
+   "answer_approx": true
   },
   {
    "id": "hard-038",
@@ -2988,24 +2994,20 @@
     {
      "path": "reports/annual-review-2024.pdf",
      "page": 2
-    },
-    {
-     "path": "reports/annual-review.pdf",
-     "page": 2
     }
    ],
    "abstained": false,
    "invented": 0,
    "prompt_tokens": 5663,
-   "completion_tokens": 105,
+   "completion_tokens": 81,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
    "locate_box": [
     0.116,
-    0.095,
-    0.615,
-    0.113
+    0.097,
+    0.75,
+    0.115
    ],
    "locate_hit": true
   },
@@ -3129,7 +3131,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5627,
+   "prompt_tokens": 5580,
    "completion_tokens": 24,
    "citation_hit": true,
    "answer_contains": true,
@@ -3197,8 +3199,8 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 5731,
-   "completion_tokens": 33,
+   "prompt_tokens": 5733,
+   "completion_tokens": 30,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
@@ -3263,8 +3265,8 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 4979,
-   "completion_tokens": 64,
+   "prompt_tokens": 4849,
+   "completion_tokens": 70,
    "citation_hit": true,
    "answer_approx": true
   },
@@ -3320,7 +3322,7 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 3975,
+   "prompt_tokens": 3632,
    "completion_tokens": 27,
    "citation_hit": true,
    "answer_contains": true,
@@ -3352,18 +3354,13 @@
    ],
    "abstained": false,
    "invented": 0,
-   "prompt_tokens": 3936,
-   "completion_tokens": 35,
+   "prompt_tokens": 3963,
+   "completion_tokens": 52,
    "citation_hit": true,
    "answer_contains": true,
    "locate": "scored",
-   "locate_box": [
-    0.078,
-    0.727,
-    0.93,
-    0.835
-   ],
-   "locate_hit": true
+   "locate_box": null,
+   "locate_hit": false
   },
   {
    "id": "hard-051",
@@ -3390,7 +3387,7 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 3888,
+   "prompt_tokens": 3891,
    "completion_tokens": 10
   },
   {
@@ -3418,7 +3415,7 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 2722,
+   "prompt_tokens": 1402,
    "completion_tokens": 10
   },
   {
@@ -3465,7 +3462,7 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 5237,
+   "prompt_tokens": 5239,
    "completion_tokens": 10
   },
   {
@@ -3479,7 +3476,7 @@
    "cited": [],
    "abstained": true,
    "invented": 0,
-   "prompt_tokens": 4917,
+   "prompt_tokens": 4585,
    "completion_tokens": 10
   },
   {
@@ -3517,12 +3514,16 @@
     {
      "path": "scans/faded-invoice.pdf",
      "page": 1
+    },
+    {
+     "path": "contracts/supply-agreement.pdf",
+     "page": 3
     }
    ],
    "abstained": true,
    "invented": 0,
    "prompt_tokens": 5480,
-   "completion_tokens": 80
+   "completion_tokens": 127
   }
  ],
  "criteria": []

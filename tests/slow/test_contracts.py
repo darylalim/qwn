@@ -79,6 +79,20 @@ def test_rerank_empty_docs(registry):
     assert registry.reranker().score(Item(text=QUESTION), []) == []
 
 
+def test_rerank_prompt_tokens_fall_with_its_image_cap(registry, page_image, monkeypatch):
+    reranker = (
+        registry.reranker()._inner
+    )  # the adapter behind the MLX lock: its fields are settable
+    docs = [Item(text=PAGE, image_path=page_image)]
+    monkeypatch.setattr(reranker.processor.image_processor, "max_pixels", 1280 * 1024)
+    reranker.score(Item(text=QUESTION), docs)
+    full = reranker.last_prompt_tokens
+    monkeypatch.setattr(reranker.processor.image_processor, "max_pixels", 640 * 1024)
+    a = reranker.score(Item(text=QUESTION), docs)
+    assert reranker.score(Item(text=QUESTION), docs) == a  # still deterministic
+    assert full - reranker.last_prompt_tokens == pytest.approx(640, rel=0.02)
+
+
 # Guard
 
 
@@ -130,6 +144,20 @@ def test_generator_decodes_at_least_35_tokens_per_second(registry, page_image):
     gen = registry.generator()
     gen.answer("Summarise the page in about 150 words.", [source], greedy=True)
     assert getattr(gen, "last_tps", 0.0) >= 35.0
+
+
+def test_generator_answer_cap_shrinks_answers_but_not_locate(registry, page_image, monkeypatch):
+    # The processor is shared: answer sets gen_max_pixels, locate resets max_pixels, per call.
+    gen = registry.generator()._inner  # the adapter behind the MLX lock: its fields are settable
+    source = Source("S1", "c1", "report.pdf", 1, PAGE, page_image, 1.0)
+    full = gen.answer(QUESTION, [source], greedy=True).prompt_tokens
+    gen.locate(page_image, "Q3 revenue grew 12%.")
+    locate_full = gen.last_prompt_tokens
+    monkeypatch.setattr(gen, "answer_pixels", 640 * 1024)
+    small = gen.answer(QUESTION, [source], greedy=True).prompt_tokens
+    assert full - small == pytest.approx(640, rel=0.02)  # one image at 1,280 → 640 tokens
+    gen.locate(page_image, "Q3 revenue grew 12%.")
+    assert gen.last_prompt_tokens == locate_full
 
 
 def test_generator_locates_the_supporting_line_on_a_0_to_1000_scale(registry, tmp_path):

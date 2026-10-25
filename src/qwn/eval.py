@@ -81,6 +81,8 @@ RESULT_KEYS = (
     "rerank_k",
     "max_images",
     "max_pixels",
+    "gen_max_pixels",
+    "rerank_max_pixels",
     "max_context",
     "max_tokens",
     "pdf_embed",

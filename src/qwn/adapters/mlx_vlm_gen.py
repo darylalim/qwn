@@ -46,7 +46,12 @@ class MlxVlmGenerator:
         self.model_id = model_id
         self.max_images = settings.max_images
         self.max_tokens = settings.max_tokens
+        # The processor is shared, so each call sets its own image cap (mlx-vlm reads
+        # image_processor.max_pixels at call time).
+        self.answer_pixels = settings.gen_max_pixels
+        self.locate_pixels = settings.max_pixels
         self.last_tps = 0.0  # generation tokens/s of the last answer (smoke test)
+        self.last_prompt_tokens = 0  # of the last answer or locate call (slow test)
 
     @classmethod
     def load(cls, settings: Settings) -> "MlxVlmGenerator":
@@ -56,7 +61,6 @@ class MlxVlmGenerator:
 
         repo = settings.gen_model
         model, processor = load(str(pinned_snapshot(repo)))
-        processor.image_processor.max_pixels = settings.max_pixels
         return cls(model, processor, f"{repo}@{pinned(repo).revision}", settings)
 
     def answer(self, question: str, sources: list[Source], *, greedy: bool = False) -> Answer:
@@ -64,6 +68,7 @@ class MlxVlmGenerator:
         from mlx_vlm.prompt_utils import get_chat_template
 
         image_sources, included = plan_sources(sources, self.max_images)
+        self.processor.image_processor.max_pixels = self.answer_pixels
         prompt = get_chat_template(
             self.processor,
             messages(question, image_sources, included),
@@ -81,6 +86,7 @@ class MlxVlmGenerator:
             top_k=TOP_K,
         )
         self.last_tps = result.generation_tps
+        self.last_prompt_tokens = result.prompt_tokens
         return Answer(
             text=result.text,
             cited=parse_citations(result.text, [s.label for s in included]),
@@ -100,6 +106,7 @@ class MlxVlmGenerator:
             },
         ]
         prompt = get_chat_template(self.processor, msgs, add_generation_prompt=True)
+        self.processor.image_processor.max_pixels = self.locate_pixels
         result = generate(
             self.model,
             self.processor,
@@ -109,6 +116,7 @@ class MlxVlmGenerator:
             verbose=False,
             temperature=0.0,  # greedy: the same page and claim always give the same box
         )
+        self.last_prompt_tokens = result.prompt_tokens
         box = parse_box(result.text)  # Qwen3-VL's 0-1000 scale -> Box (0..1)
         if box is None:
             logger.info("locate: no usable box in a %d-char reply", len(result.text))

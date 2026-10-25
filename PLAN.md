@@ -65,12 +65,14 @@ for 2.57 s median against a 3.0 s gate, and prefill (time to first token 18.6 s 
 hard corpus) is the wait. The probe's nested call check passed, so a later streaming design
 isn't blocked by MLX.
 
-**Open follow-ups:** **faster prefill** (planned 2026-10-24; Evaluation → Faster prefill;
-implement on `followup/faster-prefill`): separate query-time image caps for the generator and
-the reranker (`gen_max_pixels`, `rerank_max_pixels`, no reindex), swept on the hard set under
-rules written before the runs. Unreleased since v0.9.0: quiet stderr (and the streaming probe,
-no code). A release PR bumps minor per Versioning; the user asked (2026-10-24) to hold v0.10.0
-until more follow-ups land.
+The faster prefill follow-up is done (Evaluation → Faster prefill results): the reranker reads
+page images at 640 tokens (`rerank_max_pixels`, no reindex), with the same hard ranks; `ask`
+p50 on the hard set 33.5 s → 26.7 s. Smaller generator images failed rule G on near-miss version
+questions, so `gen_max_pixels` stays at 1,280 tokens.
+
+**Open follow-ups:** none. Unreleased since v0.9.0: quiet stderr, faster prefill (and the
+streaming probe, no code). A release PR bumps minor per Versioning; the user asked (2026-10-24)
+to hold v0.10.0 until more follow-ups land.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -429,7 +431,12 @@ class Tts(Protocol):
   Qwen3-VL uses **32 px per visual token** (16 px patches, 2×2 merge), so
   `max_pixels = 1280 * 32 * 32` ≈ 1,280 tokens per image, ≈ 5.1k for 4 images, well inside
   `max_context`. Phase 0 checks `patch_size` and `spatial_merge_size` in the processor config and
-  the keyword the processor accepts.
+  the keyword the processor accepts. `max_pixels` sizes ingest and the embedder; query-time
+  models have their own caps (no reindex): the generator's answers use `gen_max_pixels`
+  (1,280 tokens; `locate` keeps `max_pixels`), set per call because the processor is shared, and
+  the reranker uses `rerank_max_pixels` = 640 tokens (Evaluation → Faster prefill results:
+  same hard ranks, rerank p50 12.7 s → 6.1 s; smaller generator images broke near-miss version
+  answers).
 - **No token streaming in v1 (decided):** Guard's response check needs the whole answer, and
   showing text before it passes would defeat the check. The UI shows the stages in `st.status`
   instead. If waiting proves painful in daily use, the fix is to stream and check sentence by
@@ -1435,7 +1442,9 @@ class Settings(BaseSettings):
     rerank_candidates: int = 10          # head of the fused list the reranker scores (phase 2)
     rerank_k: int = 5
     max_images: int = 4
-    max_pixels: int = 1_310_720          # 1280 * 32 * 32 (Qwen3-VL: 32 px per visual token)
+    max_pixels: int = 1_310_720          # 1280 * 32 * 32 (Qwen3-VL: 32 px per visual token); ingest + embedder
+    gen_max_pixels: int = 1_310_720      # generator answers, query time (locate keeps max_pixels); >= 65_536
+    rerank_max_pixels: int = 655_360     # reranker, query time (640 tokens); >= 65_536
     pdf_embed: Literal["image+text", "image"] = "image+text"   # phase 1 ablation; see Data flow
     max_context: int = 16_384
     max_tokens: int = 1024
@@ -3012,6 +3021,109 @@ the KV cache across queries or turns (a separate design; record step 1's
 prefix (~200 of ~5,600 tokens, under 4 %); `MLX_VLM_RERANK_BATCH_SIZE` (prefill at this size is
 compute-bound, and it's an mlx-vlm environment variable, not a qwn setting); choosing images per
 source by rerank score; smaller or different models.
+
+#### Faster prefill results
+
+**Step 1: mechanism check** (2026-10-25, scratch, real models, greedy). Three stored renders
+of one public PDF (1240 × 1755 px each, so 1,280 tokens at the default cap), in one `answer`
+call and one `score` call, at the default and at 640 × 1024 px:
+
+| Call | Default: prompt tokens, time | 640-token cap: prompt tokens, time | Saved |
+|---|---|---|---|
+| `answer`, 3 images | 4,016, 15.2 s | 2,126, 7.1 s | 1,890 (expected 1,920, −1.6 %) |
+| reranker `score`, 3 pages | 4,020, 4.1 s | 2,130, 1.8 s | 1,890 (−1.6 %) |
+| `locate` after the `answer` | 1,383 | 1,383 | 0 (reset per call) |
+
+Prefill ran at 285 tok/s (default) and 311 tok/s (small) as mlx-vlm reports `prompt_tps`:
+about 4.5 s per 1,280-token image in the generator. Reranker scores moved by at most 0.009 on
+these three pages and stay deterministic. Two findings:
+
+- mlx-vlm loads the generator's processor with `max_pixels` 16,777,216, not 1,280 tokens:
+  only the adapter's setting caps it. `answer` and `locate` now each set it before their call,
+  and `rewrite` sends no image.
+- The registry's `_Locked` wrapper forwards reads only, and wraps anything callable (mlx-vlm's
+  model and processor). A probe or a slow test that changes an adapter field goes through
+  `registry.generator()._inner`; setting it on the wrapper is silently ignored.
+
+Pinned by `test_generator_answer_cap_shrinks_answers_but_not_locate` and
+`test_rerank_prompt_tokens_fall_with_its_image_cap` (slow).
+
+**Step 2: reranker sweep** (2026-10-25, hard set, `--no-generate --force`, generator at
+1,280 × 4; baseline 1,280 tokens per image: recall@1 0.940, MRR 0.965, rerank p50 12.69 s,
+and a `--no-generate` run at 1,280 from 2026-10-23 gave 12.76 s, so the timings compare):
+
+| Arm | recall@1 | recall@5 | `recall_all@5` | MRR | rerank p50 | MLX peak | Rule R |
+|---|---|---|---|---|---|---|---|
+| R640 | 0.940 | 1.000 | 1.000 | 0.965 | 6.08 s (−52 %) | 6.49 GB | pass; no rank changes |
+| R320 | 0.900 | 1.000 | 1.000 | 0.945 | 3.43 s | 6.37 GB | fail: hard-024 and hard-045 (long text pages) 1 → 2 |
+| Rtext | not measurable | | | | | | 0 of 500 reranker inputs qualified |
+
+Rtext selects nothing on either eval corpus: no PDF page has 400 characters of stored text
+(hard: at most 298, median about 200; public: at most 245), so its run repeated today's input
+(13.07 s, the baseline's ranks). Lowering the cut to fit these synthetic pages would test
+text-only reranking on short pages, not the rule as written, so Rtext is closed unmeasured
+(agreed 2026-10-25) and `rerank_page_images` isn't added. **Choice: R640**
+(`rerank_max_pixels` = 655,360), the cheapest passing arm. Prompt tokens per reranker call
+aren't in eval results; step 1 measured 640 fewer per page.
+
+**Step 3: generator sweep** (2026-10-25, hard set, `--locate --force`, R640 in every arm;
+baseline: generate p50 20.67 s, `ask` p50 33.49 s, `prompt_tokens` p50 5,561, MLX peak
+12.99 GB). "Worse" and "better" count queries against the baseline's `per_query`:
+
+| Arm | Worse | Better | Invented | generate p50 | `ask` p50 | `prompt_tokens` p50 | MLX peak | Rule G |
+|---|---|---|---|---|---|---|---|---|
+| G0 (1,280 × 4) | 1 | 2 | 0 | 20.67 s | 26.71 s | 5,561 | 12.98 GB | quality part passes: R640 stays |
+| G896 (896 × 4) | 3 | 2 | 0 | 14.35 s | 20.45 s | 4,061 | 12.67 GB | fail (3 worse) |
+| G640 (640 × 4) | 2 | 4 | 0 | 10.59 s | 16.81 s | 3,085 | 12.42 GB | fail (2 worse) |
+| G-3 (1,280 × 3) | 3 | 1 | 0 | 15.90 s | 21.97 s | 4,328 | 12.69 GB | fail (3 worse, 15.9 s > 15.5 s) |
+
+G0 keeps today's generator, so it can't meet rule G's latency gate by design; it is judged on
+the quality part only (invented 0, at most one query worse), which is what "undo step 2" needs.
+The changed queries, from `answer_text`:
+
+- **hard-014** (G0, G-3: worse, false abstention): the same explained refusal listing both
+  dividends (1.45 and 1.85) now ends as an abstention; R640's slightly different scores, greedy
+  decoding.
+- **hard-015** (all arms: better): answers and cites the 2024 pages instead of refusing (cf. the
+  version awareness results, where it refused on the new order).
+- **hard-037** (G0, G896, G640: better): the degraded chart's approximate value, citing the chart
+  only.
+- **hard-002** (G896: worse): names MV Tern Island from the other report instead of MV Storm
+  Petrel.
+- **hard-010** (G896, G640, G-3: worse): the baseline's hedged refusal mentioned April by
+  listing both orders; G896 and G640 answer "first week of March" confidently from the wrong
+  order, and G-3 refuses without listing them.
+- **hard-059** (G896, G640: worse, unanswerable): answers the 2027 fee as 3,650 euros (the 2026
+  fee) instead of explaining that 2027 fees are agreed in December 2026. Smaller page images lose
+  the dated qualifier, not the page.
+- **hard-060** (G-3: worse, unanswerable): states the late charge is "as set out in their terms"
+  instead of refusing.
+- **hard-019, hard-055** (G640: better): a cited `multi` answer, and a correct refusal.
+
+**Choice: none passes; the generator stays at 1,280 × 4** (`gen_max_pixels` 1,310,720,
+`max_images` 4). The faster generator arms fail on near-miss version questions, where the
+evidence is one dated line. Result: R640 alone takes `ask` p50 from 33.5 s to 26.7 s (−20 %).
+
+**Step 4: defaults and baselines** (2026-10-25). `rerank_max_pixels` defaults to 655,360;
+`gen_max_pixels` stays 1,310,720. Both baselines rewritten (`corpus_hash` and `eval_set_hash`
+unchanged, no reindex). Hand diff of `per_query` against the previous baselines:
+
+- **Public:** every exit criterion passes. pub-075 `locate_hit` false → true. pub-009 is
+  reworded ("PO-48213 cost 18,450 euros"); Guard now labels it Unsafe instead of Controversial,
+  action still `allow` (PII-only answers are allowed). Rerank p50 7.58 → 4.04 s, `ask` p50
+  20.79 → 18.11 s. Generate p50 reads 12.74 → 14.19 s with the same p95 (21.04 / 21.06 s) and
+  lower mean `prompt_tokens` (3,508 → 3,471): the public median falls between answers with 2
+  and 3 page images, so one query moving shifts p50 by an image (past runs read 10.8, 12.7 s).
+- **Hard:** G0's changes again: hard-014 worse (an explained refusal now counted as an
+  abstention), hard-015 and hard-037 better. Neutral: hard-039 cites one page instead of two
+  (both 2024 and 2025 page 2 before), hard-060 still refuses, citing one more page. hard-050 is
+  the same correct answer, worded longer; `locate` found no usable box for the new claim (its
+  image size is unchanged). Rerank p50 12.69 → 6.03 s, `ask` p50 33.49 → 26.66 s.
+
+**Checked by hand** (pseudo-terminal, hard corpus, new defaults vs `QWN_RERANK_MAX_PIXELS=1310720`):
+`qwn ask` on hard-002 answers MV Storm Petrel in 40.3 s against 47.1 s (wall time with model
+load); `qwn chat` answers 196.9 then, for "And in 2025?", searches the rewritten question and
+answers 214.6, the follow-up taking 28.8 s against 36.1 s (with rewrite and both Guard checks).
 
 ## Phases
 
