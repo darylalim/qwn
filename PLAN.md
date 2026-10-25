@@ -80,7 +80,11 @@ turn before) cuts a follow-up's answer from ~18 s to ~1 s, but only 3 of 33 turn
 hit, so the expected saving is 1.32 s against a 3.0 s gate. Rule W held, and the probe
 confirmed that reuse keyed on token ids alone answers from the last turn's page image.
 
-**Open follow-ups:** none.
+**Open follow-ups:** source order reuse (planned 2026-10-25: Evaluation → Source order reuse;
+implement on `followup/source-order-reuse`). A probe first: when a follow-up retrieves the same
+page images as the turn before in another order, keep that turn's labels so prefill reuse hits.
+Build only if the expected saving is ≥ 3.0 s per follow-up and the order doesn't move answers
+(rules R and W).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -109,6 +113,9 @@ confirmed that reuse keyed on token ids alone answers from the last turn's page 
 11. **Prefill reuse follow-up:** Evaluation → Prefill reuse, Faster prefill results (step 1),
     Multi-turn questions (the turns set); Model interfaces → adapter notes; Stack and memory
     budget; Runtime robustness → Memory policy; Security (no on-disk caches).
+12. **Source order reuse follow-up:** Evaluation → Source order reuse, Prefill reuse (step 2
+    design and probe results), Multi-turn questions (the turns set), Version awareness results
+    (hard-015); CLI → `qwn chat`; Streamlit UI (Chat page); Stack and memory budget.
 
 **Workflow for each phase:**
 
@@ -3319,7 +3326,139 @@ per-conversation KV reuse saves 1.3 s on average and doesn't pay for its memory 
 and its warm-versus-cold drift. The step 2 design stays above for reference. Keeping the turn
 before's image order when the follow-up retrieves the same set would add the 4 same-set cases:
 7/33 × 14.5–17.4 s ≈ 3.1–3.7 s, just at the gate. But reordering sources changes answers, so it
-needs its own follow-up judged on the hard set (out of scope above). Not planned.
+needs its own follow-up judged on the hard set (out of scope above): planned 2026-10-25 as
+Source order reuse (below).
+
+### Source order reuse (follow-up, planned 2026-10-25)
+
+**Why:** prefill reuse closed at its gate because a follow-up rarely sends the same images in
+the same order as the turn before (3 of 33 turns follow-ups). 4 more send the same image files
+in another order, which reuses nothing. If a follow-up whose image set is the same as the turn
+before kept that turn's order, 7 of 33 would hit: 7/33 × 14.5–17.4 s ≈ **3.1–3.7 s per
+follow-up**, just at the 3.0 s gate. The risk is that the order changes answers: the
+top-ranked page is no longer always `[S1]`, and greedy VL-8B refused on a new source order once
+before (hard-015, Version awareness results). This follow-up **probes first** (step 1) and
+builds (step 2) only if the saving passes and the order doesn't move answers. One follow-up PR
+(branch `followup/source-order-reuse`), no version bump, no reindex. Scope agreed 2026-10-25:
+probe first; `qwn chat` and the Chat page; the turns eval rebuilds each follow-up's turn before.
+
+**Why the labels must move with the pages.** mlx-vlm matches the prompt's token ids, and each
+image comes after `image_label` (`[S1] page image:` …). Reordering the images alone would put a
+page after a different label than last turn, so the token ids before that image differ and
+nothing is reused. The rule therefore gives **each page the label it had in the turn before**:
+the image sources swap label positions among themselves, and everything after them (text
+blocks, question) is the text-only suffix mlx-vlm needs.
+
+**The order rule** (`answer.to_sources`, used only when the last exchange is given): take
+today's labelling, then the turn before's image sources (its `Response.sources` with an
+`image_path`, through `plan_sources`, in label order). If **the image files are the same set
+and hold the same set of labels**, put each image hit at the label it had before; text-only
+sources and their labels don't move. Otherwise (a different set, a partial overlap, or a text
+source between the images in one turn and not the other) the labelling is today's. A partial
+overlap is never reordered: the new image would still follow a shared one, so the suffix isn't
+text only and nothing is reused, and the order would change for nothing. `Response.sources`
+and `hits` follow the labels, so the Sources list (Chat page, `/sources`) shows the pages in the
+turn before's order, not by rank.
+
+**Step 1: probe (scratchpad, not the repo; real models; ~45 min).** Hard corpus
+(`QWN_DATA_DIR=data/eval-hard QWN_INDEX_DIR=index/eval-hard/<hash>`), retrieval, rewrite and
+Guard as `qwn chat` runs them, greedy. The turn before is retrieved as Prefill reuse's probe did
+(the last history question, rewritten from the earlier turns when there are any).
+
+- **Selection.** Run the rule on all 33 turns follow-ups and count: same order already (expect
+  turn-011, 029, 033), reordered (expect turn-003, 008, 015, 020), unchanged. If the counts
+  differ from Prefill reuse probe results, say why before going on.
+- **Saving per hit.** For each of the 7: answer the turn before, then the follow-up with the
+  rule and a `PromptCacheState` keyed as Prefill reuse step 2 (warm), then the same prompt cold.
+  Record reused prefix length, `prompt_tokens` and `cached_tokens`, time to the answer, MLX
+  peak.
+- **Order effect, on the 4 reordered follow-ups.** Score the reordered cold answer against the
+  rank-order cold answer (today's prompt) on `answer_contains`, `citation_hit` and abstention.
+- **Order sensitivity, on the hard set** (the 4 above are too few to trust alone). For every
+  hard query that sends 2 or more images, answer cold in rank order and again with the image
+  labels rotated by one (the top-ranked page takes the last image label, the others move up), a
+  harder change than the rule makes. Count queries that get worse on `answer_contains`,
+  `citation_hit` or abstention, and queries that get better.
+- **Exactness (rule W, as Prefill reuse):** on each of the 7, compare warm and cold greedy text
+  of the same reordered prompt.
+- **Gate:** build step 2 only if all of these hold:
+  1. **Expected saving per follow-up ≥ 3.0 s:** (same-order + reordered follow-ups) / 33 × the
+     median saved time over them.
+  2. **Rule R:** none of the 4 reordered follow-ups gets worse on `answer_contains`,
+     `citation_hit` or abstention than in rank order; on the hard rotation, at most 3 queries get
+     worse and no more get worse than better.
+  3. **Rule W holds** on the 7: at most one warm text differs from cold, and no difference
+     changes `answer_contains`, `citation_hit` or abstention.
+
+  **Otherwise stop:** record the numbers as results under this section, mark the follow-up
+  closed with no code change, and open the PR with `PLAN.md` only. Don't tune the rule or the
+  prompt to pass rule R: an order-sensitive model is the finding.
+
+**Step 2: build (only if the gate passes).** Prefill reuse step 2 (adapter, key, memory, shared
+generator) plus the order rule:
+
+- **Setting:** `answer_prefix_cache: bool = True` in `RESULT_KEYS`, which turns on both the
+  order rule and the adapter's cache (each is useless without the other). `False` labels by rank
+  and passes no cache state, as today. Adding the key moves `settings_hash`: every baseline is
+  rewritten.
+- **`answer.py`:** `to_sources(hits, max_images, prior: list[Source] = ())` applies the rule.
+  `Answerer.answer` and `Answerer.ask` take `prior: Response | None = None` and pass its
+  `sources` on when the setting is on and `prior` wasn't blocked. The generator never sees
+  history, as today. A debug log line records `reordered` per answer.
+- **Adapter** (`mlx_vlm_gen.py`), as Prefill reuse step 2: one `PromptCacheState` and its key,
+  per image source `(label, str(image_path), st_size, st_mtime_ns)` plus `answer_pixels` (the
+  label is in the key because it's in the prompt before the image). `locate` and `rewrite` never
+  touch it. `Answer.prompt_tokens` keeps meaning the full prompt (mlx-vlm already reports it so).
+- **Callers:** `qwn chat` passes its last exchange's `Response`; `/new` clears it. The Chat page
+  passes the last assistant `Response` of the session's conversation; a new conversation clears
+  it. `qwn ask` is single-turn and passes none. No other UI or CLI change.
+- **Memory:** ~0.8 GB held between answers (Prefill reuse: KV size). Add it to the generator's
+  line in Stack and memory budget and to the registry's memory check estimate.
+- **Eval:** `turns` rebuilds each follow-up's turn before (rewrite the last history question
+  with the earlier turns, retrieve, `to_sources`) and answers the follow-up with it as `prior`,
+  so the rule runs as in a chat. The turn before isn't answered, so turns answers are cold:
+  reordering is judged in eval, warm drift by the probe and the slow test. `per_query` gains
+  `reordered` (turns only); the report prints the count. Public and hard have no turn before;
+  consecutive queries with the same images can still hit the cache, and the run logs hits.
+  About one retrieval more per follow-up (~10 min on a turns run).
+
+**Tests (with the code):**
+
+- Fast (no MLX): the rule. Same set in another order: labels follow the prior and hits move
+  with them. Same order: unchanged. Different set, partial overlap, label positions that differ,
+  no prior, a blocked prior or the setting off: today's labelling. Text-only sources keep their
+  labels. The key, as Prefill reuse step 2, with the label in it. `Answerer.ask(prior=…)` hands
+  the reordered sources to `FakeGenerator`. `qwn chat` passes the last response and `/new`
+  clears it; the Chat page (AppTest) passes the last one and a new conversation clears it. The
+  turns eval builds a prior (fake retriever) and records `reordered`. `answer_prefix_cache` is in
+  `RESULT_KEYS`, not `INGEST_KEYS`, and `QWN_ANSWER_PREFIX_CACHE=false` works.
+- **Slow:** Prefill reuse step 2's slow tests, plus two greedy answers over the same two public
+  pages retrieved in opposite orders: the second keeps the first's labels, reuses a prefix and
+  gives the same text as cold.
+
+**Done when:**
+
+1. Step 1's numbers are recorded under this section (both outcomes).
+2. Gate failed: `PLAN.md` only (results, Start here: follow-up closed). Gate passed: fast and
+   slow tests, ruff and ty pass; `qwn eval --set public --guard --locate` passes every exit
+   criterion, and `qwn eval --set hard --locate` and `qwn eval --set turns --locate` run. All
+   three baselines are rewritten for the new `settings_hash`. The hand diff of `per_query`
+   shows changes only on reordered turns follow-ups and logged cache hits, each explained in the
+   PR from `answer_text`, and no turns query gets worse on `answer_contains`, `citation_hit` or
+   abstention.
+3. **Checked by hand** (gate passed): through a pseudo-terminal on the hard corpus, a `qwn chat`
+   follow-up that is reordered and hits (time to the answer against
+   `QWN_ANSWER_PREFIX_CACHE=false`), one that misses (same as today), and `/new` followed by a
+   question. In the browser on the hard corpus (`QWN_DATA_DIR`/`QWN_INDEX_DIR`), the same
+   reordered follow-up on the Chat page: it answers faster and the Sources list follows the
+   labels.
+4. `PLAN.md` updated in the same PR: this section (results under it), Start here, Settings,
+   Stack and memory budget (gate passed). README unchanged unless a documented number moves.
+
+**Out of scope:** reordering on partial overlap, or keeping sources from the turn before that
+today's retrieval didn't return; reordering text-only sources; reuse in the reranker, `rewrite`
+or `locate`; caching across processes, restarts or conversations; `qwn ask` (single-turn);
+generating the turn before in eval.
 
 ## Phases
 
