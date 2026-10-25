@@ -55,6 +55,9 @@ uv version --bump minor               # one minor release per completed phase (f
   `registry.generator()` (any role) is a `_Locked` wrapper: it forwards reads only, so setting
   a field on it is silently ignored, and it wraps anything callable (mlx-vlm's model and
   processor). To change an adapter field in a slow test or probe, use `registry.<role>()._inner`.
+  To route a probe through qwn's real retrieval and scoring, patch the adapter class's method
+  (`mlx_vlm_gen.MlxVlmGenerator.answer = ...`); `_Locked` forwards calls to it. The index:
+  `ev.prepare(settings, ev.eval_set(settings, "turns"), registry, say=print)`; score with `ev.answer_row`.
 - **Privacy:** the app is localhost-only and offline at runtime (`HF_HUB_OFFLINE=1`; models pinned
   in `src/qwn/models_lock.py`). Never commit `data/`, `index/`, `eval/private/`, `qwn.toml` or
   `.env`. Don't put real document content in tests, fixtures, logs or commit messages.
@@ -102,6 +105,10 @@ uv version --bump minor               # one minor release per completed phase (f
   feature cache can't serve Qwen3-VL (no `encode_images`; cached features drop DeepStack), and
   `PromptCacheState` matches token ids only, so two pages of one render size look identical
   (PLAN.md → Prefill reuse). VL-8B's KV is 144 KiB per token (~0.8 GB per answer prompt).
+  mlx-vlm's `generate` reports `prompt_tokens` as the full prompt and the reused part as `cached_tokens`.
+  Prefill reuse closed at its gate: only 3 of 33 turns follow-ups send the same images in the
+  same order, so a cross-turn cache's hit rate decides it, not the ~18 s it saves per hit. The vision
+  tower is ~25 % of one page's prefill (PLAN.md → Prefill reuse probe results).
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
@@ -145,6 +152,8 @@ uv version --bump minor               # one minor release per completed phase (f
   confident answers and drop it from explanations. Fix abstention after the model instead.
   A check on calls made inside the token loop (Guard per sentence) needs multi-sentence answers
   ("Summarise …"): on one-sentence factoid answers nothing runs mid-stream and it passes vacuously.
+  Warm-versus-cold (KV reuse) drift appeared only in multi-sentence abstentions: an exactness
+  probe needs those, not just factoid answers.
 - **Before every commit:** format, lint, ty and fast tests pass (hook H4 enforces this at stop; CI
   repeats it). Before merging a phase: slow tests, eval and the PLAN.md merge checklist.
 
