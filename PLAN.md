@@ -1435,7 +1435,9 @@ class Settings(BaseSettings):
     rerank_candidates: int = 10          # head of the fused list the reranker scores (phase 2)
     rerank_k: int = 5
     max_images: int = 4
-    max_pixels: int = 1_310_720          # 1280 * 32 * 32 (Qwen3-VL: 32 px per visual token)
+    max_pixels: int = 1_310_720          # 1280 * 32 * 32 (Qwen3-VL: 32 px per visual token); ingest + embedder
+    gen_max_pixels: int = 1_310_720      # generator answers, query time (locate keeps max_pixels); >= 65_536
+    rerank_max_pixels: int = 1_310_720   # reranker, query time; >= 65_536
     pdf_embed: Literal["image+text", "image"] = "image+text"   # phase 1 ablation; see Data flow
     max_context: int = 16_384
     max_tokens: int = 1024
@@ -3012,6 +3014,32 @@ the KV cache across queries or turns (a separate design; record step 1's
 prefix (~200 of ~5,600 tokens, under 4 %); `MLX_VLM_RERANK_BATCH_SIZE` (prefill at this size is
 compute-bound, and it's an mlx-vlm environment variable, not a qwn setting); choosing images per
 source by rerank score; smaller or different models.
+
+#### Faster prefill results
+
+**Step 1: mechanism check** (2026-10-25, scratch, real models, greedy). Three stored renders
+of one public PDF (1240 × 1755 px each, so 1,280 tokens at the default cap), in one `answer`
+call and one `score` call, at the default and at 640 × 1024 px:
+
+| Call | Default: prompt tokens, time | 640-token cap: prompt tokens, time | Saved |
+|---|---|---|---|
+| `answer`, 3 images | 4,016, 15.2 s | 2,126, 7.1 s | 1,890 (expected 1,920, −1.6 %) |
+| reranker `score`, 3 pages | 4,020, 4.1 s | 2,130, 1.8 s | 1,890 (−1.6 %) |
+| `locate` after the `answer` | 1,383 | 1,383 | 0 (reset per call) |
+
+Prefill ran at 285 tok/s (default) and 311 tok/s (small) as mlx-vlm reports `prompt_tps`:
+about 4.5 s per 1,280-token image in the generator. Reranker scores moved by at most 0.009 on
+these three pages and stay deterministic. Two findings:
+
+- mlx-vlm loads the generator's processor with `max_pixels` 16,777,216, not 1,280 tokens:
+  only the adapter's setting caps it. `answer` and `locate` now each set it before their call,
+  and `rewrite` sends no image.
+- The registry's `_Locked` wrapper forwards reads only, and wraps anything callable (mlx-vlm's
+  model and processor). A probe or a slow test that changes an adapter field goes through
+  `registry.generator()._inner`; setting it on the wrapper is silently ignored.
+
+Pinned by `test_generator_answer_cap_shrinks_answers_but_not_locate` and
+`test_rerank_prompt_tokens_fall_with_its_image_cap` (slow).
 
 ## Phases
 

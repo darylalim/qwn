@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -50,7 +51,12 @@ class Settings(BaseSettings):
     rerank_candidates: int = 10  # fused candidates the reranker scores (~0.8 s each)
     rerank_k: int = 5
     max_images: int = 4
-    max_pixels: int = 1_310_720  # 1280 * 32 * 32 (Qwen3-VL: 32 px per visual token)
+    max_pixels: int = (
+        1_310_720  # 1280 * 32 * 32 (Qwen3-VL: 32 px per visual token); ingest + embedder
+    )
+    # query-time image caps (no reindex); >= 64 visual tokens
+    gen_max_pixels: int = Field(1_310_720, ge=65_536)  # generator answers (locate keeps max_pixels)
+    rerank_max_pixels: int = Field(1_310_720, ge=65_536)
     pdf_embed: Literal["image+text", "image"] = "image+text"  # phase 1 ablation; see Data flow
     max_context: int = 16_384
     max_tokens: int = 1024

@@ -163,6 +163,18 @@ def test_settings_hash_ignores_paths_but_not_options(home):
     assert ev.settings_hash(Settings(top_k=10), ev.Options().as_dict()) != base
 
 
+def test_query_time_image_caps_move_settings_hash_not_ingest_hash(home):
+    from qwn.config import Settings
+    from qwn.ingest import INGEST_KEYS, ingest_hash
+
+    s, options = Settings(), ev.Options().as_dict()
+    for smaller in (Settings(gen_max_pixels=655_360), Settings(rerank_max_pixels=655_360)):
+        assert ingest_hash(smaller) == ingest_hash(s)  # no reindex
+        assert ev.settings_hash(smaller, options) != ev.settings_hash(s, options)
+    for key in ("gen_max_pixels", "rerank_max_pixels"):
+        assert key in ev.RESULT_KEYS and key not in INGEST_KEYS
+
+
 def test_public_queries_file_is_valid_and_covers_the_tags():
     path = Path(__file__).parents[2] / "eval" / "public" / "queries.jsonl"
     queries = ev.load_queries(path)

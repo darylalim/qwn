@@ -50,3 +50,20 @@ def test_find_home_without_marker_fails(tmp_path, monkeypatch):
 
 def test_repo_has_a_home_marker():
     assert (Path(__file__).parents[2] / "qwn.example.toml").is_file()
+
+
+def test_query_time_image_caps_default_to_max_pixels_and_read_env(home, monkeypatch):
+    s = Settings()
+    assert s.gen_max_pixels == s.rerank_max_pixels == s.max_pixels == 1_310_720
+    monkeypatch.setenv("QWN_GEN_MAX_PIXELS", "655360")
+    monkeypatch.setenv("QWN_RERANK_MAX_PIXELS", "327680")
+    s = Settings()
+    assert (s.gen_max_pixels, s.rerank_max_pixels, s.max_pixels) == (655_360, 327_680, 1_310_720)
+
+
+def test_query_time_image_caps_reject_under_64_visual_tokens(home):
+    assert Settings(gen_max_pixels=65_536, rerank_max_pixels=65_536).gen_max_pixels == 65_536
+    with pytest.raises(ValueError, match="gen_max_pixels"):
+        Settings(gen_max_pixels=65_535)
+    with pytest.raises(ValueError, match="rerank_max_pixels"):
+        Settings(rerank_max_pixels=65_535)
