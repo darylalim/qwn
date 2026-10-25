@@ -65,12 +65,14 @@ for 2.57 s median against a 3.0 s gate, and prefill (time to first token 18.6 s 
 hard corpus) is the wait. The probe's nested call check passed, so a later streaming design
 isn't blocked by MLX.
 
-**Open follow-ups:** **faster prefill** (planned 2026-10-24; Evaluation → Faster prefill;
-implement on `followup/faster-prefill`): separate query-time image caps for the generator and
-the reranker (`gen_max_pixels`, `rerank_max_pixels`, no reindex), swept on the hard set under
-rules written before the runs. Unreleased since v0.9.0: quiet stderr (and the streaming probe,
-no code). A release PR bumps minor per Versioning; the user asked (2026-10-24) to hold v0.10.0
-until more follow-ups land.
+The faster prefill follow-up is done (Evaluation → Faster prefill results): the reranker reads
+page images at 640 tokens (`rerank_max_pixels`, no reindex), with the same hard ranks; `ask`
+p50 on the hard set 33.5 s → 26.7 s. Smaller generator images failed rule G on near-miss version
+questions, so `gen_max_pixels` stays at 1,280 tokens.
+
+**Open follow-ups:** none. Unreleased since v0.9.0: quiet stderr, faster prefill (and the
+streaming probe, no code). A release PR bumps minor per Versioning; the user asked (2026-10-24)
+to hold v0.10.0 until more follow-ups land.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -3101,6 +3103,27 @@ The changed queries, from `answer_text`:
 **Choice: none passes; the generator stays at 1,280 × 4** (`gen_max_pixels` 1,310,720,
 `max_images` 4). The faster generator arms fail on near-miss version questions, where the
 evidence is one dated line. Result: R640 alone takes `ask` p50 from 33.5 s to 26.7 s (−20 %).
+
+**Step 4: defaults and baselines** (2026-10-25). `rerank_max_pixels` defaults to 655,360;
+`gen_max_pixels` stays 1,310,720. Both baselines rewritten (`corpus_hash` and `eval_set_hash`
+unchanged, no reindex). Hand diff of `per_query` against the previous baselines:
+
+- **Public:** every exit criterion passes. pub-075 `locate_hit` false → true. pub-009 is
+  reworded ("PO-48213 cost 18,450 euros"); Guard now labels it Unsafe instead of Controversial,
+  action still `allow` (PII-only answers are allowed). Rerank p50 7.58 → 4.04 s, `ask` p50
+  20.79 → 18.11 s. Generate p50 reads 12.74 → 14.19 s with the same p95 (21.04 / 21.06 s) and
+  lower mean `prompt_tokens` (3,508 → 3,471): the public median falls between answers with 2
+  and 3 page images, so one query moving shifts p50 by an image (past runs read 10.8, 12.7 s).
+- **Hard:** G0's changes again: hard-014 worse (an explained refusal now counted as an
+  abstention), hard-015 and hard-037 better. Neutral: hard-039 cites one page instead of two
+  (both 2024 and 2025 page 2 before), hard-060 still refuses, citing one more page. hard-050 is
+  the same correct answer, worded longer; `locate` found no usable box for the new claim (its
+  image size is unchanged). Rerank p50 12.69 → 6.03 s, `ask` p50 33.49 → 26.66 s.
+
+**Checked by hand** (pseudo-terminal, hard corpus, new defaults vs `QWN_RERANK_MAX_PIXELS=1310720`):
+`qwn ask` on hard-002 answers MV Storm Petrel in 40.3 s against 47.1 s (wall time with model
+load); `qwn chat` answers 196.9 then, for "And in 2025?", searches the rewritten question and
+answers 214.6, the follow-up taking 28.8 s against 36.1 s (with rewrite and both Guard checks).
 
 ## Phases
 
