@@ -74,9 +74,13 @@ questions, so `gen_max_pixels` stays at 1,280 tokens.
 stderr, the streaming probe (no code) and faster prefill. No reindex: an index from v0.9.0 works
 as is.
 
-**Open follow-ups:** prefill reuse (planned 2026-10-25: Evaluation → Prefill reuse; implement
-next on `followup/prefill-reuse`). It measures first: KV reuse across `qwn chat` turns is built
-only if follow-ups save ≥ 3.0 s on average and warm answers match cold (rule W).
+The prefill reuse follow-up is closed at its measurement gate with no code change (Evaluation
+→ Prefill reuse → Prefill reuse probe results): a hit (same image files, same order as the
+turn before) cuts a follow-up's answer from ~18 s to ~1 s, but only 3 of 33 turns follow-ups
+hit, so the expected saving is 1.32 s against a 3.0 s gate. Rule W held, and the probe
+confirmed that reuse keyed on token ids alone answers from the last turn's page image.
+
+**Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -3262,6 +3266,60 @@ reuse with partial image overlap (mlx-vlm needs a text-only suffix); APC and any
 cache; reuse in the reranker, `rewrite` or `locate`; reordering, keeping or choosing sources to
 raise the hit rate (that changes answers: a separate follow-up judged on the hard set);
 caching across processes or restarts.
+
+#### Prefill reuse probe results (2026-10-25, M2 Max, probe only)
+
+**The gate fails, so step 2 isn't built** (no code, no eval run, no baseline change). The
+saving per hit is large, but hits are rare: **expected saving per follow-up 1.32 s** against
+the 3.0 s gate. Rule W holds. Probe: hard corpus, greedy, retrieval and rewrite as `qwn chat`
+runs them, `PromptCacheState` passed through `generate` by a patched adapter in the scratchpad.
+
+- **Hit rate: 3 of 33** turns follow-ups (9 %): turn-011 (4 images), turn-029 (3) and
+  turn-033 (1) have the same image files in the same order as the turn before. 4 more
+  (turn-003, 008, 015, 020) have the same files in another order, which reuses nothing
+  (images come before the text, and mlx-vlm needs a text-only suffix). Images shared with the
+  turn before: none in 9 follow-ups, 1 in 2, 2 in 8, 3 in 13, 4 in 1. Follow-ups usually move
+  to a neighbouring page or another version, so the reranked top 4 changes.
+- **Saving per hit.** mlx-vlm reports `prompt_tokens` as the full prompt and the reused part
+  as `cached_tokens`; a hit reuses all but the last 13–27 tokens (the question).
+
+  | hit | images | prompt tokens | cold | warm | saved |
+  |---|---|---|---|---|---|
+  | turn-011 | 4 | 5,697 | 20.59 s | 0.99 s | 19.60 s |
+  | turn-029 | 3 | 4,327 | 17.99 s | 3.50 s | 14.49 s |
+  | turn-033 | 1 | 1,495 | 5.41 s | 0.60 s | 4.82 s |
+
+  Median 14.49 s, so 3/33 × 14.49 s = **1.32 s** per follow-up. With fewer than 5 hits, 5
+  question pairs written for the probe over one retrieval each (hard-003, 009, 012, 022, 042
+  as turn 1, a second question on the same pages; kept in the scratchpad) saved 14.7–20.0 s
+  (median 19.9 s). Over all 8 the median is 17.4 s, which gives 1.58 s. Even reusing a whole
+  ~20 s cold answer would give 1.9 s: the hit rate decides this, not the saving.
+- **Exactness: rule W holds.** On the turns hits, 1 of 3 warm texts differs from cold
+  (turn-029, an unanswerable near-miss): both abstain with the same citations and the same
+  facts, and one middle sentence is worded differently; `answer_contains`, `citation_hit` and
+  abstention are unchanged. 1 of the 5 probe pairs differed the same way (a long abstention).
+  The drift `apc.py` warns about shows up in multi-sentence replies; short factoid answers
+  matched.
+- **MLX peak:** warm 11.3–12.0 GB, cold 12.4–13.75 GB (one cached prompt holds ~0.8 GB at
+  ~5,700 tokens, as estimated above).
+- **Mis-keying: confirmed.** hard-001 (page 1) and then hard-004 (page 4) of
+  `reports/annual-review-2024.pdf`, both rendered at 1240 × 1755, on one state with no image
+  key: the second call reused 1,448 of 1,521 tokens, and the image span ends at token 1,410, so
+  it answered from **page 1's image**. Its answer was still right ("1.45") only because page
+  4's text is in the prompt as a `<source>` block; a page without a text layer would be answered
+  from the wrong image. With the image key (a new state) it reused nothing and took 5.40 s,
+  the same as cold. Any later design needs that key.
+- **Vision tower share:** on one 1,260-token page, the vision tower takes 1.24 s of a 5.04 s
+  prefill (1,521 tokens), about 25 %. The other ~75 % is the language model over the image
+  tokens, so a vision-feature cache (ruled out above) would save at most a quarter of image
+  prefill even if mlx-vlm supported it for Qwen3-VL.
+
+**Outcome.** For this corpus a follow-up rarely sends the same images in the same order, so
+per-conversation KV reuse saves 1.3 s on average and doesn't pay for its memory (~0.8 GB held)
+and its warm-versus-cold drift. The step 2 design stays above for reference. Keeping the turn
+before's image order when the follow-up retrieves the same set would add the 4 same-set cases:
+7/33 × 14.5–17.4 s ≈ 3.1–3.7 s, just at the gate. But reordering sources changes answers, so it
+needs its own follow-up judged on the hard set (out of scope above). Not planned.
 
 ## Phases
 
