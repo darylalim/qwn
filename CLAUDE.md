@@ -74,6 +74,10 @@ uv version --bump minor               # one minor release per completed phase (f
   against `git show HEAD:eval/<set>/baseline.json` by hand (also after changing an `INGEST_KEYS`
   setting: `ingest_hash` is part of `corpus_hash`; use `--force`). Corpus files must stay
   byte-identical (`corpus_hash`) unless the change is intended.
+  `max_pixels` sizes ingest renders and every model's images, and it's in `INGEST_KEYS`: a
+  query-time-only size needs its own key in `RESULT_KEYS` (no reindex). Adding any key to
+  `RESULT_KEYS` moves `settings_hash` even at today's value: rewrite both baselines, and the hand
+  diff must show no per-query change.
   A change that only affects scoring (e.g. `region`) can be predicted exactly by re-scoring the
   committed baseline's `per_query` (e.g. `locate_box`) before the full eval run.
   Run with `--update-baseline` straight away: changes print before the write, and
