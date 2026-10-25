@@ -74,7 +74,9 @@ questions, so `gen_max_pixels` stays at 1,280 tokens.
 stderr, the streaming probe (no code) and faster prefill. No reindex: an index from v0.9.0 works
 as is.
 
-**Open follow-ups:** none.
+**Open follow-ups:** prefill reuse (planned 2026-10-25: Evaluation → Prefill reuse; implement
+next on `followup/prefill-reuse`). It measures first: KV reuse across `qwn chat` turns is built
+only if follow-ups save ≥ 3.0 s on average and warm answers match cold (rule W).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -100,6 +102,9 @@ as is.
     sweep), Version awareness results; Settings; Prompts and parameters (Image size sent to the
     model, More sources than images); Adapter notes → Phase 0 findings (Image size); CLI →
     Streaming probe results.
+11. **Prefill reuse follow-up:** Evaluation → Prefill reuse, Faster prefill results (step 1),
+    Multi-turn questions (the turns set); Model interfaces → adapter notes; Stack and memory
+    budget; Runtime robustness → Memory policy; Security (no on-disk caches).
 
 **Workflow for each phase:**
 
@@ -3019,7 +3024,8 @@ per-query change** (the hand diff must show none).
 **Out of scope:** `locate`'s image size; ingest `max_pixels` and `pdf_dpi` (they need a
 reindex); `rerank_candidates` (swept in Harder tier results: keep 10); reusing vision features or
 the KV cache across queries or turns (a separate design; record step 1's
-`prompt_tokens / prompt_tps` per image so it can be sized later); caching the system prompt
+`prompt_tokens / prompt_tps` per image so it can be sized later; planned 2026-10-25: Evaluation
+→ Prefill reuse); caching the system prompt
 prefix (~200 of ~5,600 tokens, under 4 %); `MLX_VLM_RERANK_BATCH_SIZE` (prefill at this size is
 compute-bound, and it's an mlx-vlm environment variable, not a qwn setting); choosing images per
 source by rerank score; smaller or different models.
@@ -3126,6 +3132,136 @@ unchanged, no reindex). Hand diff of `per_query` against the previous baselines:
 `qwn ask` on hard-002 answers MV Storm Petrel in 40.3 s against 47.1 s (wall time with model
 load); `qwn chat` answers 196.9 then, for "And in 2025?", searches the rewritten question and
 answers 214.6, the follow-up taking 28.8 s against 36.1 s (with rewrite and both Guard checks).
+
+### Prefill reuse (follow-up, planned 2026-10-25)
+
+**Why:** after faster prefill, the wait is still the generator's prefill: about 4.5 s per
+1,280-token page image (Faster prefill results, step 1), hard `generate` p50 20.7 s of a 26.7 s
+`ask`. In a conversation a follow-up often asks about the same pages, and each turn prefills
+them again from scratch. This follow-up asks whether keeping the generator's KV cache from the
+last answer, and reusing it when the next answer prompt starts the same way, shortens
+follow-ups enough to be worth it. **It measures first** (step 1) and builds (step 2) only if
+the gate passes, as Streaming answers in `qwn chat` did. One follow-up PR (branch
+`followup/prefill-reuse`), no version bump, no reindex.
+
+**What mlx-vlm 0.7.6 offers** (read from the installed source, 2026-10-25):
+
+- **Vision features (`VisionFeatureCache`, `vision_cache=`): not usable for Qwen3-VL.** The
+  generate path fills the cache only through `model.encode_images` / `encode_image`, which the
+  Qwen3-VL model doesn't have, and Qwen3-VL's `cached_image_features` path sets
+  `deepstack_visual_embeds = None`. VL-8B adds vision features at language layers 8, 16 and 24
+  (DeepStack), so a cached image would give different, untested answers. The cache is also
+  keyed on the whole image list, not one image. Ruled out here.
+- **Per-conversation KV reuse (`PromptCacheState`, `prompt_cache_state=`):** `stream_generate`
+  keeps the KV cache and token ids of the last call, and on the next call reuses the longest
+  shared token prefix, trimming the rest. **It reuses only when the part after the prefix is
+  text only** (`prefix_leaves_text_only_suffix`): every image token must be inside the shared
+  prefix. It rebuilds Qwen3-VL's mRoPE offsets from the full prompt
+  (`_prime_cached_prefix_rope_state`). **It compares token ids only.** Image placeholders are
+  the same token id for every image, and labels are always `[S1] page image:` …, so two
+  answers over *different* pages of the same render size have the same token ids. Used as is,
+  it would answer from the last turn's pages. qwn must key reuse on the images themselves (step
+  2).
+- **Automatic prefix caching (`APCManager`, `apc_manager=`):** hash-keyed (image content in the
+  hash), many entries, but configured through `APC_*` environment variables with an SSD tier
+  under `~/.cache/mlx-vlm` on by default. That writes document-derived tensors outside
+  `index/`. Ruled out (Security; one cache entry is enough for a conversation).
+- **Warm isn't bit-identical to cold** (`apc.py` docstring): a short suffix against a cached
+  prefix uses different attention tile shapes, so greedy text can differ from a cold run of
+  the same prompt. Step 1 measures how often.
+
+The answer prompt is the system prompt, then each image source's label and image in label order,
+then the `<source>` text blocks and the question (`messages` in `mlx_vlm_gen.py`); history
+never enters it. So a follow-up can reuse only when **its image sources are the same files in
+the same order as the last answer's**. The reused prefix is then everything but the text blocks
+and question (a few hundred tokens), and prefill should drop by most of its time. Partial image
+overlap reuses nothing.
+
+KV size for VL-8B: 36 layers × 8 KV heads × 128 × 2 (K, V) × 2 bytes = 144 KiB per token, so
+one cached answer prompt of ~5,700 tokens holds ~0.8 GB.
+
+**Step 1: probe (scratchpad, not the repo; real models; ~30 min).** Hard corpus
+(`QWN_DATA_DIR=data/eval-hard QWN_INDEX_DIR=index/eval-hard/<hash>`), retrieval and Guard as
+`qwn chat` runs them, greedy.
+
+- **Hit rate, on the turns set (33 follow-ups).** For each query, retrieve the last history
+  question as the turn before it (rewritten from the earlier turns when the history has more
+  than one, as `qwn chat` would), then the follow-up through the rewrite. Record both turns'
+  image sources (`plan_sources`) and count: **same files, same order** (a hit), same set in a
+  different order, and how many images are shared. No generation needed for this part.
+- **Saving per hit.** For each hit (and, if there are fewer than 5, for a few pairs of
+  questions written for the probe over the same page, kept in the scratchpad, never committed):
+  answer turn 1, then turn 2 with a `PromptCacheState` and the image check, then turn 2 cold.
+  Record per call: reused prefix length, `prompt_tokens` as mlx-vlm reports it (the full
+  prompt or only the suffix: say which), time to the answer, MLX peak.
+- **Exactness.** On every hit, compare warm and cold greedy text; for any that differ, score
+  both against the turn's `answer_contains` and `expected`.
+- **Mis-keying check.** Two answers over different pages with the same render size: confirm
+  `find_prefix_length` covers the image span (the reason for qwn's image key), and that with
+  the key the second call prefills in full.
+- **Vision tower share** (for the record): time `vision_tower` on one 1,280-token page
+  against that image's prefill. Sizes a later vision-feature design; nothing is built from it.
+- **Gate:** build step 2 if **expected saving per follow-up ≥ 3.0 s** (hit rate × median saved
+  time per hit; about 10 % of the 28.8 s follow-up in Faster prefill results) **and rule W
+  holds**: at most one hit's warm greedy text differs from cold, and no difference changes
+  `answer_contains`, `citation_hit` or abstention. **Otherwise stop:** record the numbers as
+  results under this section, mark the follow-up closed with no code change, and open the PR with
+  `PLAN.md` only. If rule W fails but the saving passes, also stop and report: don't build around
+  drift.
+
+**Step 2: design (only if the gate passes; agree the details before building).**
+
+- **Adapter only** (`mlx_vlm_gen.py`): `MlxVlmGenerator` holds one `PromptCacheState` and the
+  key of the images in it: per image source, `(str(image_path), st_size, st_mtime_ns)`, plus
+  `answer_pixels`. `answer` passes the state when its key equals the held one. Otherwise it
+  replaces the state with a new one (the old KV is freed), sets the key, and passes that.
+  `locate` and `rewrite` never pass it and never touch it. No change to `interfaces.py`,
+  `answer.py`, the CLI or the UI.
+- **Setting:** `answer_prefix_cache: bool = True` in `RESULT_KEYS` (a warm answer can differ
+  from cold). `False` passes no state, as today.
+- **`Answer.prompt_tokens` keeps meaning the full prompt.** If mlx-vlm reports only the suffix
+  on a hit, the adapter adds the reused length. A debug log line records the reused length per
+  call.
+- **Shared generator:** the Chat page's sessions share one generator. The MLX lock already
+  serialises calls; the image key stops one session's cache answering another's question, and
+  sessions that alternate only miss. Evicting the generator drops the cache with it.
+- **Memory:** up to ~0.8 GB held between answers. Add it to the generator's line in Stack and
+  memory budget and to the registry's memory check estimate; the MLX peak per eval run
+  must stay within the budget.
+- **Eval:** eval queries run one after another in one process, so consecutive queries with the
+  same image sources hit as a chat would. The run logs hits; changed queries must be hits
+  and are explained from `answer_text`.
+
+**Tests (with the code):**
+
+- Fast (the key is a pure function; no MLX): same paths, sizes and mtimes give equal keys;
+  another path, a changed file, a different order or a different `answer_pixels` don't; the
+  setting's default and `QWN_ANSWER_PREFIX_CACHE=false`; the key is in `RESULT_KEYS`, not
+  `INGEST_KEYS`.
+- **Slow:** two greedy answers over the same public page with different questions: the second
+  reuses a prefix and gives the same text as cold. Two answers over different pages of the same
+  size: the second reuses nothing (full `prompt_tokens`, its own page's answer). `locate`
+  between two answers doesn't stop the second from reusing.
+
+**Done when:**
+
+1. Step 1's numbers are recorded under this section (both outcomes).
+2. Gate failed: `PLAN.md` only (results, Start here: follow-up closed). Gate passed: fast and
+   slow tests, ruff and ty pass; `qwn eval --set public --guard --locate` passes every exit
+   criterion and `qwn eval --set hard --locate` runs. Both baselines are rewritten for the new
+   `settings_hash`, and the hand diff of `per_query` shows changes only on logged hits, each
+   explained in the PR.
+3. **Checked by hand** (gate passed), through a pseudo-terminal on the hard corpus: a `qwn chat`
+   follow-up that hits (time to the answer against `QWN_ANSWER_PREFIX_CACHE=false`), one that
+   misses (same as today), and `/new` followed by a question.
+4. `PLAN.md` updated in the same PR: this section (results under it), Start here, Settings,
+   Stack and memory budget (gate passed). README unchanged unless a documented number moves.
+
+**Out of scope:** vision-feature caching (not possible for Qwen3-VL in mlx-vlm 0.7.6, above);
+reuse with partial image overlap (mlx-vlm needs a text-only suffix); APC and any on-disk
+cache; reuse in the reranker, `rewrite` or `locate`; reordering, keeping or choosing sources to
+raise the hit rate (that changes answers: a separate follow-up judged on the hard set);
+caching across processes or restarts.
 
 ## Phases
 
