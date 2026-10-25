@@ -109,6 +109,12 @@ uv version --bump minor               # one minor release per completed phase (f
   Prefill reuse closed at its gate: only 3 of 33 turns follow-ups send the same images in the
   same order, so a cross-turn cache's hit rate decides it, not the ~18 s it saves per hit. The vision
   tower is ~25 % of one page's prefill (PLAN.md → Prefill reuse probe results).
+  Prompt order is label order: each image follows `[S#] page image:` (`image_label`), and
+  `to_sources` labels by rank, so reordering images for a cache hit means moving the labels
+  with the pages (PLAN.md → Source order reuse).
+  The turns eval never retrieves the turn before (history is fixed text in `queries.jsonl`):
+  to test anything that uses the previous turn's sources, rewrite and retrieve the last history
+  question, as the prefill reuse probe did.
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
