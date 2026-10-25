@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     )
     # query-time image caps (no reindex); >= 64 visual tokens
     gen_max_pixels: int = Field(1_310_720, ge=65_536)  # generator answers (locate keeps max_pixels)
-    rerank_max_pixels: int = Field(1_310_720, ge=65_536)
+    rerank_max_pixels: int = Field(655_360, ge=65_536)  # 640 tokens: same ranks, half the time
     pdf_embed: Literal["image+text", "image"] = "image+text"  # phase 1 ablation; see Data flow
     max_context: int = 16_384
     max_tokens: int = 1024

@@ -84,6 +84,7 @@ def test_rerank_prompt_tokens_fall_with_its_image_cap(registry, page_image, monk
         registry.reranker()._inner
     )  # the adapter behind the MLX lock: its fields are settable
     docs = [Item(text=PAGE, image_path=page_image)]
+    monkeypatch.setattr(reranker.processor.image_processor, "max_pixels", 1280 * 1024)
     reranker.score(Item(text=QUESTION), docs)
     full = reranker.last_prompt_tokens
     monkeypatch.setattr(reranker.processor.image_processor, "max_pixels", 640 * 1024)

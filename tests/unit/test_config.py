@@ -54,7 +54,8 @@ def test_repo_has_a_home_marker():
 
 def test_query_time_image_caps_default_to_max_pixels_and_read_env(home, monkeypatch):
     s = Settings()
-    assert s.gen_max_pixels == s.rerank_max_pixels == s.max_pixels == 1_310_720
+    assert s.gen_max_pixels == s.max_pixels == 1_310_720
+    assert s.rerank_max_pixels == 655_360  # PLAN.md → Faster prefill results
     monkeypatch.setenv("QWN_GEN_MAX_PIXELS", "655360")
     monkeypatch.setenv("QWN_RERANK_MAX_PIXELS", "327680")
     s = Settings()

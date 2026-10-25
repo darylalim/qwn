@@ -168,7 +168,7 @@ def test_query_time_image_caps_move_settings_hash_not_ingest_hash(home):
     from qwn.ingest import INGEST_KEYS, ingest_hash
 
     s, options = Settings(), ev.Options().as_dict()
-    for smaller in (Settings(gen_max_pixels=655_360), Settings(rerank_max_pixels=655_360)):
+    for smaller in (Settings(gen_max_pixels=327_680), Settings(rerank_max_pixels=327_680)):
         assert ingest_hash(smaller) == ingest_hash(s)  # no reindex
         assert ev.settings_hash(smaller, options) != ev.settings_hash(s, options)
     for key in ("gen_max_pixels", "rerank_max_pixels"):

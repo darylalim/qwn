@@ -429,7 +429,12 @@ class Tts(Protocol):
   Qwen3-VL uses **32 px per visual token** (16 px patches, 2×2 merge), so
   `max_pixels = 1280 * 32 * 32` ≈ 1,280 tokens per image, ≈ 5.1k for 4 images, well inside
   `max_context`. Phase 0 checks `patch_size` and `spatial_merge_size` in the processor config and
-  the keyword the processor accepts.
+  the keyword the processor accepts. `max_pixels` sizes ingest and the embedder; query-time
+  models have their own caps (no reindex): the generator's answers use `gen_max_pixels`
+  (1,280 tokens; `locate` keeps `max_pixels`), set per call because the processor is shared, and
+  the reranker uses `rerank_max_pixels` = 640 tokens (Evaluation → Faster prefill results:
+  same hard ranks, rerank p50 12.7 s → 6.1 s; smaller generator images broke near-miss version
+  answers).
 - **No token streaming in v1 (decided):** Guard's response check needs the whole answer, and
   showing text before it passes would defeat the check. The UI shows the stages in `st.status`
   instead. If waiting proves painful in daily use, the fix is to stream and check sentence by
@@ -1437,7 +1442,7 @@ class Settings(BaseSettings):
     max_images: int = 4
     max_pixels: int = 1_310_720          # 1280 * 32 * 32 (Qwen3-VL: 32 px per visual token); ingest + embedder
     gen_max_pixels: int = 1_310_720      # generator answers, query time (locate keeps max_pixels); >= 65_536
-    rerank_max_pixels: int = 1_310_720   # reranker, query time; >= 65_536
+    rerank_max_pixels: int = 655_360     # reranker, query time (640 tokens); >= 65_536
     pdf_embed: Literal["image+text", "image"] = "image+text"   # phase 1 ablation; see Data flow
     max_context: int = 16_384
     max_tokens: int = 1024
