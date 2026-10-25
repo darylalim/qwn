@@ -52,6 +52,9 @@ uv version --bump minor               # one minor release per completed phase (f
   `CliRunner` output includes stderr. Ruff rejects literal `›` (RUF001): write
   `"\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}"`. `FakeGenerator.rewrite` records every call
   with history, even when it returns the message unchanged.
+  `registry.generator()` (any role) is a `_Locked` wrapper: it forwards reads only, so setting
+  a field on it is silently ignored, and it wraps anything callable (mlx-vlm's model and
+  processor). To change an adapter field in a slow test or probe, use `registry.<role>()._inner`.
 - **Privacy:** the app is localhost-only and offline at runtime (`HF_HUB_OFFLINE=1`; models pinned
   in `src/qwn/models_lock.py`). Never commit `data/`, `index/`, `eval/private/`, `qwn.toml` or
   `.env`. Don't put real document content in tests, fixtures, logs or commit messages.
@@ -74,8 +77,10 @@ uv version --bump minor               # one minor release per completed phase (f
   against `git show HEAD:eval/<set>/baseline.json` by hand (also after changing an `INGEST_KEYS`
   setting: `ingest_hash` is part of `corpus_hash`; use `--force`). Corpus files must stay
   byte-identical (`corpus_hash`) unless the change is intended.
-  `max_pixels` sizes ingest renders and every model's images, and it's in `INGEST_KEYS`: a
-  query-time-only size needs its own key in `RESULT_KEYS` (no reindex). Adding any key to
+  `max_pixels` sizes ingest renders, the embedder and `locate`, and it's in `INGEST_KEYS`;
+  answers use `gen_max_pixels` and the reranker `rerank_max_pixels` (640 tokens), both in
+  `RESULT_KEYS` (no reindex). Smaller generator images broke near-miss version answers
+  (PLAN.md → Faster prefill results). Adding any key to
   `RESULT_KEYS` moves `settings_hash` even at today's value: rewrite both baselines, and the hand
   diff must show no per-query change.
   A change that only affects scoring (e.g. `region`) can be predicted exactly by re-scoring the
@@ -86,6 +91,9 @@ uv version --bump minor               # one minor release per completed phase (f
   Before planning latency work, split the wait with the last public result: `latency.generate`
   (12.7 s p50) against `completion_tokens` in `per_query` (p50 17, ~0.3 s at 59 tok/s) shows
   prefill dominates. Hard results with `--no-generate` have no `generate` latency.
+  Public generate p50 jumps between ~10.8, 12.7 and 14.2 s as the median query moves between
+  2 and 3 page images (p95 steady at 21 s): judge a latency change by p95 and mean
+  `prompt_tokens` too, not p50 alone.
   In a `stream_generate` probe, time to first token matched the last result's
   `prompt_tokens / prompt_tps` within 0.4 s (24 of 25): that estimate is the prefill. Streaming
   closed at its gate (long answers decode 2.57 s median): shorten prefill instead.
@@ -103,8 +111,10 @@ uv version --bump minor               # one minor release per completed phase (f
 - **Terminal checks:** drive an interactive command with real models through `pty.openpty()`
   (prompt, readline and stderr status lines need a TTY), and send Ctrl-C with
   `os.killpg(pid, SIGINT)`: `uv run` is the parent process. The hard index is
-  `index/eval-hard/<hash>` (`ls index/eval-hard`). Repeated third-party warnings go in
-  `logging_setup.KNOWN_NOISE`, not in an adapter.
+  `index/eval-hard/<hash>` (`ls index/eval-hard`). Keep reading the pty until the child exits
+  (stop on `proc.poll()` or an empty read: EOF isn't signalled): a script that stops reading
+  after `/quit` blocks `qwn chat` on a full buffer and looks like a hang. Repeated third-party
+  warnings go in `logging_setup.KNOWN_NOISE`, not in an adapter.
 - **Model output formats:** before parsing a new kind of model reply, run a scratch probe with
   greedy decoding on a few public-corpus pages (scratchpad, not the repo), then pin the format
   with a `slow` test.
@@ -117,6 +127,8 @@ uv version --bump minor               # one minor release per completed phase (f
   Probe a retrieval idea without a reindex by monkeypatching `Retriever.rerank_input(hit, title)`
   and running `ev.run(..., ev.Options())` (no generation; ~20 min for hard + public). Probe the
   generator side separately: extra prompt text that helps ranking can break answers.
+  Before running a sweep arm that's a rule on corpus data, count what it selects: eval PDF pages
+  hold at most ~300 characters of stored text, so a 400-character cut chose nothing.
   A `--no-generate` probe predicts ranks exactly but not answers: a better ranking reorders the
   sources, and greedy VL-8B can refuse on the new order (hard-015). Only the full run shows it.
   A reply that is well formed but wrong (a rewrite that repeats an earlier question) is better
