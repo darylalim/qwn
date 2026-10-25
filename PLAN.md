@@ -3041,6 +3041,24 @@ these three pages and stay deterministic. Two findings:
 Pinned by `test_generator_answer_cap_shrinks_answers_but_not_locate` and
 `test_rerank_prompt_tokens_fall_with_its_image_cap` (slow).
 
+**Step 2: reranker sweep** (2026-10-25, hard set, `--no-generate --force`, generator at
+1,280 × 4; baseline 1,280 tokens per image: recall@1 0.940, MRR 0.965, rerank p50 12.69 s,
+and a `--no-generate` run at 1,280 from 2026-10-23 gave 12.76 s, so the timings compare):
+
+| Arm | recall@1 | recall@5 | `recall_all@5` | MRR | rerank p50 | MLX peak | Rule R |
+|---|---|---|---|---|---|---|---|
+| R640 | 0.940 | 1.000 | 1.000 | 0.965 | 6.08 s (−52 %) | 6.49 GB | pass; no rank changes |
+| R320 | 0.900 | 1.000 | 1.000 | 0.945 | 3.43 s | 6.37 GB | fail: hard-024 and hard-045 (long text pages) 1 → 2 |
+| Rtext | not measurable | | | | | | 0 of 500 reranker inputs qualified |
+
+Rtext selects nothing on either eval corpus: no PDF page has 400 characters of stored text
+(hard: at most 298, median about 200; public: at most 245), so its run repeated today's input
+(13.07 s, the baseline's ranks). Lowering the cut to fit these synthetic pages would test
+text-only reranking on short pages, not the rule as written, so Rtext is closed unmeasured
+(agreed 2026-10-25) and `rerank_page_images` isn't added. **Choice: R640**
+(`rerank_max_pixels` = 655,360), the cheapest passing arm. Prompt tokens per reranker call
+aren't in eval results; step 1 measured 640 fewer per page.
+
 ## Phases
 
 | # | Phase | Deliverable | Exit criterion |
