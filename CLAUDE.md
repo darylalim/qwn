@@ -97,6 +97,11 @@ uv version --bump minor               # one minor release per completed phase (f
   In a `stream_generate` probe, time to first token matched the last result's
   `prompt_tokens / prompt_tps` within 0.4 s (24 of 25): that estimate is the prefill. Streaming
   closed at its gate (long answers decode 2.57 s median): shorten prefill instead.
+  Before planning on an mlx-vlm feature, read its installed source
+  (`.venv/lib/python3.12/site-packages/mlx_vlm/generate/dispatch.py`), not its docs: the vision
+  feature cache can't serve Qwen3-VL (no `encode_images`; cached features drop DeepStack), and
+  `PromptCacheState` matches token ids only, so two pages of one render size look identical
+  (PLAN.md → Prefill reuse). VL-8B's KV is 144 KiB per token (~0.8 GB per answer prompt).
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
