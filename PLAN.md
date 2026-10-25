@@ -65,9 +65,12 @@ for 2.57 s median against a 3.0 s gate, and prefill (time to first token 18.6 s 
 hard corpus) is the wait. The probe's nested call check passed, so a later streaming design
 isn't blocked by MLX.
 
-**Open follow-ups:** none. Unreleased since v0.9.0: quiet stderr (and this probe, no code). A
-release PR bumps minor per Versioning; the user asked (2026-10-24) to hold v0.10.0 until more
-follow-ups land.
+**Open follow-ups:** **faster prefill** (planned 2026-10-24; Evaluation → Faster prefill;
+implement on `followup/faster-prefill`): separate query-time image caps for the generator and
+the reranker (`gen_max_pixels`, `rerank_max_pixels`, no reindex), swept on the hard set under
+rules written before the runs. Unreleased since v0.9.0: quiet stderr (and the streaming probe,
+no code). A release PR bumps minor per Versioning; the user asked (2026-10-24) to hold v0.10.0
+until more follow-ups land.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -89,6 +92,10 @@ follow-ups land.
 9. **Streaming follow-up:** CLI → `qwn chat` and Streaming answers in `qwn chat`, Model
    interfaces (`Generator`, adapter notes, Prompts and parameters → No token streaming in v1,
    Guard parsing), Runtime robustness → Memory policy (the MLX lock).
+10. **Faster prefill follow-up:** Evaluation → Faster prefill, Harder tier results (rerank
+    sweep), Version awareness results; Settings; Prompts and parameters (Image size sent to the
+    model, More sources than images); Adapter notes → Phase 0 findings (Image size); CLI →
+    Streaming probe results.
 
 **Workflow for each phase:**
 
@@ -978,7 +985,8 @@ Time to first token is the first `stream_generate` result; decode is first token
 decode doesn't pay for its design cost. The step 2 design stays above for reference; if long
 answers become common in daily use, re-run this probe before building it. Shortening prefill
 (fewer or smaller images, a cached prompt prefix) is the lever, judged on the hard set as a
-separate follow-up with its own planning session.
+separate follow-up with its own planning session (planned 2026-10-24: Evaluation → Faster
+prefill).
 
 ## Streamlit UI (`src/qwn/ui/`)
 
@@ -2889,6 +2897,121 @@ sentence to confident answers and drop it from the explanations it was meant for
 turn-030 stay as recorded misses. A fix, if wanted, is a deterministic check after the model
 (CLAUDE.md → Model output formats), not more prompt text, and would need its own planning
 session.
+
+### Faster prefill (follow-up, planned 2026-10-24)
+
+**Why:** a question waits for two image-heavy model passes, and both are almost all prefill. In
+the committed baselines, hard `ask` is 33.5 s p50 = rerank 12.7 s + generate 20.7 s (public:
+20.8 s = 7.6 s + 12.7 s). The generator reads up to `max_images` = 4 page images at ~1,280
+visual tokens each (hard `prompt_tokens` p50 5,561); decoding is ~0.6 s of it (Streaming probe
+results). The reranker scores `rerank_candidates` = 10 pages, each image plus text, ~1.3 s per
+page on the hard set. Today one setting, `max_pixels`, sizes the images for ingest (stored
+renders, embedder) **and** both query-time models, so no query-time size can change without a
+reindex. Scope agreed 2026-10-24: **the generator and the reranker**. Both levers are
+query-time only: no reindex, no corpus or query change, `ingest_hash` unchanged.
+
+One follow-up PR (branch `followup/faster-prefill`), no version bump. Total compute ≈ 4 h of
+background eval runs.
+
+**Step 1: settings (code first, defaults unchanged).**
+
+- `Settings` gains `gen_max_pixels: int = 1_310_720` and `rerank_max_pixels: int = 1_310_720`
+  (both `ge=65_536`, i.e. ≥ 64 visual tokens). With the defaults every query does exactly what it
+  does today.
+- `max_pixels` keeps its job: ingest (stored renders, normalised images) and the embedder.
+  It stays in `INGEST_KEYS`; the two new keys go in `RESULT_KEYS` only (they change answers and
+  ranks, not stored vectors).
+- **Generator:** `answer` uses `gen_max_pixels`; `locate` keeps `max_pixels` (it draws a box on
+  one page; its 5.3 s isn't part of the answer wait). The adapter's processor is shared, so it sets
+  `processor.image_processor.max_pixels` before each call instead of once at load. mlx-vlm
+  0.7.6's `Qwen3VLImageProcessor` reads `self.max_pixels` at call time when no per-call value
+  is passed (`_resolved_size`). `rewrite` is text only.
+- **Reranker:** `load` sets `rerank_max_pixels` instead of `max_pixels`.
+- Adding keys to `RESULT_KEYS` changes `settings_hash`, so step 4 compares runs by hand against
+  `git show HEAD:eval/<set>/baseline.json` (CLAUDE.md → Eval baselines).
+- **Mechanism check** (scratch, real models, ~5 min): on 3 public pages, a greedy answer at
+  `gen_max_pixels` = 640 × 1024 has `prompt_tokens` lower than at the default by ≈ 640 × the
+  number of images (±2 % for the 32 px rounding), and a `locate` call afterwards has the same
+  prompt tokens as before. The same check on the reranker: `score_documents` returns its prompt
+  tokens. Then pin both with `slow` tests.
+
+**Step 2: reranker sweep** (hard set, `--no-generate --force`, ~10 min per run; any setting
+via `QWN_*` env). Arms, in tokens per image (`rerank_max_pixels` = tokens × 1024):
+
+| Arm | Reranker input |
+|---|---|
+| R640 | image at 640 tokens + text, as today |
+| R320 | image at 320 tokens + text |
+| Rtext | text only for a `pdf_page` with ≥ 400 characters of stored text (title header kept); scans, images and short pages keep the 1,280-token image. Probed by monkeypatching `Retriever.rerank_input` (CLAUDE.md → Model output formats) |
+
+Write the rule down before running. **Rule R:** the cheapest arm (lowest rerank p50) that keeps
+recall@5 1.000, `recall_all@5` 1.000, MRR ≥ 0.955 (baseline 0.965 − 0.01) and recall@1 ≥ 0.92
+(at most one query fewer at rank 1), **and** brings rerank p50 to ≤ 9.5 s (−25 %). No arm passes:
+the reranker stays at 1,280. The final ranks are diffed by hand against the generated baseline
+(`--no-generate` changes `settings_hash`). Rtext, if chosen, ships as
+`rerank_page_images: Literal["all", "short-text"] = "short-text"` (in `RESULT_KEYS`) with the
+400-character cut as a constant in `retrieve.py`, and unit tests for the switch on fakes.
+
+**Step 3: generator sweep** (hard set, full runs with `--locate --force`, ~35 min each), with
+step 2's reranker choice in place for every arm:
+
+| Arm | Generator |
+|---|---|
+| G0 | today's 1,280 tokens × 4 images (only when step 2 changed the reranker: it separates the new source order's effect on answers, cf. hard-015) |
+| G896 | 896 tokens × 4 |
+| G640 | 640 tokens × 4 |
+| G-3 | `max_images` = 3, at the smallest size that passed (1,280 if none did) |
+
+**Rule G**, per arm against the baseline's `per_query`: invented citations stay 0; **at most
+one** hard query gets worse across citation_hit, `citation_all`, answer_contains,
+`answer_approx`, abstention (unanswerable) and false abstention combined; and generate p50 is
+≤ 15.5 s (−25 %). Each query that changes is explained from `answer_text` in the results file.
+Never change a hard query because of a result. Choose the cheapest passing arm; none passes:
+the generator stays at 1,280 × 4. If G0 itself fails rule G, the step 2 choice is undone (the
+reranker stays at 1,280) and step 3 restarts without G0.
+
+**Step 4: defaults and baselines.** Set the chosen values as the defaults (`Settings`,
+PLAN.md → Settings and Prompts and parameters → Image
+size sent to the model), then `qwn eval --set public --guard --locate --update-baseline` and
+`qwn eval --set hard --locate --update-baseline`. If nothing passed in steps 2 and 3, the
+defaults stay, and both baselines are still rewritten for the new `settings_hash` with **no
+per-query change** (the hand diff must show none).
+
+**Tests (with the code, fakes only, no MLX):**
+
+- `Settings`: the two defaults; `QWN_GEN_MAX_PIXELS` / `QWN_RERANK_MAX_PIXELS` override; a value
+  under 65,536 is rejected.
+- Both keys are in `RESULT_KEYS` and not in `INGEST_KEYS`: changing either leaves `ingest_hash`
+  unchanged and changes `settings_hash`.
+- (Rtext only) `rerank_input` gives text only for a long-text `pdf_page`, keeps the image for a
+  scan, an `image` chunk and a short page, and keeps the title header.
+- **Slow:** a greedy `answer` at a smaller `gen_max_pixels` uses fewer prompt tokens, and a
+  `locate` after it uses as many as at load (the processor's size is reset per call); the
+  reranker's prompt tokens fall with `rerank_max_pixels`, and its scores stay deterministic.
+
+**Done when:**
+
+1. Step 1's mechanism check and steps 2–3's tables (every arm: the rule's metrics, rerank or
+   generate p50, `prompt_tokens` p50, MLX peak) are recorded under this section as results,
+   with the choice and why.
+2. Public: every exit criterion passes; per-query changes are explained in the PR. Corpus
+   byte-identical and `corpus_hash` unchanged (no reindex: `ingest_hash` must not move).
+3. Hard: the chosen arms' per-query changes are explained in the PR (rule G's one-query budget).
+4. Fast tests, ruff, ty and the slow tests pass.
+5. **Checked by hand:** `qwn ask` on one hard factoid question and `qwn chat` with a follow-up,
+   through a pseudo-terminal on the hard corpus: answers as in the eval, time to the answer
+   recorded against today's.
+6. `PLAN.md` updated in the same PR: this section (results under it), Start here, Settings,
+   Prompts and parameters → Image size sent to the model, Data flow (if the reranker input
+   changed). README unchanged unless a documented number moves.
+
+**Out of scope:** `locate`'s image size; ingest `max_pixels` and `pdf_dpi` (they need a
+reindex); `rerank_candidates` (swept in Harder tier results: keep 10); reusing vision features or
+the KV cache across queries or turns (a separate design; record step 1's
+`prompt_tokens / prompt_tps` per image so it can be sized later); caching the system prompt
+prefix (~200 of ~5,600 tokens, under 4 %); `MLX_VLM_RERANK_BATCH_SIZE` (prefill at this size is
+compute-bound, and it's an mlx-vlm environment variable, not a qwn setting); choosing images per
+source by rerank score; smaller or different models.
 
 ## Phases
 
