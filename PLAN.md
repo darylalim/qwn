@@ -3059,6 +3059,44 @@ text-only reranking on short pages, not the rule as written, so Rtext is closed 
 (`rerank_max_pixels` = 655,360), the cheapest passing arm. Prompt tokens per reranker call
 aren't in eval results; step 1 measured 640 fewer per page.
 
+**Step 3: generator sweep** (2026-10-25, hard set, `--locate --force`, R640 in every arm;
+baseline: generate p50 20.67 s, `ask` p50 33.49 s, `prompt_tokens` p50 5,561, MLX peak
+12.99 GB). "Worse" and "better" count queries against the baseline's `per_query`:
+
+| Arm | Worse | Better | Invented | generate p50 | `ask` p50 | `prompt_tokens` p50 | MLX peak | Rule G |
+|---|---|---|---|---|---|---|---|---|
+| G0 (1,280 × 4) | 1 | 2 | 0 | 20.67 s | 26.71 s | 5,561 | 12.98 GB | quality part passes: R640 stays |
+| G896 (896 × 4) | 3 | 2 | 0 | 14.35 s | 20.45 s | 4,061 | 12.67 GB | fail (3 worse) |
+| G640 (640 × 4) | 2 | 4 | 0 | 10.59 s | 16.81 s | 3,085 | 12.42 GB | fail (2 worse) |
+| G-3 (1,280 × 3) | 3 | 1 | 0 | 15.90 s | 21.97 s | 4,328 | 12.69 GB | fail (3 worse, 15.9 s > 15.5 s) |
+
+G0 keeps today's generator, so it can't meet rule G's latency gate by design; it is judged on
+the quality part only (invented 0, at most one query worse), which is what "undo step 2" needs.
+The changed queries, from `answer_text`:
+
+- **hard-014** (G0, G-3: worse, false abstention): the same explained refusal listing both
+  dividends (1.45 and 1.85) now ends as an abstention; R640's slightly different scores, greedy
+  decoding.
+- **hard-015** (all arms: better): answers and cites the 2024 pages instead of refusing (cf. the
+  version awareness results, where it refused on the new order).
+- **hard-037** (G0, G896, G640: better): the degraded chart's approximate value, citing the chart
+  only.
+- **hard-002** (G896: worse): names MV Tern Island from the other report instead of MV Storm
+  Petrel.
+- **hard-010** (G896, G640, G-3: worse): the baseline's hedged refusal mentioned April by
+  listing both orders; G896 and G640 answer "first week of March" confidently from the wrong
+  order, and G-3 refuses without listing them.
+- **hard-059** (G896, G640: worse, unanswerable): answers the 2027 fee as 3,650 euros (the 2026
+  fee) instead of explaining that 2027 fees are agreed in December 2026. Smaller page images lose
+  the dated qualifier, not the page.
+- **hard-060** (G-3: worse, unanswerable): states the late charge is "as set out in their terms"
+  instead of refusing.
+- **hard-019, hard-055** (G640: better): a cited `multi` answer, and a correct refusal.
+
+**Choice: none passes; the generator stays at 1,280 × 4** (`gen_max_pixels` 1,310,720,
+`max_images` 4). The faster generator arms fail on near-miss version questions, where the
+evidence is one dated line. Result: R640 alone takes `ask` p50 from 33.5 s to 26.7 s (−20 %).
+
 ## Phases
 
 | # | Phase | Deliverable | Exit criterion |
