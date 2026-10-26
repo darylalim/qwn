@@ -2,13 +2,15 @@
 
 A follow-up is rewritten into a standalone question using the last few exchanges (PLAN.md →
 Evaluation → Multi-turn questions). A conversation is written to disk only when you save it, and
-the sidebar reopens saved ones (PLAN.md → CLI → Saved conversations). See PLAN.md → Streamlit UI
-and → Voice input pipeline.
+the sidebar reopens and renames saved ones (PLAN.md → CLI → Saved conversations, → Export and
+rename conversations). Export downloads the conversation on screen as Markdown. See PLAN.md →
+Streamlit UI and → Voice input pipeline.
 """
 
 import hashlib
 import logging
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import streamlit as st
@@ -16,13 +18,18 @@ import streamlit as st
 from qwn import eval as ev
 from qwn.answer import STAGE_LABELS, Stage, conversation, history_caption
 from qwn.conversations import (
+    TITLE_CHARS,
     Exchange,
     Store,
     Summary,
     UnknownConversation,
+    export_name,
     make,
+    markdown,
+    now,
     saved_time,
     saved_when,
+    source_states,
 )
 from qwn.models import InsufficientMemory, ModelsInUse
 from qwn.retrieve import EmptyScope, describe_scope, scope_choices
@@ -234,6 +241,44 @@ def confirm_delete(summary: Summary) -> None:
             st.rerun()
 
 
+def rename_saved(summary: Summary) -> None:
+    """The Rename dialog's callback. It runs before the page is drawn, so it can set the
+    sidebar's pick again: without that the browser keeps showing the old title in the box."""
+    try:
+        renamed = store.rename(summary.id, st.session_state[f"rename-{summary.id}"])
+    except ValueError as e:  # an empty title: the dialog stays open and says so
+        st.session_state.rename_error = str(e)
+        return
+    except (UnknownConversation, OSError) as e:
+        logger.warning("rename failed: %s", type(e).__name__)
+        st.session_state.notice = ("error", "That conversation can't be renamed: see the log.")
+    else:
+        saved = st.session_state.saved
+        if saved is not None and saved.id == renamed.id:  # the next Save keeps the new title
+            st.session_state.saved = replace(saved, title=renamed.title)
+        st.session_state.saved_pick = renamed.id
+    st.session_state.renamed = True  # closes the dialog
+
+
+@st.dialog("Rename saved conversation")
+def rename(summary: Summary) -> None:
+    if st.session_state.pop("renamed", False):
+        st.rerun()
+    st.text_input("Title", value=summary.title, max_chars=TITLE_CHARS, key=f"rename-{summary.id}")
+    with st.container(horizontal=True):
+        st.button(
+            "Rename",
+            type="primary",
+            icon=":material/edit:",
+            on_click=rename_saved,
+            args=(summary,),
+        )
+        if st.button("Cancel"):
+            st.rerun()
+    if (error := st.session_state.pop("rename_error", None)) is not None:
+        st.error(error, icon=":material/error:")
+
+
 choices = scope_choices(sorted(indexed))
 with st.sidebar:
     summaries = {s.id: s for s in store.list()}
@@ -258,6 +303,8 @@ with st.sidebar:
                 disabled=pick is None,
                 on_click=open_conversation,
             )
+            if st.button("Rename", icon=":material/edit:", disabled=pick is None) and pick:
+                rename(summaries[pick])
             if st.button("Delete", icon=":material/delete:", disabled=pick is None) and pick:
                 confirm_delete(summaries[pick])
 
@@ -293,7 +340,7 @@ def new_conversation() -> None:
     st.session_state.saved = None  # the next Save makes a new file
 
 
-# "New conversation" and Save, then the save state, once there's a conversation (filled at the end)
+# The New conversation / Save / Export row, then the save state: filled at the end
 actions, saved_note = st.empty(), st.empty()
 scope = st.multiselect(
     "Search in",
@@ -337,6 +384,15 @@ if st.session_state.messages:
         st.button("New conversation", icon=":material/add_comment:", on_click=new_conversation)
         if exchanges:
             st.button("Save", icon=":material/bookmark:", on_click=save_conversation)
+            current, exported = make(exchanges, st.session_state.saved), now()
+            st.download_button(
+                "Export",
+                data=markdown(current, source_states(current, documents), exported),
+                file_name=export_name(current, exported),
+                mime="text/markdown",
+                icon=":material/download:",
+                on_click="ignore",  # downloading doesn't rerun the page
+            )
     if (saved := st.session_state.saved) is not None:
         n = len(exchanges) - len(saved.exchanges)
         newer = f" · {n} newer exchange{'s' if n != 1 else ''} not saved" if n > 0 else ""

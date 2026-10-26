@@ -1,5 +1,7 @@
 """`qwn chat` end to end: a REPL over Answerer.ask with history, fakes via make_registry."""
 
+import stat
+
 import pytest
 from fakes import FakeEmbedder, FakeGenerator, FakeGuard, FakeMemory, FakeReranker
 from sample_corpus import make_corpus
@@ -294,3 +296,102 @@ def test_sources_after_open_mark_missing_documents(docs, gen, home):
     r = chat("/open 1", "/sources")
     assert r.exit_code == 0, r.output
     assert "report.pdf  p.1  (no longer in your library)" in r.output
+
+
+# /export and /rename (PLAN.md → CLI → Export and rename conversations)
+
+EXPORT = "qwn-conversation-2026-10-26-1405.md"
+
+
+@pytest.fixture
+def out(tmp_path, monkeypatch):
+    """A scratch working folder, and a fixed clock so default export names repeat."""
+    import qwn.conversations
+
+    folder = tmp_path / "out"
+    folder.mkdir()
+    monkeypatch.chdir(folder)
+    monkeypatch.setattr(qwn.conversations, "now", lambda: "2026-10-26T14:05:31+08:00")
+    return folder
+
+
+def test_export_writes_markdown_here_then_with_a_suffix(docs, gen, home, out):
+    r = chat("/export", REVENUE, "And the outlook?", "/export", "/export")
+    assert r.exit_code == 0, r.output
+    assert "Nothing to export yet." in r.output
+    first, second = out / EXPORT, out / EXPORT.replace(".md", "-2.md")
+    assert f"Exported 2 questions to {first}." in r.output
+    assert f"Exported 2 questions to {second}." in r.output
+    assert stat.S_IMODE(first.stat().st_mode) == 0o600
+    text = first.read_text()
+    assert text.startswith(f"# {REVENUE}\n\nExported from qwn, 2026-10-26 14:05 · 2 questions")
+    assert text.count("· not saved") == 1 and "## 2. And the outlook?" in text
+    assert f"Searched for: {REVENUE} And the outlook?" in text
+    assert f"[report.pdf p.1] {docs / 'report.pdf'}, page 1" in text
+    assert not (home / "index" / "conversations").exists()  # exporting doesn't save
+
+
+def test_export_to_a_folder_a_file_and_refusals(docs, gen, out, tmp_path):
+    folder = tmp_path / "notes"
+    folder.mkdir()
+    taken = out / "taken.md"
+    taken.write_text("mine")
+    r = chat(
+        REVENUE,
+        f"/export {folder}",
+        "/export answer.md",
+        "/export taken.md",
+        f"/export {tmp_path / 'missing' / 'x.md'}",
+    )
+    assert r.exit_code == 0, r.output
+    assert (folder / EXPORT).is_file() and (out / "answer.md").is_file()
+    assert f"Exported 1 question to {folder / EXPORT}." in r.output
+    assert "taken.md exists. /export PATH to choose another." in r.output
+    assert taken.read_text() == "mine"
+    assert f"No folder {tmp_path / 'missing'}." in r.output
+    assert sorted(p.name for p in out.iterdir()) == ["answer.md", "taken.md"]
+
+
+def test_rename(docs, gen, home, out):
+    chat(REVENUE, "/save")
+    [summary] = saved(home).list()
+    r = chat(
+        "/rename",
+        "/rename 1",
+        "/rename 1 Revenue by year",
+        "/list",
+        f'/rename {summary.id} "Bob\'s notes"',
+        "/rename 7 Nope",
+        "/rename 1 \x07",
+    )
+    assert r.exit_code == 0, r.output
+    assert "Which one? /rename N TITLE" in r.output and "Which title? /rename N TITLE." in r.output
+    assert "Renamed to Revenue by year.\n" in r.output
+    assert "  1 question  Revenue by year\n" in r.output
+    assert "Renamed to Bob's notes.\n" in r.output
+    assert "No saved conversation 7. Type /list." in r.output
+    assert "A title can't be empty." in r.output
+    assert saved(home).load(summary.id).title == "Bob's notes"
+
+
+def test_renaming_the_open_conversation_survives_save(docs, gen, home, out):
+    chat(REVENUE, "/save")
+    r = chat("/open 1", "/rename 1 Mine", "And the outlook?", "/save")
+    assert r.exit_code == 0, r.output
+    assert "Saved as " in r.output and ": Mine (2 questions)." in r.output
+    [summary] = saved(home).list()
+    assert summary.title == "Mine" and summary.exchanges == 2
+
+
+def test_export_and_rename_log_no_content(docs, gen, home, out, caplog):
+    import logging
+
+    sentinel = "ZEBRAQUARTZSENTINEL"
+    folder = out / sentinel
+    folder.mkdir()
+    caplog.set_level(logging.DEBUG)
+    r = chat(f"{REVENUE} {sentinel}", "/save", f"/rename 1 {sentinel} title", f"/export {folder}")
+    assert r.exit_code == 0, r.output
+    assert (folder / EXPORT).is_file()
+    assert "conversation exported" in caplog.text and "conversation renamed" in caplog.text
+    assert sentinel not in caplog.text

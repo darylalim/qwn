@@ -104,10 +104,15 @@ the library since are marked. No reindex.
 prefill reuse, source order reuse and source order sensitivity probes (no code) and saved
 conversations. No reindex: an index from v0.10.0 works as is.
 
-**Open follow-ups:** export and rename conversations (planned 2026-10-26: CLI → Export and
-rename conversations; implement on `followup/conversation-export-rename`). Export writes the
-conversation on screen as Markdown (a browser download, or `/export` in `qwn chat`); rename
-gives a saved conversation a title of your own. No reindex, no eval run.
+The export and rename conversations follow-up is done (CLI → Export and rename conversations,
+results under it): Export on the Chat page (a Markdown download) or `/export [PATH]` in `qwn
+chat` writes the conversation on screen with its citations and source paths, no source text;
+Rename in the sidebar or `/rename N|ID TITLE` gives a saved conversation a title of your own,
+and saving again keeps it. No reindex. Unreleased: the first change since v0.11.0.
+
+**Open follow-ups:** none planned. A pre-existing Chat page bug, found during this follow-up's
+browser check and present on `main` too, needs a decision: a question sent while the warm load
+is still running leaves `st.chat_input` disabled after its answer (Export and rename results).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -527,7 +532,7 @@ class Tts(Protocol):
 | Index database | `index_dir/qwn.db` (single SQLite file, WAL mode) | ~4 KB per chunk for vectors + text | ignored |
 | Page renders | `index_dir/pages/<doc_id>/<page>.webp` (WebP q85, 150 dpi) | ~50–150 KB per page | ignored |
 | Saved conversations | `index_dir/conversations/<id>.json` (folder `0700`, files `0600`), written only when you save (CLI → Saved conversations) | KB each | ignored |
-| Exports (planned) | wherever you put them: a browser download, or `/export`'s folder (`0600`); outside the index, never written on their own (CLI → Export and rename conversations) | KB each | yours |
+| Exports | wherever you put them: a browser download, or `/export`'s folder (`0600`); outside the index, never written on their own (CLI → Export and rename conversations) | KB each | yours |
 | Eval sets | `eval/public/` (generator + questions, committed); `eval/private/` (your questions, **never committed**) | KB | private ignored |
 | Eval runs | `eval/results/*.json`; `eval/public/baseline.json` committed, `eval/private/baseline.json` ignored | KB | results ignored |
 
@@ -716,7 +721,7 @@ qwn chat [--in PATH]... [--no-guard]   # follow-up (done 2026-10-24): multi-turn
                             # the terminal; see `qwn chat` below
 qwn chat --open N|ID        # follow-up (done 2026-10-26): reopen a saved conversation;
                             # /save, /list, /open, /delete in the REPL; see Saved conversations
-                            # planned 2026-10-26: /export [PATH], /rename N|ID TITLE; see
+                            # done 2026-10-26: /export [PATH], /rename N|ID TITLE; see
                             # Export and rename conversations
 ```
 
@@ -1271,7 +1276,7 @@ beside them already holds the document text in the clear; FileVault covers the d
     exchange, "N earlier questions: /history" before the last exchange. Deleting the open
     conversation keeps it on screen as unsaved, so `/save` (or Save) makes a new file.
 
-### Export and rename conversations (follow-up, planned 2026-10-26)
+### Export and rename conversations (follow-up, planned 2026-10-26, done 2026-10-26)
 
 **Why:** a saved conversation can only be read inside qwn, and every one is titled with its first
 question. You can't paste an answer, with the pages it cites, into your own notes, and a list of
@@ -1443,6 +1448,56 @@ source excerpts; exporting from `qwn ask`; a `qwn chat --export` flag or a `qwn 
 command group; exporting several conversations at once; renaming before the first save;
 searching conversations; autosave.
 
+**Export and rename results (2026-10-26, M2 Max):**
+
+- Fast tests 494 passed (export, rename and title cases in `tests/unit/test_conversations.py`,
+  incl. the golden Markdown and the injection cases; `/export` and `/rename` in
+  `tests/integration/test_chat_flow.py`; Export and the Rename dialog in
+  `tests/ui/test_saved_conversations.py`), slow tests 70 passed (564 in all, incl. a new Chrome
+  test that downloads the export and renames from the sidebar), ruff and ty clean. No eval run
+  (Done when 2).
+- **Browser check** (`qwn ui` on the hard corpus, Playwright): 2024 revenue 196.9 → "And in
+  2025?" (Searched for "What was total revenue in 2025?", 214.6) → "How many vessels did the
+  company operate that year?" (37; this time rewritten to "…in 2024?", the rewrite's own
+  variance, not this change). Export before saving downloaded
+  `qwn-conversation-2026-10-26-1224.md`: three questions, two Searched for lines, `[file p.N]`
+  citations and full source paths, "not saved". Save, then Rename in the sidebar to "Revenue and
+  fleet, 2024–2025": the box and the list showed the new title. After restarting `qwn ui` the
+  list showed it, Open restored the answers, and Save again moved `saved` and kept the title.
+  The three-button row and the sidebar's Open / Rename / Delete (Delete wraps to a second line)
+  were checked at every Responsive layout width, light and dark. The saved conversations and the
+  download were removed afterwards.
+- **Terminal check** (pseudo-terminal, same corpus): two questions (196.9, 214.6), `/export`
+  ("Exported 2 questions to ….md", `0600`, "not saved"), `/save`, `/rename 1 Revenue by year`,
+  `/list` showed the new title, `/export` again wrote `…-2.md` with "# Revenue by year" and the
+  saved time, and `/export` to an existing export was refused and left it unchanged.
+- **Changed source** (scratch copy of the hard corpus with its own ingest): saved 2024 and 2025
+  revenue, appended a comment to `annual-review-2024.pdf` and re-ingested, deleted
+  `annual-review.pdf` and pruned. `/open 1` then `/export`: the sources read "(changed since
+  this answer)" and "(no longer in your library)".
+- **Implementation notes:**
+  - **Rename runs in the dialog button's `on_click` callback**, not in the dialog body. Renamed
+    in the body, the sidebar's dropdown list showed the new title but the selected box kept the
+    old one in the browser (AppTest can't show it). The callback runs before the page is drawn,
+    so it can set `st.session_state.saved_pick` again, which makes Streamlit send the selection
+    with its new label; the dialog then closes on its next run. An empty title is reported
+    through session state and the dialog stays open.
+  - `/rename` reads its title from the raw line, not `shlex`, so an apostrophe ("Bob's notes")
+    isn't an unclosed quote; one pair of surrounding quotes is dropped.
+  - The ANSI/control-character filter moved from `cli._plain` to `conversations.printable`,
+    used by `qwn chat`, `clean_title` and the export. `source_states(conversation, documents)`
+    gives every source's state for an export. `write_export` opens with `O_EXCL`, mode `0600`,
+    and logs only bytes and seconds.
+  - The Chat page builds the Markdown on each run (`on_click="ignore"`: the download doesn't
+    rerun), so its export time is the time the page was drawn, and the browser download isn't
+    logged; `/export` is.
+  - AppTest keeps a download's bytes only during a run: the tests read `data` and `file_name`
+    by wrapping `st.download_button`.
+- **Found on `main`, not fixed here:** a question sent while the warm load is still running
+  (asked as soon as a fresh `qwn ui` page loads) leaves `st.chat_input` disabled after its answer
+  (still disabled after 8 minutes); asked 20 s later, after the warm load, it's enabled at once.
+  The same script on `main` (`git stash -u`) shows it, so it predates this change.
+
 ## Streamlit UI (`src/qwn/ui/`)
 
 Run as an `st.navigation` app with 3 pages. Models are loaded through `@st.cache_resource` wrappers
@@ -1517,6 +1572,9 @@ injection point) and `ui/sources.py` (source cards and the "Open page" dialog). 
     `st.session_state` and are applied per request (they don't persist).
   - **Saved conversations** *(follow-up, done 2026-10-26)*: Save beside "New conversation",
     and a sidebar list to open or delete one; see CLI → Saved conversations.
+  - **Export and rename** *(follow-up, done 2026-10-26)*: Export (a Markdown download of the
+    conversation on screen) beside Save, and Rename beside Open and Delete in the sidebar; see
+    CLI → Export and rename conversations.
 - **State**: `st.session_state.messages`, `st.session_state.settings`. Single local user.
 
 ### Answer highlighting (phase 6)
