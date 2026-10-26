@@ -119,13 +119,20 @@ uv version --bump minor               # one minor release per completed phase (f
   question, as the prefill reuse probe did.
   VL-8B is source-order sensitive (PLAN.md → Source order reuse probe results): rotating the
   image labels changed the text of 52 of 58 hard answers and made 9 worse, 1 better (bare
-  refusals when the best page leaves `[S1]`). Any idea that reorders sources needs that
-  rotation check first (~40 min); source order reuse closed on it.
+  refusals when the best page leaves `[S1]`). A prompt line, a "best match" label hint, both,
+  and a rank-order retry all failed rule R (Source order sensitivity probe results): treat
+  reordering sources as closed for VL-8B; don't probe more wordings or labels.
   To probe a labelling change without editing the repo, patch `qwn.answer.to_sources`:
   `Answerer.answer` looks it up by name at call time. Fix what counts as worse (a mixed
   result counts as worse) before the run, not after the first result.
   Greedy cold answers repeat exactly: an arm that only falls back to an order you've already run
   (e.g. a retry in rank order) is scored from that run, with no extra generation.
+  Scratchpads don't outlive the session: a later probe can't diff against an earlier probe's
+  texts unless PLAN.md recorded them, so plan to re-run that arm (~18 min per 60 hard queries;
+  retrieve and rerank all 60 once first, ~6 min, and reuse the hits in every arm).
+  The `eval/results/*-<set>.json` whose `settings_hash` matches the baseline and whose
+  `per_query` matches it has the baseline's `answer_text`: use it as a probe's today-in-rank-order
+  arm (check one query re-answers identically; it has no per-query latency).
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
@@ -155,6 +162,8 @@ uv version --bump minor               # one minor release per completed phase (f
   imported by name) per run; assert the swapped-out text was found. Diff each run against
   today's prompt as it lands: one failing criterion ends the probe (~25 min per 41 queries).
   `image_label` is imported by name too: patch `mlx_vlm_gen.image_label` for a label probe.
+  A label that depends on all sources (a hint on the top score) needs `mlx_vlm_gen.messages`
+  patched instead (also looked up by name): `image_label` sees one source.
   `Source.score` is the rerank score, so a label can mark the top page without a new field.
   Probe a retrieval idea without a reindex by monkeypatching `Retriever.rerank_input(hit, title)`
   and running `ev.run(..., ev.Options())` (no generation; ~20 min for hard + public). Probe the
