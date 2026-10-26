@@ -115,6 +115,13 @@ uv version --bump minor               # one minor release per completed phase (f
   The turns eval never retrieves the turn before (history is fixed text in `queries.jsonl`):
   to test anything that uses the previous turn's sources, rewrite and retrieve the last history
   question, as the prefill reuse probe did.
+  VL-8B is source-order sensitive (PLAN.md → Source order reuse probe results): rotating the
+  image labels changed the text of 52 of 58 hard answers and made 9 worse, 1 better (bare
+  refusals when the best page leaves `[S1]`). Any idea that reorders sources needs that
+  rotation check first (~40 min); source order reuse closed on it.
+  To probe a labelling change without editing the repo, patch `qwn.answer.to_sources`:
+  `Answerer.answer` looks it up by name at call time. Fix what counts as worse (a mixed
+  result counts as worse) before the run, not after the first result.
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
