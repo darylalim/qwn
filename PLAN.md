@@ -94,8 +94,11 @@ and a rank-order retry after a bare refusal (T) left every combination at 4 or 5
 order sensitivity is the finding: `SYSTEM_PROMPT` and `image_label` are unchanged, and
 cross-turn prefill reuse stays off.
 
-**Open follow-ups:** none. Since v0.10.0 only probes have merged (no code change), so there is
-nothing to release.
+**Open follow-ups:** **saved conversations** (planned 2026-10-26: CLI → Saved conversations;
+implement on `followup/saved-conversations`). You save a conversation explicitly on the Chat page
+or with `/save` in `qwn chat`. It's written to `index_dir/conversations/` and can be reopened with
+full answers and source cards, so follow-ups carry on. Since v0.10.0 only probes have merged (no
+code change), so this is the first follow-up toward v0.11.0.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -131,6 +134,9 @@ nothing to release.
     reuse (probe results: the rotation and its table), Faster prefill (rule G), Explained
     abstention and Abstention wording results (why the prompt line avoids refusal wording);
     Prompts and parameters (generator system prompt, labels); Security → Prompt injection.
+14. **Saved conversations follow-up:** CLI → Saved conversations and `qwn chat`; Streamlit UI
+    (Chat, Responsive layout); Storage layout; Evaluation → Multi-turn questions (History);
+    Runtime robustness → Logging; Security → Prompt injection.
 
 **Workflow for each phase:**
 
@@ -508,6 +514,7 @@ class Tts(Protocol):
 | Source files | Streamlit uploads are copied to `data_dir`. CLI ingest indexes files **in place** (absolute paths) | your corpus | ignored |
 | Index database | `index_dir/qwn.db` (single SQLite file, WAL mode) | ~4 KB per chunk for vectors + text | ignored |
 | Page renders | `index_dir/pages/<doc_id>/<page>.webp` (WebP q85, 150 dpi) | ~50–150 KB per page | ignored |
+| Saved conversations | `index_dir/conversations/<id>.json` (folder `0700`, files `0600`), written only when you save (CLI → Saved conversations) | KB each | ignored |
 | Eval sets | `eval/public/` (generator + questions, committed); `eval/private/` (your questions, **never committed**) | KB | private ignored |
 | Eval runs | `eval/results/*.json`; `eval/public/baseline.json` committed, `eval/private/baseline.json` ignored | KB | results ignored |
 
@@ -694,6 +701,8 @@ qwn models status     # pinned vs cached revisions, disk use
 qwn ui                # runs: streamlit run src/qwn/ui/app.py
 qwn chat [--in PATH]... [--no-guard]   # follow-up (done 2026-10-24): multi-turn questions in
                             # the terminal; see `qwn chat` below
+qwn chat --open N|ID        # follow-up (planned 2026-10-26): reopen a saved conversation;
+                            # see Saved conversations below
 ```
 
 Common flags override settings (`--top-k`, `--rerank-k`, `--max-images`, `--config PATH`).
@@ -825,7 +834,8 @@ document could otherwise move the cursor or rewrite earlier lines through an ech
 4. PLAN.md updated in the same PR: this section (results under it), CLI listing, Start here.
    README gets one `qwn chat` line next to `qwn ask`.
 
-**Out of scope:** voice; saving or reloading conversations; `--json` or other machine output;
+**Out of scope:** voice; saving or reloading conversations (its own follow-up, planned
+2026-10-26: Saved conversations, below); `--json` or other machine output;
 multi-line input; token streaming (its own follow-up: Streaming answers in `qwn chat`, below);
 changing `history_turns` from inside the REPL.
 
@@ -1028,6 +1038,179 @@ answers become common in daily use, re-run this probe before building it. Shorte
 separate follow-up with its own planning session (planned 2026-10-24: Evaluation → Faster
 prefill).
 
+### Saved conversations (follow-up, planned 2026-10-26)
+
+**Why:** a conversation lives only in memory: closing the browser tab, restarting `qwn ui` or
+leaving `qwn chat` loses it, along with the follow-up context. You can't come back to an
+answer and its cited pages, or carry on a conversation the next day. **No change to retrieval,
+prompts, the rewrite, Guard or `Answerer`.** One follow-up PR (branch
+`followup/saved-conversations`), no version bump.
+
+**Decisions (agreed 2026-10-26):**
+
+- **Saving is explicit.** Nothing is written until you save: Save on the Chat page, `/save` in
+  `qwn chat`. A conversation you never save is lost on exit, as it is today, so the privacy
+  default holds: no question reaches disk unless you ask. Once saved (or reopened), a
+  conversation has an id, and saving again overwrites the same file with the whole
+  conversation. New exchanges aren't written until you save again: there is no autosave.
+- **Stored in the index:** `index_dir/conversations/<id>.json`, one file per conversation.
+  Saved sources point at chunks and page renders in that index, so they belong with it: backing
+  up or moving `index_dir/` takes them along, an eval index (`QWN_INDEX_DIR`) keeps its own, and
+  deleting the index deletes them. `qwn ingest --reindex` (`open_index(reset=True)`) clears
+  `pages/` only, so they survive it.
+- **Both surfaces, one core:** a new `qwn.conversations` module (stdlib `json` only, no SQLite,
+  no models) is used by the Chat page and by `qwn chat`. Neither has storage code of its own.
+- **Reopening restores full answers:** each question, the answer text with citations,
+  `Searched for`, the scope each question was asked in, Guard warnings and blocks, and source
+  cards rebuilt from the saved sources. Follow-ups carry on from the saved history. Not saved:
+  audio (a spoken question keeps only its "Spoken question" caption), highlights (`locate`
+  runs again when a page is opened), ratings, and failed exchanges (errors).
+
+**Module `qwn.conversations`:**
+
+- `Exchange(id, question, response, scope, spoken=False)`, frozen. `id` is the Chat
+  message id (12 hex characters; `qwn chat` makes one the same way), kept so a rating on a
+  reopened answer rewrites the same draft (`save_draft` replaces by `draft_id`). `question` is
+  the message as typed or transcribed. `scope` is the absolute paths searched (empty = all
+  documents).
+- `Conversation(id, title, created, saved, exchanges)`, frozen. `id` is `uuid4().hex[:12]`.
+  `title` is the first question with whitespace collapsed, cut to 60 characters with `…`
+  (renaming is out of scope). `created` and `saved` are local ISO-8601 times with offset.
+  `scope` (property) is the last exchange's scope.
+- `Store(index_root)`, which works on `index_root / "conversations"`:
+  - `save(conversation) -> Conversation`: sets `saved` to now and writes the file atomically
+    (a temp file in the same folder, then `os.replace`). The folder is created `0o700` and the
+    file `0o600`: the files hold your questions, which nothing else in the index does.
+  - `list() -> list[Summary]`, most recently saved first. `Summary(id, title, saved,
+    exchanges: int)`. Files that can't be read are left out and logged once with their file name
+    (never their content).
+  - `load(id) -> Conversation`: `UnknownConversation` for a missing id or an unreadable file.
+  - `delete(id)`: unlinks the file. A missing file is fine (two tabs can delete the same one).
+- **File format** (`"format": 1`). A conversation is plain JSON, written with `sort_keys` and an
+  indent so it diffs and reads sensibly:
+  `{format, id, title, created, saved, exchanges: [{id, question, spoken, scope, response}]}`.
+  `response` holds every `Response` field except `timings`, with `checks` saved as
+  `{stage, label, categories, refusal, action}`, each source as its `Source` fields, and each hit
+  as its `Chunk` fields plus `score` and `rerank_score`. Image paths are stored relative to the
+  index root (`Chunk.image_path` already is) and made absolute again on load, so a moved index
+  still works. Loading is strict: an unknown `format`, a missing key or a wrong type raises
+  `UnknownConversation`, and the file is never half-loaded. Unknown extra keys are ignored.
+- **Saved sources against today's index:** `source_state(hit, documents) -> "ok" | "changed" |
+  "missing"`, where `documents` is `{path: sha256}` from `Index.documents()`. A path that's no
+  longer indexed, or a page render file that's gone, is `missing`. A path whose `sha256` differs
+  from the saved `Hit.chunk.sha256` is `changed`: `doc_id` is a hash of the path, so a reindexed
+  edit keeps the same render path, which now shows a different page.
+- **Untrusted content:** a saved file holds model output and document text. Everything shown
+  passes through the same filters as a fresh answer (`safe_markdown` on the Chat page, `_plain`
+  in the terminal), and reopened history goes to the rewrite fenced in `<turn>` blocks as
+  today. A hand-edited file can at worst show odd text. It can never point an image at a path
+  outside the index (relative paths with `..` or an absolute path are rejected on load).
+
+**Chat page:**
+
+- **Save** (`:material/bookmark:`) beside "New conversation" in the same slot (`st.columns`,
+  shown once there is a conversation with an answer). It saves every exchange with a
+  `response`, blocked ones included; errors are left out. A caption under the buttons gives
+  the state: "Saved 14:02", "Saved 14:02 · 2 newer exchanges not saved", or nothing for a
+  conversation you haven't saved.
+- **Saved conversations** in the sidebar, on the Chat page only: an `st.selectbox` (no default,
+  placeholder "Open a saved conversation", each option `title · saved date · N questions`) with
+  **Open** and **Delete** buttons under it. Nothing saved: one caption, "Saved conversations
+  appear here." Delete asks first in an `st.dialog` ("Delete *title*? This removes the saved
+  file."), as Library → Delete does.
+- **Open** (an `on_click` callback, so it runs before the widgets are drawn) replaces
+  `messages` with the saved exchanges (user and assistant messages rebuilt from them), clears
+  `boxes`, and sets `st.session_state.scope` to the saved scope, keeping only paths that are
+  still in `scope_choices` (`st.multiselect` rejects values it doesn't offer). If any were
+  dropped: `st.info("Some of this conversation's folders or files are no longer in your
+  library; searching in the rest.")`, or "…searching all documents." when none are left. Unsaved
+  exchanges in the open conversation are discarded, as "New conversation" does today.
+- **A reopened answer** is drawn by `show_answer` as any other. Its scope caption uses the saved
+  scope. Source cards: `ok` as today; `changed` or `missing` shows no thumbnail and no "Open
+  page" button, with the caption "This page has changed since the answer" or "No longer in your
+  library". `sources.cards` takes the state of each card from the page (one `Index.documents()`
+  call per run).
+- **New conversation** also forgets the saved id, so the next Save makes a new file.
+
+**`qwn chat`:**
+
+| Command | Does |
+|---|---|
+| `/save` | Saves the conversation (exchanges with a `Response`, blocks included). Prints "Saved as *id*: *title* (N questions)." Before any answer: "Nothing to save yet." |
+| `/list` | Saved conversations, most recent first: `  1  a1b2c3d4e5f6  2026-10-26 14:02  4 questions  What was total revenue in 2024?`. "No saved conversations." when empty |
+| `/open N\|ID` | Opens one by its number in `/list` order (most recent first) or its id. It replaces the history and the scope, then prints the scope line and the last exchange (its question, then the answer as `_print_response` prints it) so you see where you left off. `/history` shows the rest |
+| `/delete N\|ID` | Deletes one. Prints "Deleted *title*." No confirmation: the REPL has no undo for `/new` either, and you name the conversation explicitly |
+
+- **`qwn chat --open N|ID`** opens a saved conversation at start, as `/open` does, after the
+  banner. An unknown one exits 1 before loading the models ("No saved conversation *x*. Run
+  `qwn chat` and type /list."). `--open` and `--in` together: `--in` wins for the scope,
+  stated in the scope line.
+- **Scope on open:** the saved scope's paths go through `Retriever.scope`. On `EmptyScope`, the
+  REPL searches all documents and says so ("The saved folders and files are no longer indexed:
+  searching all documents.").
+- **Unsaved changes in a saved conversation:** `/quit`, Ctrl-D, `/new` and `/open` with
+  exchanges newer than the last save print "2 newer questions aren't saved. /save to keep them,
+  or repeat the command to discard them." and do nothing. Repeating the same command right away
+  goes ahead. A conversation never saved is discarded silently, as today (explicit saving).
+  When stdin isn't a TTY (scripts, tests with `input=`), end of input exits at once.
+- **`/sources`** after `/open` lists the last answer's sources, with `changed`/`missing`
+  marked after the path.
+- **Privacy:** the REPL still writes no transcript and no readline history. `/save` is the
+  only thing that writes a question to disk.
+- `/help` lists the new commands.
+
+**Logging:** ids, exchange counts, file names and timings only (Runtime robustness → Logging),
+never titles, questions or answers. The sentinel log test covers save, list, load and delete.
+
+**Tests (with the code, fakes only):**
+
+- `Store`: save → load round-trips a `Response` with sources, hits, citations, an invented
+  marker, `standalone`, a warn check and a block check (equal field by field, `timings`
+  aside). `list` is ordered most recent first. Saving again keeps the id and file name and
+  updates `saved`. `delete` of a missing id is fine. The folder is `0o700` and the file `0o600`.
+- Strict loading: an unknown `format`, a missing key, invalid JSON, or an image path with `..` or
+  an absolute path → `UnknownConversation`, and `list` leaves the file out and logs only its name.
+- A file written by an older index root loads under a new root (relative image paths).
+- `source_state`: `ok`, `changed` (sha differs) and `missing` (path gone; render gone).
+- `conversation(exchanges, turns)` on a loaded conversation gives the same `Turn`s as on the
+  original (follow-ups carry on).
+- AppTest (Chat): Save writes a file and shows "Saved …". A newer exchange shows "1 newer
+  exchange not saved". Save again overwrites the same file. An error exchange isn't saved.
+  Open restores the messages, `Searched for`, the per-answer scope caption and the cards. A
+  follow-up after Open passes the saved history (`FakeGenerator.rewrite` records it). A scope
+  path that's no longer indexed is dropped with the info message. A `missing` card has no "Open
+  page" button. Delete through the dialog removes the file. "New conversation" after Open, then
+  Save, makes a second file.
+- CLI (`CliRunner` with `input=`): `/save`, `/list`, `/open 1`, `/open <id>`, `/delete`,
+  `--open <id>`, an unknown id (exit 1), `/quit` on unsaved changes asking once and
+  quitting on the repeat, `/new` likewise, and end of input on a pipe exiting at once.
+  Saved answer text with control characters is stripped when printed after `/open`.
+- Log sentinel: no question or answer text in the log after save, list, open and delete.
+
+**Done when:**
+
+1. Fast tests, ruff, ty and the slow tests pass.
+2. **No eval run.** `Answerer`, the prompts, the rewrite and retrieval don't change, so no
+   baseline can move.
+3. **Checked by hand in the browser** (`qwn ui` on the hard corpus, `QWN_DATA_DIR` and
+   `QWN_INDEX_DIR` as in Commands): the Multi-turn results conversation (2024 revenue → "And in
+   2025?" → vessels that year), Save, then restart `qwn ui`, Open, and a follow-up ("And in
+   2024?") rewritten from the saved history. Open a cited page (the highlight runs again).
+   Layout of the sidebar list and the button row checked at the Responsive layout widths.
+4. **Checked by hand in the terminal** with real models on the same corpus, through a
+   pseudo-terminal: two questions, `/save`, `/quit`; `qwn chat --open <id>` shows the last
+   exchange, and a follow-up is rewritten from it; `/list`, `/open 1`, `/delete`.
+5. **Changed source:** in a scratch copy of the hard corpus and index, save a conversation, edit
+   and re-ingest one cited document, and delete another. Reopened, the cards say "changed" and
+   "No longer in your library", with no thumbnail or "Open page".
+6. PLAN.md updated in the same PR: this section (results under it), Start here, CLI listing,
+   Storage layout, Streamlit UI → Chat. README: one line on saving conversations.
+
+**Out of scope:** autosave; renaming, searching or exporting conversations; saving audio,
+highlights or ratings; sharing conversations between indexes; encrypting the files (the index
+beside them already holds the document text in the clear; FileVault covers the disk); a
+`qwn conversations` command group; saving failed exchanges.
+
 ## Streamlit UI (`src/qwn/ui/`)
 
 Run as an `st.navigation` app with 3 pages. Models are loaded through `@st.cache_resource` wrappers
@@ -1100,6 +1283,8 @@ injection point) and `ui/sources.py` (source cards and the "Open page" dialog). 
   - Shows loaded models and MLX active/peak memory.
   - Sliders for `top_k`, `rerank_k`, `max_images`, plus guard toggles. Values live in
     `st.session_state` and are applied per request (they don't persist).
+  - **Saved conversations** *(follow-up, planned 2026-10-26)*: Save beside "New conversation",
+    and a sidebar list to open or delete one; see CLI → Saved conversations.
 - **State**: `st.session_state.messages`, `st.session_state.settings`. Single local user.
 
 ### Answer highlighting (phase 6)
@@ -2737,7 +2922,8 @@ that still need one referent.
 
 **Out of scope:** multi-turn `qwn ask` or a `qwn chat` REPL (the REPL is its own follow-up,
 planned 2026-10-23: CLI → `qwn chat`); sending history to the answer
-generator; conversation memory across sessions (history lives in `st.session_state` only);
+generator; conversation memory across sessions (history lives in `st.session_state` only;
+saving is its own follow-up, planned 2026-10-26: CLI → Saved conversations);
 token streaming.
 
 ### Multi-turn results (2026-10-23, M2 Max)
