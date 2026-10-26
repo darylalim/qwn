@@ -1,7 +1,9 @@
 """Chat: ask a question (typed or spoken), see the answer with its cited pages, rate it.
 
 A follow-up is rewritten into a standalone question using the last few exchanges (PLAN.md →
-Evaluation → Multi-turn questions). See PLAN.md → Streamlit UI and → Voice input pipeline.
+Evaluation → Multi-turn questions). A conversation is written to disk only when you save it, and
+the sidebar reopens saved ones (PLAN.md → CLI → Saved conversations). See PLAN.md → Streamlit UI
+and → Voice input pipeline.
 """
 
 import hashlib
@@ -13,6 +15,15 @@ import streamlit as st
 
 from qwn import eval as ev
 from qwn.answer import STAGE_LABELS, Stage, conversation, history_caption
+from qwn.conversations import (
+    Exchange,
+    Store,
+    Summary,
+    UnknownConversation,
+    make,
+    saved_time,
+    saved_when,
+)
 from qwn.models import InsufficientMemory, ModelsInUse
 from qwn.retrieve import EmptyScope, describe_scope, scope_choices
 from qwn.ui import services as ui
@@ -30,8 +41,11 @@ svc = ui.services()
 st.title("Chat")
 if ui.show_problems(svc):
     st.stop()
-docs = ui.require_index(svc).documents()
+index = ui.require_index(svc)
+docs = index.documents()
 indexed = {d.path for d in docs}
+documents = {d.path: d.sha256 for d in docs}  # saved answers' cards check against these
+store = Store(index.root)
 data_dir = svc.settings.data_dir
 history_turns = svc.settings.history_turns
 
@@ -77,7 +91,7 @@ def show_answer(msg: dict, *, last: bool) -> None:
     if response.standalone:  # the rewrite is shown, so a wrong one is easy to spot and rephrase
         st.caption(f":material/search: Searched for: {ui.safe_markdown(response.standalone)}")
     st.caption(describe_scope(msg["scope"], indexed))
-    sources.cards(response, msg["id"])
+    sources.cards(response, msg["id"], documents)
     if msg.get("audio"):
         st.audio(msg["audio"], format="audio/wav")
     st.feedback(
@@ -160,6 +174,100 @@ def speak(msg: dict) -> None:
     st.audio(msg["audio"], format="audio/wav", autoplay=True)
 
 
+def answered() -> list[Exchange]:
+    """The exchanges a save keeps: every answer (blocked ones too), never errors."""
+    out: list[Exchange] = []
+    spoken = False
+    for m in st.session_state.messages:
+        if m["role"] == "user":
+            spoken = bool(m.get("spoken"))
+        elif "response" in m:
+            out.append(Exchange(m["id"], m["question"], m["response"], list(m["scope"]), spoken))
+    return out
+
+
+def save_conversation() -> None:
+    """Save callback: write the whole conversation (the same file once it has been saved)."""
+    try:
+        st.session_state.saved = store.save(make(answered(), st.session_state.saved))
+    except OSError as e:
+        logger.exception("save failed")
+        st.session_state.notice = ("error", f"Couldn't save the conversation: {e}")
+
+
+def open_conversation() -> None:
+    """Open callback (runs before the widgets are drawn, so it can set the scope): replace the
+    conversation with a saved one. Unsaved exchanges are discarded, as "New conversation" does."""
+    try:
+        saved = store.load(st.session_state.saved_pick)
+    except UnknownConversation:
+        st.session_state.notice = ("error", "That conversation can't be opened: see the log.")
+        return
+    messages: list[dict] = []
+    for e in saved.exchanges:
+        messages.append({"role": "user", "content": e.question, "spoken": e.spoken})
+        answer = {"id": e.id, "role": "assistant", "question": e.question}
+        messages.append(answer | {"scope": list(e.scope), "response": e.response})
+    st.session_state.messages = messages
+    st.session_state.boxes = {}
+    st.session_state.saved = saved
+    kept = [p for p in saved.scope if p in choices]  # st.multiselect rejects other values
+    st.session_state.scope = kept
+    if len(kept) < len(saved.scope):
+        rest = "searching in the rest." if kept else "searching all documents."
+        st.session_state.notice = (
+            "info",
+            f"Some of this conversation's folders or files are no longer in your library; {rest}",
+        )
+
+
+@st.dialog("Delete saved conversation?")
+def confirm_delete(summary: Summary) -> None:
+    st.markdown(f"Delete **{ui.safe_markdown(summary.title)}**? This removes the saved file.")
+    with st.container(horizontal=True):
+        if st.button("Delete", type="primary", icon=":material/delete:"):
+            store.delete(summary.id)
+            if st.session_state.saved is not None and st.session_state.saved.id == summary.id:
+                st.session_state.saved = None  # still on screen, no longer saved
+            st.rerun()
+        if st.button("Cancel"):
+            st.rerun()
+
+
+choices = scope_choices(sorted(indexed))
+with st.sidebar:
+    summaries = {s.id: s for s in store.list()}
+    if not summaries:
+        st.caption(":material/bookmarks: Saved conversations appear here.")
+    else:
+        pick = st.selectbox(
+            "Saved conversations",
+            list(summaries),
+            index=None,
+            key="saved_pick",
+            placeholder="Open a saved conversation",
+            format_func=lambda i: (
+                f"{summaries[i].title} · {saved_when(summaries[i].saved)} · "
+                f"{summaries[i].exchanges} question{'s' if summaries[i].exchanges != 1 else ''}"
+            ),
+        )
+        with st.container(horizontal=True):
+            st.button(
+                "Open",
+                icon=":material/history:",
+                disabled=pick is None,
+                on_click=open_conversation,
+            )
+            if st.button("Delete", icon=":material/delete:", disabled=pick is None) and pick:
+                confirm_delete(summaries[pick])
+
+if (notice := st.session_state.pop("notice", None)) is not None:
+    kind, text = notice
+    if kind == "error":
+        st.error(text, icon=":material/error:")
+    else:
+        st.info(text, icon=":material/info:")
+
 history = st.container()
 with history:
     messages = st.session_state.messages
@@ -179,13 +287,14 @@ if not docs:
 
 
 def new_conversation() -> None:
-    """Forget the history (and its highlights); the scope stays."""
+    """Forget the history (and its highlights) and the saved id; the scope stays."""
     st.session_state.messages = []
     st.session_state.boxes = {}
+    st.session_state.saved = None  # the next Save makes a new file
 
 
-choices = scope_choices(sorted(indexed))
-reset = st.empty()  # "New conversation", once there's a conversation (filled in at the end)
+# "New conversation" and Save, then the save state, once there's a conversation (filled at the end)
+actions, saved_note = st.empty(), st.empty()
 scope = st.multiselect(
     "Search in",
     choices,
@@ -223,4 +332,12 @@ if question:
             if spoken:
                 speak(msg)
 if st.session_state.messages:
-    reset.button("New conversation", icon=":material/add_comment:", on_click=new_conversation)
+    exchanges = answered()
+    with actions.container(horizontal=True):  # side by side; wraps on a phone
+        st.button("New conversation", icon=":material/add_comment:", on_click=new_conversation)
+        if exchanges:
+            st.button("Save", icon=":material/bookmark:", on_click=save_conversation)
+    if (saved := st.session_state.saved) is not None:
+        n = len(exchanges) - len(saved.exchanges)
+        newer = f" · {n} newer exchange{'s' if n != 1 else ''} not saved" if n > 0 else ""
+        saved_note.caption(f":material/bookmark_added: Saved {saved_time(saved)}{newer}")

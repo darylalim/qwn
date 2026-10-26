@@ -121,6 +121,10 @@ def test_layout(server, browser, name, width, scheme):
             box.press("Enter")
             page.get_by_text("Searched for:").wait_for(timeout=20_000)
             page.get_by_role("button", name="New conversation").wait_for(timeout=5_000)
+            page.get_by_role("button", name="Save").click()  # the button row, then its caption
+            page.get_by_text("Saved ", exact=False).first.wait_for(timeout=10_000)
+            if width > 760:  # the sidebar's list (collapsed on narrow screens)
+                page.get_by_text("Saved conversations").first.wait_for(timeout=10_000)
         page.wait_for_timeout(300)  # let the layout settle after the last element arrives
         page.screenshot(path=SHOTS / f"{name}-{width}-{scheme}.png", full_page=True)
 
@@ -139,5 +143,32 @@ def test_layout(server, browser, name, width, scheme):
             img = dialog.locator("img").first.bounding_box()
             assert img is not None and img["x"] >= 0 and img["x"] + img["width"] <= width
             page.screenshot(path=SHOTS / f"chat-dialog-{width}-{scheme}.png")
+    finally:
+        context.close()
+
+
+def test_a_saved_conversation_reopens_from_the_sidebar(server, browser):
+    """Save, then open it in a new session: AppTest can't show that the sidebar's clicks land."""
+    context = browser.new_context(viewport={"width": 1512, "height": HEIGHT})
+    page = context.new_page()
+    try:
+        page.goto(server)
+        box = page.locator('[data-testid="stChatInput"] textarea')
+        box.wait_for(timeout=20_000)
+        box.fill(QUESTION)
+        box.press("Enter")
+        page.get_by_role("button", name="Save").click()
+        page.get_by_text("Saved ", exact=False).first.wait_for(timeout=10_000)
+
+        page = context.new_page()  # a new session: nothing on screen
+        page.goto(server)
+        page.locator('[data-testid="stChatInput"]').wait_for(timeout=20_000)
+        sidebar = page.locator('[data-testid="stSidebar"]')
+        sidebar.locator('[data-testid="stSelectbox"]').click()
+        page.get_by_role("option").first.click()
+        # by its text: the selectbox's own arrow is also a button named "Open"
+        sidebar.locator("button").filter(has_text="Open").click()
+        page.get_by_text("Searched in:").first.wait_for(timeout=10_000)
+        assert page.get_by_role("button", name="Open page").count() >= 1
     finally:
         context.close()

@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -17,6 +18,7 @@ from qwn.models_lock import MODELS, PinnedModel
 
 if TYPE_CHECKING:
     from qwn.answer import Answerer, Response
+    from qwn.conversations import Conversation, Exchange, SourceState, Store
     from qwn.ingest import Failure, PrunePlan
     from qwn.interfaces import Source
     from qwn.models import WarmLoad
@@ -438,7 +440,12 @@ def _plain(text: str) -> str:
     return _CONTROL.sub("", _ANSI.sub("", text))
 
 
-def _print_response(response: "Response", *, all_sources: bool) -> None:
+def _print_response(
+    response: "Response",
+    *,
+    all_sources: bool,
+    states: "dict[str, SourceState] | None" = None,
+) -> None:
     """`qwn ask` and `qwn chat` output: the rewrite (if any), Guard warnings, then a block or
     the answer and its sources."""
     if response.standalone:
@@ -449,11 +456,23 @@ def _print_response(response: "Response", *, all_sources: bool) -> None:
         typer.secho(f"⛔ {block.message()}", fg="red")
         return
     typer.echo(_plain(response.rendered()))
-    _print_sources(response, all_sources=all_sources)
+    _print_sources(response, all_sources=all_sources, states=states)
 
 
-def _print_sources(response: "Response", *, all_sources: bool) -> None:
-    """The cited sources, or with `all_sources` every source the model was given (cited `*`)."""
+STATE_NOTES = {
+    "changed": "  (changed since this answer)",
+    "missing": "  (no longer in your library)",
+}
+
+
+def _print_sources(
+    response: "Response",
+    *,
+    all_sources: bool,
+    states: "dict[str, SourceState] | None" = None,
+) -> None:
+    """The cited sources, or with `all_sources` every source the model was given (cited `*`).
+    `states` (by chunk id) marks a saved answer's sources that changed or left the library."""
     from qwn.answer import cite_label
 
     pairs = list(zip(response.sources, response.hits, strict=True))
@@ -465,7 +484,8 @@ def _print_sources(response: "Response", *, all_sources: bool) -> None:
     for source, hit in listed:
         mark = "*" if all_sources and source.label in cited else " "
         where = f"  p.{source.page}" if source.page is not None else ""
-        typer.echo(_plain(f" {mark}[{cite_label(source, hit)}]  {source.path}{where}"))
+        note = STATE_NOTES.get((states or {}).get(source.chunk_id, "ok"), "")
+        typer.echo(_plain(f" {mark}[{cite_label(source, hit)}]  {source.path}{where}{note}"))
 
 
 CHAT_HELP = """Commands:
@@ -475,6 +495,10 @@ CHAT_HELP = """Commands:
   /sources      every source the last answer was given, cited ones marked *
   /in PATH...   search only these files or folders (no PATH: everything); keeps the history
   /history      what the next follow-up is rewritten with
+  /save         save this conversation (in the index folder; nothing is saved otherwise)
+  /list         saved conversations, most recent first
+  /open N|ID    open a saved conversation (its number in /list, or its id)
+  /delete N|ID  delete a saved conversation
 Keys: Ctrl-C clears the line, or cancels an answer; ↑ recalls earlier questions."""
 HISTORY_CHARS = 120  # /history cuts each answer here
 PROMPT = "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK} "
@@ -494,15 +518,33 @@ def chat(
             help="Check questions and answers with Guard (default: the guard_enabled setting).",
         ),
     ] = None,
+    open_ref: Annotated[
+        str | None,
+        typer.Option(
+            "--open",
+            metavar="N|ID",
+            help="Open a saved conversation (its number in /list, or its id).",
+        ),
+    ] = None,
 ) -> None:
     """Ask questions in a conversation: follow-ups like "and in 2025?" use the earlier ones."""
     import sys
 
     from qwn.answer import Answerer, history_caption
+    from qwn.conversations import Store, UnknownConversation
     from qwn.models import WarmLoad
 
     settings = _overrides(ctx.obj, top_k=top_k, rerank_k=rerank_k, max_images=max_images)
     retriever, doc_ids = _retriever(settings, scope)
+    store = Store(retriever.index.root)
+    opened = None
+    if open_ref is not None:  # before the models load: an unknown one stops here
+        try:
+            opened = store.load(store.resolve(open_ref).id)
+        except UnknownConversation:
+            raise _fail(
+                f"No saved conversation {_plain(open_ref)}. Run `qwn chat` and type /list."
+            ) from None
     registry = retriever.registry
     try:
         registry.process_lock.acquire()  # as `qwn ui`: one process owns the models
@@ -510,9 +552,11 @@ def chat(
         raise _fail(str(e)) from None
     try:
         answerer = Answerer(settings, retriever, registry)
-        session = _Chat(answerer, settings.history_turns, scope or [], doc_ids, guard)
+        session = _Chat(answerer, settings.history_turns, scope or [], doc_ids, guard, store)
         typer.echo("qwn chat: ask about your documents. /help for commands, Ctrl-D to quit.")
         typer.echo(f"{session.scope_line()} · {history_caption(settings.history_turns)}")
+        if opened is not None:
+            session.open(opened, keep_scope=bool(scope))
         warm = WarmLoad(registry)
         if settings.warm_load:
             warm.start()
@@ -523,7 +567,7 @@ def chat(
 
 
 class _Chat:
-    """One `qwn chat` session: the scope and the completed exchanges, in memory only."""
+    """One `qwn chat` session: the scope and the completed exchanges, in memory until /save."""
 
     def __init__(
         self,
@@ -532,14 +576,18 @@ class _Chat:
         scope: list[Path],
         doc_ids: list[str] | None,
         guard: bool | None,
+        store: "Store",
     ) -> None:
         self.answerer = answerer
         self.history_turns = history_turns
         self.scope = scope
         self.doc_ids = doc_ids
         self.guard = guard
-        self.exchanges: list[tuple[str, Response]] = []
+        self.store = store
+        self.exchanges: list[Exchange] = []
         self.last: Response | None = None  # for /sources: None before an answer, after a block
+        self.saved: Conversation | None = None  # the conversation as last saved or opened
+        self.warned: str | None = None  # the command just refused for unsaved exchanges
 
     def scope_line(self) -> str:
         if self.doc_ids is None:
@@ -563,7 +611,9 @@ class _Chat:
             except EOFError:
                 if interactive:
                     typer.echo("")
-                return
+                    if not self.may_discard("/quit"):
+                        continue
+                return  # a pipe has nothing more to say: exit at once
             except KeyboardInterrupt:  # discards the line
                 typer.echo("")
                 continue
@@ -574,7 +624,26 @@ class _Chat:
                 if self.command(line) == "quit":
                     return
                 continue
+            self.warned = None
             self.ask(line, warm)
+
+    def unsaved(self) -> int:
+        """Exchanges newer than the last save of a saved (or opened) conversation. A conversation
+        never saved counts none: it is discarded silently, as saving is explicit."""
+        return len(self.exchanges) - len(self.saved.exchanges) if self.saved else 0
+
+    def may_discard(self, name: str) -> bool:
+        """Whether `name` (/quit, /new, /open) may drop unsaved exchanges: it asks once, and
+        the same command again right away goes ahead."""
+        n = self.unsaved()
+        if n <= 0 or self.warned == name:
+            self.warned = None
+            return True
+        self.warned = name
+        newer = f"{n} newer questions aren't" if n != 1 else "1 newer question isn't"
+        them = "them" if n != 1 else "it"
+        typer.echo(f"{newer} saved. /save to keep {them}, or repeat the command to discard {them}.")
+        return False
 
     def command(self, line: str) -> str | None:
         import shlex
@@ -586,18 +655,37 @@ class _Chat:
         except ValueError as e:  # an unclosed quote
             typer.secho(f"Can't read that command: {e}.", fg="red", err=True)
             return None
+        if name in ("/quit", "/new", "/open"):
+            if name == "/open" and not args:
+                typer.echo("Which one? /open N or /open ID (see /list).")
+                return None
+            if not self.may_discard("/quit" if name == "/quit" else name):
+                return None
+        else:
+            self.warned = None
         if name == "/quit":
             return "quit"
         if name == "/help":
             typer.echo(CHAT_HELP)
         elif name == "/new":
-            self.exchanges, self.last = [], None
+            self.exchanges, self.last, self.saved = [], None, None
             typer.echo("New conversation.")
         elif name == "/sources":
             if self.last is None:
                 typer.echo("No answer yet.")
             else:
-                _print_sources(self.last, all_sources=True)
+                _print_sources(self.last, all_sources=True, states=self.states(self.last))
+        elif name == "/save":
+            self.save()
+        elif name == "/list":
+            self.list_saved()
+        elif name == "/open":
+            self.open_ref(args[0])
+        elif name == "/delete":
+            if not args:
+                typer.echo("Which one? /delete N or /delete ID (see /list).")
+            else:
+                self.delete(args[0])
         elif name == "/in":
             paths = [Path(a) for a in args]
             try:
@@ -619,7 +707,7 @@ class _Chat:
         if self.history_turns == 0:
             typer.echo("Follow-ups aren't rewritten: each question is answered on its own.")
             return
-        turns = conversation(self.exchanges, self.history_turns)
+        turns = conversation(self.pairs(), self.history_turns)
         if not turns:
             typer.echo("No history yet.")
         for turn in turns:
@@ -631,6 +719,7 @@ class _Chat:
 
     def ask(self, question: str, warm: "WarmLoad") -> None:
         from qwn.answer import STAGE_LABELS, Stage, conversation
+        from qwn.conversations import Exchange
         from qwn.retrieve import EmptyScope
 
         registry = self.answerer.registry
@@ -641,7 +730,7 @@ class _Chat:
                 label = "Waiting for the model…" if busy else STAGE_LABELS[stage]
                 typer.echo("\r\x1b[2K" + typer.style(label, dim=True), nl=False, err=True)
 
-        history = conversation(self.exchanges, self.history_turns)
+        history = conversation(self.pairs(), self.history_turns)
         try:
             response = self.answerer.ask(
                 question, history=history, doc_ids=self.doc_ids, guard=self.guard, on_stage=on_stage
@@ -663,8 +752,101 @@ class _Chat:
             return
         self._clear_status()
         _print_response(response, all_sources=False)
-        self.exchanges.append((question, response))
+        self.exchanges.append(Exchange(uuid.uuid4().hex[:12], question, response, self.searched()))
         self.last = response if response.blocked is None else None
+
+    def pairs(self) -> "list[tuple[str, Response]]":
+        return [(e.question, e.response) for e in self.exchanges]
+
+    def searched(self) -> list[str]:
+        """The scope as saved with an exchange: absolute paths, empty for all documents."""
+        if self.doc_ids is None:
+            return []
+        return [str(p.expanduser().resolve()) for p in self.scope]
+
+    def states(self, response: "Response") -> "dict[str, SourceState]":
+        from qwn.conversations import source_state
+
+        documents = {d.path: d.sha256 for d in self.answerer.retriever.index.documents()}
+        return {h.chunk.chunk_id: source_state(h, documents) for h in response.hits}
+
+    def save(self) -> None:
+        from qwn.conversations import make
+
+        if not self.exchanges:
+            typer.echo("Nothing to save yet.")
+            return
+        try:
+            self.saved = self.store.save(make(self.exchanges, self.saved))
+        except OSError as e:
+            typer.secho(f"Couldn't save the conversation: {e}", fg="red", err=True)
+            return
+        n = len(self.saved.exchanges)
+        title = _plain(self.saved.title)
+        typer.echo(f"Saved as {self.saved.id}: {title} ({n} question{'s' if n != 1 else ''}).")
+
+    def list_saved(self) -> None:
+        from qwn.conversations import saved_when
+
+        summaries = self.store.list()
+        if not summaries:
+            typer.echo("No saved conversations.")
+        for i, s in enumerate(summaries, start=1):
+            n = f"{s.exchanges} question{'s' if s.exchanges != 1 else ''}"
+            typer.echo(_plain(f"{i:>3}  {s.id}  {saved_when(s.saved)}  {n}  {s.title}"))
+
+    def open_ref(self, ref: str) -> None:
+        from qwn.conversations import UnknownConversation
+
+        try:
+            conversation = self.store.load(self.store.resolve(ref).id)
+        except UnknownConversation:
+            typer.secho(f"No saved conversation {_plain(ref)}. Type /list.", fg="red", err=True)
+            return
+        self.open(conversation, keep_scope=False)
+
+    def open(self, conversation: "Conversation", *, keep_scope: bool) -> None:
+        """Replace the history (and, unless `--in` was given, the scope) with a saved
+        conversation, then show the scope and the last exchange."""
+        from qwn.retrieve import EmptyScope
+
+        self.exchanges = list(conversation.exchanges)
+        self.saved = conversation
+        last = conversation.exchanges[-1].response
+        self.last = last if last.blocked is None else None
+        typer.echo(f"Opened {conversation.id}: {_plain(conversation.title)}")
+        if keep_scope:
+            typer.echo(f"{self.scope_line()} (from --in)")
+        else:
+            paths = [Path(p) for p in conversation.scope]
+            try:
+                self.scope = paths
+                self.doc_ids = self.answerer.retriever.scope(paths) if paths else None
+            except EmptyScope:
+                self.scope, self.doc_ids = [], None
+                typer.echo(
+                    "The saved folders and files are no longer indexed: searching all documents."
+                )
+            typer.echo(self.scope_line())
+        n = len(self.exchanges)
+        if n > 1:
+            typer.secho(f"{n - 1} earlier question{'s' if n > 2 else ''}: /history", dim=True)
+        typer.echo(_plain(f"{PROMPT}{conversation.exchanges[-1].question}"))
+        _print_response(last, all_sources=False, states=self.states(last))
+
+    def delete(self, ref: str) -> None:
+        from qwn.conversations import UnknownConversation
+
+        try:
+            summary = self.store.resolve(ref)
+        except UnknownConversation:
+            typer.secho(f"No saved conversation {_plain(ref)}. Type /list.", fg="red", err=True)
+            return
+        self.store.delete(summary.id)
+        if self.saved is not None and self.saved.id == summary.id:
+            self.saved = None  # still open, but no longer saved: /save makes a new file
+        end = "" if summary.title.endswith((".", "?", "!", "…")) else "."
+        typer.echo(_plain(f"Deleted {summary.title}{end}"))
 
     def _clear_status(self) -> None:
         if self.status:

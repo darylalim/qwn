@@ -74,6 +74,7 @@ def init_session(svc: Services) -> None:
     """Session state, initialised in one place (the app entry point runs it before every page)."""
     st.session_state.setdefault("messages", [])
     st.session_state.setdefault("boxes", {})  # highlights, per "message id:source label"
+    st.session_state.setdefault("saved", None)  # the conversation as last saved or opened
     st.session_state.setdefault("settings", {key: getattr(svc.settings, key) for key in TUNABLE})
 
 
