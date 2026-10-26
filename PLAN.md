@@ -86,13 +86,16 @@ make 7 of 33 turns follow-ups hit, an expected 3.07 s per follow-up, and rule W 
 R failed. With the image labels rotated, 9 of 58 hard queries got worse and 1 better: when the
 best page isn't `[S1]`, VL-8B often refuses. Cross-turn prefill reuse stays off.
 
-**Open follow-ups:**
+The source order sensitivity follow-up is closed with no code change (Evaluation → Source order
+sensitivity → Source order sensitivity probe results): no arm passed rule R on the hard
+rotation. An order-neutral prompt line (P) cut the rotated regressions from 9 to 6 (3 better),
+a "best match" label hint (H) left them at 9 (2 better), both together failed rank order too,
+and a rank-order retry after a bare refusal (T) left every combination at 4 or 5 worse. VL-8B's
+order sensitivity is the finding: `SYSTEM_PROMPT` and `image_label` are unchanged, and
+cross-turn prefill reuse stays off.
 
-- **Source order sensitivity** (planned 2026-10-25; Evaluation → Source order sensitivity):
-  probe three ways to make VL-8B's answers depend less on which page is `[S1]` (a retry after a
-  bare refusal, an order-neutral prompt line, a rank hint in the image labels), judged by rule R
-  on the hard rotation, and build the winner only if it passes. Branch
-  `followup/source-order-sensitivity`.
+**Open follow-ups:** none. Since v0.10.0 only probes have merged (no code change), so there is
+nothing to release.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -3651,6 +3654,79 @@ labels: VL-8B's order sensitivity is then the finding, and cross-turn reuse stay
 ensembles or several answers per question (a second full prefill on every answer); changing
 `ABSTAIN_TEXT` or the abstention sentence; sending fewer images; changing the reranker or
 `rerank_k`; changing how text-only sources are ordered.
+
+#### Source order sensitivity probe results (2026-10-26, M2 Max, probe only)
+
+**No arm passes, so step 2 isn't built** (no code, no eval run, no baseline change). Every arm
+fails rule R on the hard rotation; P+H also fails gate 1. VL-8B's order sensitivity is the
+finding, and cross-turn prefill reuse stays off. Probe: hard corpus, greedy, cold, no Guard;
+each hard query retrieved and reranked once (every `rank_embed` and `rank` matched the committed
+baseline) and its hits reused by every run; the rotation by a patched `qwn.answer.to_sources`,
+P by a patched `mlx_vlm_gen.SYSTEM_PROMPT` and H by a patched `mlx_vlm_gen.messages` (it checked
+every label it replaced had today's form), all in the scratchpad. ~18 min per 60-query run.
+
+- **A0 check.** The Source order reuse probe's texts were gone (scratchpad), so A0 rotated was
+  re-run in full, as the plan allows. It reproduced that probe exactly: the same 9 worse
+  (hard-004, 010, 014, 015, 035, 036, 037, 059, 060) and 1 better (hard-019). A0 rank order is
+  the committed baseline's run (`eval/results/20261025T195301Z-hard.json`); hard-004 re-answered
+  in rank order matched its text.
+- **Per arm** (worse/better; invented citations 0 in every run):
+
+  | arm | gate 1: rank vs A0 | rank texts changed | gate 2: rotated vs own rank | mean `prompt_tokens` | outcome |
+  |---|---|---|---|---|---|
+  | A0 | (itself) | 0 | 9 / 1 | 4,773 | fails R |
+  | P | 1 / 1 (pass) | 25 of 60 | 6 / 3 | 4,795 (+0.46 %) | fails R |
+  | H | 0 / 0 (pass) | 16 of 60 | 9 / 2 | 4,776 (+0.06 %) | fails R |
+  | P+H | 2 / 3 (fail) | 26 of 60 | 6 / 3 | 4,798 (+0.52 %) | fails 1 and R |
+
+  P+H ran because P and H each passed gate 1 and failed gate 2. H's hint landed on 59 of 60
+  prompts (one query's top source has no image).
+- **T (retry in rank order after a bare refusal on a reordered prompt), from the runs above:**
+
+  | combination | rotated worse / better | retries (of 58 reordered) | added `generate` |
+  |---|---|---|---|
+  | T+A0 | 4 / 1 | 11 | 192 s (~17.5 s each, 3.3 s per reordered query) |
+  | T+P | 4 / 3 | 8 | 139 s |
+  | T+H | 4 / 2 | 11 | 204 s |
+  | T+P+H | 5 / 3 | 7 | 115 s |
+
+  T recovers the bare refusals (hard-004, 010, 015, 036, 037 under A0) but none of the answers
+  that change without one, so no combination gets under rule R's "no more worse than better".
+  Six of every arm's retries (hard-051, 052, 053, 056, 057, 058) are correct refusals on
+  unanswerable queries, repeated for nothing. T+A0's added time uses each query's rotated
+  `generate` (the baseline has no per-query latency; same images, same prompt size).
+- **Every query that changed score** (rank = that arm in rank order, rot = rotated; W worse,
+  B better, - same):
+
+  | query | tags | A0 rot | P rank | P rot | H rot | P+H rank | P+H rot | what changes |
+  |---|---|---|---|---|---|---|---|---|
+  | hard-004 | text, version | W | - | W | W | - | W | "1.45 euros per share [S1]" → bare refusal (A0, H); P: "documents do not contain the 2024 review", abstains |
+  | hard-010 | version near-miss | W | B | W | W | B | - | explained refusal → bare refusal (A0); P rank also cites the right page |
+  | hard-014 | version, multi | W | - | B | B | B | - | P rot, H rot: both dividends, no abstention (rank order abstains) |
+  | hard-015 | version, multi | W | - | - | W | - | B | half answer → bare refusal (A0, H); P+H rot gets both counts |
+  | hard-019 | version near-miss | B | - | B | B | - | B | explained refusal now cites the right page when rotated |
+  | hard-029 | scan, degraded | - | - | - | W | - | - | H rot: "2 pounds per week [S4]", then `ABSTAIN_TEXT` |
+  | hard-033 | table, degraded | - | W | B | - | W | B | P rank: "12:14" (misread row) for 12:39; rotated reads 12:39 again |
+  | hard-035 | chart, degraded | W | - | - | W | - | W | "July [S1]" → July, then abstains (A0, H, P+H) |
+  | hard-036 | chart, degraded | W | - | W | W | - | W | ~93 % → bare refusal (A0, H) or "I cannot determine", abstains (P, P+H) |
+  | hard-037 | chart, degraded | W | - | W | W | B | W | reads the chart, abstains → bare refusal; P+H rank: ~65 % (`answer_approx`) |
+  | hard-039 | text, paraphrase | - | - | - | W | - | - | H rot: calls `[S2]` the 2025 review, loses `citation_hit` |
+  | hard-043 | scan, degraded | - | - | - | - | - | W | P+H rot: right total, cites "(S5)" without brackets, loses `citation_hit` |
+  | hard-059 | unanswerable | W | - | W | - | W | - | explained refusal → answers the 2026 fee (A0, P); P+H rank drops `ABSTAIN_TEXT` |
+  | hard-060 | unanswerable | W | - | W | W | - | W | explained refusal → "as set out in their terms [S5]" in every rotated arm |
+
+- **What it shows.** P makes VL-8B read past `[S1]` (hard-014, 015, 035 and 059 hold or improve
+  when rotated) but not on degraded charts, where it still gives up, or on near-miss invoices
+  (hard-060 answers from `[S5]` in all four arms). H changes little in rank order and nothing
+  for the better when rotated: a page marked "best match" at the last label is still read less
+  than `[S1]`, and once (hard-039) the hint pulled the citation to the wrong review. Rotated, 52
+  of 60 texts change in every arm.
+
+**Outcome.** Neither a prompt line, a label hint, both, nor a retry makes VL-8B's answers
+independent of source order within rule R. Per this section, no further wordings or labels are
+tried. Source order reuse stays closed; reconsider it only with a generator whose answers don't
+move with source order (a T retry would then cost ~17.5 s per bare refusal on a reordered prompt,
+3.3 s per reordered query at today's rate).
 
 ## Phases
 
