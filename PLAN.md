@@ -80,11 +80,13 @@ turn before) cuts a follow-up's answer from ~18 s to ~1 s, but only 3 of 33 turn
 hit, so the expected saving is 1.32 s against a 3.0 s gate. Rule W held, and the probe
 confirmed that reuse keyed on token ids alone answers from the last turn's page image.
 
-**Open follow-ups:** source order reuse (planned 2026-10-25: Evaluation → Source order reuse;
-implement on `followup/source-order-reuse`). A probe first: when a follow-up retrieves the same
-page images as the turn before in another order, keep that turn's labels so prefill reuse hits.
-Build only if the expected saving is ≥ 3.0 s per follow-up and the order doesn't move answers
-(rules R and W).
+The source order reuse follow-up is closed at its gate with no code change (Evaluation →
+Source order reuse → Source order reuse probe results): keeping the turn before's labels would
+make 7 of 33 turns follow-ups hit, an expected 3.07 s per follow-up, and rule W held, but rule
+R failed. With the image labels rotated, 9 of 58 hard queries got worse and 1 better: when the
+best page isn't `[S1]`, VL-8B often refuses. Cross-turn prefill reuse stays off.
+
+**Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -3459,6 +3461,73 @@ generator) plus the order rule:
 today's retrieval didn't return; reordering text-only sources; reuse in the reranker, `rewrite`
 or `locate`; caching across processes, restarts or conversations; `qwn ask` (single-turn);
 generating the turn before in eval.
+
+#### Source order reuse probe results (2026-10-25, M2 Max, probe only)
+
+**The gate fails on rule R, so step 2 isn't built** (no code, no eval run, no baseline
+change). The saving just passes (3.07 s per follow-up) and rule W holds, but VL-8B is order
+sensitive: with the image labels rotated, **9 of 58 hard queries get worse and 1 gets better**
+(rule R allows at most 3 worse, and no more worse than better). Probe: hard corpus, greedy,
+retrieval and rewrite as `qwn chat` runs them, the rule applied by a patched `to_sources` and a
+`PromptCacheState` passed by a patched adapter, both in the scratchpad. Guard wasn't run
+(it never touches the generator's cache).
+
+- **Selection: as expected.** Same order already: turn-011, 029, 033. Reordered: turn-003,
+  008, 015, 020 (each held the same image files at the same label positions, so the rule
+  applied to all four). Unchanged: 26. The rule's moves were small: two labels swapped
+  (turn-003, 008, 015) or first and third swapped (turn-020); in turn-003, 008 and 020 the
+  top-ranked page leaves `[S1]`.
+- **Saving per hit.** Warm reuses all but the last 13–101 tokens (the question and, when
+  reordered, the text blocks after the last image).
+
+  | follow-up | rule | images | prompt tokens | cold | warm | saved |
+  |---|---|---|---|---|---|---|
+  | turn-003 | reordered | 2 | 1,392 | 4.72 s | 0.91 s | 3.81 s |
+  | turn-008 | reordered | 3 | 4,328 | 15.77 s | 1.25 s | 14.52 s |
+  | turn-011 | same order | 4 | 5,697 | 20.54 s | 0.72 s | 19.82 s |
+  | turn-015 | reordered | 3 | 4,279 | 15.46 s | 1.10 s | 14.36 s |
+  | turn-020 | reordered | 3 | 4,328 | 15.78 s | 1.00 s | 14.78 s |
+  | turn-029 | same order | 3 | 4,327 | 17.96 s | 3.47 s | 14.49 s |
+  | turn-033 | same order | 1 | 1,495 | 5.40 s | 0.59 s | 4.81 s |
+
+  Median 14.49 s, so 7/33 × 14.49 s = **3.07 s per follow-up**: gate 1 passes by 0.07 s. The
+  two small-image follow-ups (table PNGs, ~1.4k-token prompts) save under 5 s each.
+- **Order effect on the 4 reordered follow-ups: none worse, none better.** `answer_contains`,
+  `citation_hit` and abstention match rank order on all four, but three (turn-003, 008, 020)
+  give a different text: the order changes what VL-8B writes even when it doesn't change the
+  score.
+- **Order sensitivity on the hard set: fails.** 58 of 60 hard queries send 2 or more images.
+  Rotating the image labels by one (top-ranked page to the last image label) changes the text
+  of 52 and the score of 10:
+
+  | query | tags | rank order | rotated | counted |
+  |---|---|---|---|---|
+  | hard-004 | text | "1.45 euros per share [S1]" | bare refusal | worse |
+  | hard-010 | version near-miss | explained refusal, matches `answer_contains` | bare refusal | worse |
+  | hard-014 | version, multi | both figures, then abstains | one figure, no abstention | worse (mixed) |
+  | hard-015 | version, multi | half answer, cites the right page | bare refusal | worse |
+  | hard-035 | chart, degraded | "July [S1]" | July, then abstains (chart note) | worse |
+  | hard-036 | chart, degraded | ~93 % from the chart | bare refusal | worse |
+  | hard-037 | chart, degraded | reads the chart, abstains | bare refusal, no citation | worse |
+  | hard-059 | unanswerable | explained refusal | answers from the 2026 fee | worse |
+  | hard-060 | unanswerable | explained refusal | "as set out in their terms [S5]" | worse |
+  | hard-019 | version near-miss | explained refusal, no citation | explained refusal, cites | better |
+
+  The pattern: when the best page isn't `[S1]`, VL-8B often gives up with a bare refusal
+  (5 queries), and on unanswerable near-misses it stops refusing (2). Without the two weakest
+  cases (hard-010, hard-014) it's still 7 worse to 1 better. A mixed result counts as worse,
+  as fixed before the run.
+- **Exactness: rule W holds.** 1 of 7 warm texts differs from cold (turn-029, as in Prefill
+  reuse probe results): one sentence worded differently, same citations, same abstention.
+- **MLX peak:** warm 11.3–12.0 GB, cold 12.1–12.9 GB.
+
+**Outcome.** Reuse across turns only pays when the label order follows the turn before, and
+VL-8B's answers depend on that order: the top-ranked page at `[S1]` is part of what makes them
+right. The rule's real moves are milder than the rotation (no reordered turns follow-up got
+worse), but 7 to 9 hard regressions from one shift don't leave room for a 0.07 s margin.
+Per PLAN.md, neither the rule nor the prompt is tuned to pass rule R. Cross-turn prefill reuse
+stays off for this generator; reconsider only with a generator whose answers don't move with
+source order.
 
 ## Phases
 
