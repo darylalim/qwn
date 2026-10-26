@@ -104,7 +104,10 @@ the library since are marked. No reindex.
 prefill reuse, source order reuse and source order sensitivity probes (no code) and saved
 conversations. No reindex: an index from v0.10.0 works as is.
 
-**Open follow-ups:** none.
+**Open follow-ups:** export and rename conversations (planned 2026-10-26: CLI → Export and
+rename conversations; implement on `followup/conversation-export-rename`). Export writes the
+conversation on screen as Markdown (a browser download, or `/export` in `qwn chat`); rename
+gives a saved conversation a title of your own. No reindex, no eval run.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -143,6 +146,9 @@ conversations. No reindex: an index from v0.10.0 works as is.
 14. **Saved conversations follow-up:** CLI → Saved conversations and `qwn chat`; Streamlit UI
     (Chat, Responsive layout); Storage layout; Evaluation → Multi-turn questions (History);
     Runtime robustness → Logging; Security → Prompt injection.
+15. **Export and rename follow-up:** CLI → Export and rename conversations, Saved conversations
+    (incl. its results and implementation notes) and `qwn chat`; Streamlit UI (Chat, Responsive
+    layout); Storage layout; Runtime robustness → Logging; Security → Prompt injection.
 
 **Workflow for each phase:**
 
@@ -521,6 +527,7 @@ class Tts(Protocol):
 | Index database | `index_dir/qwn.db` (single SQLite file, WAL mode) | ~4 KB per chunk for vectors + text | ignored |
 | Page renders | `index_dir/pages/<doc_id>/<page>.webp` (WebP q85, 150 dpi) | ~50–150 KB per page | ignored |
 | Saved conversations | `index_dir/conversations/<id>.json` (folder `0700`, files `0600`), written only when you save (CLI → Saved conversations) | KB each | ignored |
+| Exports (planned) | wherever you put them: a browser download, or `/export`'s folder (`0600`); outside the index, never written on their own (CLI → Export and rename conversations) | KB each | yours |
 | Eval sets | `eval/public/` (generator + questions, committed); `eval/private/` (your questions, **never committed**) | KB | private ignored |
 | Eval runs | `eval/results/*.json`; `eval/public/baseline.json` committed, `eval/private/baseline.json` ignored | KB | results ignored |
 
@@ -709,6 +716,8 @@ qwn chat [--in PATH]... [--no-guard]   # follow-up (done 2026-10-24): multi-turn
                             # the terminal; see `qwn chat` below
 qwn chat --open N|ID        # follow-up (done 2026-10-26): reopen a saved conversation;
                             # /save, /list, /open, /delete in the REPL; see Saved conversations
+                            # planned 2026-10-26: /export [PATH], /rename N|ID TITLE; see
+                            # Export and rename conversations
 ```
 
 Common flags override settings (`--top-k`, `--rerank-k`, `--max-images`, `--config PATH`).
@@ -1212,7 +1221,8 @@ never titles, questions or answers. The sentinel log test covers save, list, loa
 6. PLAN.md updated in the same PR: this section (results under it), Start here, CLI listing,
    Storage layout, Streamlit UI → Chat. README: one line on saving conversations.
 
-**Out of scope:** autosave; renaming, searching or exporting conversations; saving audio,
+**Out of scope:** autosave; renaming, searching or exporting conversations (export and rename:
+planned 2026-10-26 as their own follow-up, below); saving audio,
 highlights or ratings; sharing conversations between indexes; encrypting the files (the index
 beside them already holds the document text in the clear; FileVault covers the disk); a
 `qwn conversations` command group; saving failed exchanges.
@@ -1260,6 +1270,178 @@ beside them already holds the document text in the clear; FileVault covers the d
   - `qwn chat` after `/open` or `--open` prints "Opened *id*: *title*" and, with more than one
     exchange, "N earlier questions: /history" before the last exchange. Deleting the open
     conversation keeps it on screen as unsaved, so `/save` (or Save) makes a new file.
+
+### Export and rename conversations (follow-up, planned 2026-10-26)
+
+**Why:** a saved conversation can only be read inside qwn, and every one is titled with its first
+question. You can't paste an answer, with the pages it cites, into your own notes, and a list of
+conversations that all start "What was…" is hard to tell apart. Export writes a conversation as
+Markdown; rename gives a saved one a title of your own. **No change to retrieval, prompts, the
+rewrite, Guard or `Answerer`.** One follow-up PR (branch `followup/conversation-export-rename`),
+no version bump.
+
+**Decisions (agreed 2026-10-26):**
+
+- **Export is Markdown only**, built by one pure function in `qwn.conversations` that both
+  surfaces call. It holds the questions, each answer with its citations shown as
+  `[file p.N]` (`Response.rendered()`), and each answer's cited sources: full path, page, and
+  a note when the source changed or left the library since. **No document text** beyond what
+  the answer itself quotes: no source excerpts, no page images.
+- **Export is explicit and goes where you say.** The Chat page offers the file as a browser
+  download. `/export` in `qwn chat` writes to the current folder unless you give a path. It is
+  the only thing in qwn that writes your questions outside `index_dir/`, so it never runs on
+  its own and never overwrites a file.
+- **Export takes the conversation on screen**, saved or not: every exchange a save would keep
+  (blocked ones too, errors left out). Exporting doesn't save, and saving isn't needed first.
+- **Rename acts on saved conversations only.** Until you rename it, a conversation's title is
+  its first question, as today. Renaming rewrites the title in the saved file and nothing else.
+- **A renamed title sticks:** saving the conversation again keeps it.
+
+**Module `qwn.conversations`:**
+
+- `make(exchanges, previous)` keeps `previous.title` when there is a previous conversation
+  (today it recomputes it from the first question, which is the same text unless renamed).
+- `clean_title(text) -> str`: whitespace collapsed (newlines and tabs too) and control
+  characters dropped, then cut to `TITLE_CHARS` with `…` as `title_for` does. Empty after
+  cleaning → `ValueError("A title can't be empty.")`.
+- `Store.rename(id, title) -> Conversation`: loads the file (strictly, as `load`), replaces the
+  title with `clean_title(title)` and writes it back atomically through the same write path as
+  `save`, **keeping `saved` unchanged**, so a rename doesn't move the conversation up the list.
+  `UnknownConversation` for a missing or unreadable file. File format unchanged (`"format": 1`):
+  `title` is already stored.
+- `markdown(conversation, states, exported) -> str`, pure (no clock, no file access) so a test
+  can pin its output exactly. `states` is `{chunk_id: SourceState}` across the conversation,
+  `exported` a local ISO-8601 time. Layout:
+
+  ```markdown
+  # Revenue by year
+
+  Exported from qwn, 2026-10-26 14:05 · 3 questions · saved 2026-10-26 14:02
+
+  ## 1. What was total revenue in 2024?
+
+  Searched in: /Users/…/annual-review-2024.pdf
+
+  Total revenue in 2024 was 196.9 million [annual-review-2024.pdf p.4].
+
+  Sources:
+
+  - [annual-review-2024.pdf p.4] /Users/…/annual-review-2024.pdf, page 4
+
+  ## 2. And in 2025?
+
+  Searched for: What was total revenue in 2025?
+
+  …
+
+  - [annual-review.pdf p.7] /Users/…/annual-review.pdf, page 7 (no longer in your library)
+  ```
+
+  - The header line says "not saved" instead of the saved time for a conversation never saved.
+  - Per exchange, in this order: `Searched for:` when the question was rewritten, `Searched in:`
+    with the scope's paths when it wasn't all documents, "(spoken question)" after the heading
+    for a transcribed one, each Guard warning as a `> ⚠ Warning: …` line (`Check.message()`),
+    then the answer and its cited sources. A blocked exchange has its block message
+    (`> ⛔ Blocked: …`) and no answer or sources. An abstention is exported as answered.
+  - Notes on sources as in `qwn chat`'s `/sources`: "(changed since this answer)", "(no longer
+    in your library)".
+- **Untrusted content in the export:** questions, titles, answers and paths can carry document
+  text, and a Markdown viewer (VS Code's preview, Obsidian) may fetch an image or render HTML
+  when the file is opened. `markdown` therefore neutralises image syntax (`![` → `!\[`, as
+  `safe_markdown` does), escapes `<`, `>` and `&` as entities so raw HTML shows as text, drops
+  control characters (`_plain`'s rule), and starts no line of model or document text with `#`
+  that would become a heading (escaped as `\#`). Links stay as text with their URL: following
+  one needs a click, as on the Chat page.
+- `export_name(conversation, now) -> str`: `qwn-conversation-YYYY-MM-DD-HHMM.md`, from the
+  export time. Never the title, which could carry `/` or reveal content in a file listing.
+  When the default name is taken, `-2`, `-3`, … is added before `.md`; a file you name
+  yourself is never renamed.
+
+**Chat page:**
+
+- **Export** (`:material/download:`) joins New conversation and Save in the button row, shown
+  once there is an answer: an `st.download_button` with `data=markdown(…)`,
+  `file_name=export_name(…)`, `mime="text/markdown"` and `on_click="ignore"` (downloading
+  doesn't rerun the page; Streamlit 1.65 supports it). The Markdown is built on each run from
+  the exchanges on screen and one `Index.documents()` call, which the source cards already
+  make.
+- **Rename** (`:material/edit:`) in the sidebar beside Open and Delete, disabled until a
+  conversation is picked. It opens an `st.dialog` ("Rename saved conversation") with an
+  `st.text_input` holding the current title (`max_chars=TITLE_CHARS`) and **Rename** /
+  **Cancel**. An empty title shows "A title can't be empty." in the dialog and keeps it open.
+  On success the selectbox shows the new title; if the renamed conversation is the one open
+  on the page, `st.session_state.saved` takes the new title so the next Save keeps it.
+- The three-button row wraps on a phone: checked at every Responsive layout width, light and
+  dark, as the two-button row was.
+
+**`qwn chat`:**
+
+| Command | Does |
+|---|---|
+| `/export [PATH]` | Writes the conversation as Markdown. No PATH: `./qwn-conversation-…md` (`-2` etc. if taken). A PATH that's a folder gets that name inside it. Prints "Exported N questions to *path*." A file PATH that exists isn't touched: "*path* exists. /export PATH to choose another." Before any answer: "Nothing to export yet." |
+| `/rename N\|ID TITLE…` | Renames a saved conversation (its number in `/list` or its id); the rest of the line is the title, quotes optional. Prints "Renamed to *title*." No TITLE: "Which title? /rename N TITLE." If it's the open conversation, the next `/save` keeps the new title |
+
+- `/export` writes the file `0o600` (created with `O_EXCL`, so a file that appears between the
+  check and the write isn't overwritten either) and doesn't create folders: a missing parent
+  is an error message, not a traceback. `~` is expanded.
+- The REPL's privacy rule changes in one place: `/save` and `/export` are the only commands that
+  write a question to disk. `/help` lists both new commands.
+
+**Logging:** export logs the exchange count, byte size and timing, never the path (it may sit in
+a folder whose name says what the documents are) or the content. Rename logs the id only, never
+either title. The sentinel log test covers export and rename.
+
+**Tests (with the code, fakes only):**
+
+- `markdown`: a golden string for a conversation with a rewrite, a scope, a spoken question, a
+  warning, a block, an abstention and `changed`/`missing` sources; "not saved" in the header for
+  a conversation never saved. Injection cases: an answer with `![x](http://…)`, `<img src=…>`,
+  a line starting `# ` and an ANSI escape comes out neutralised, and so does a title or path
+  carrying the same.
+- `export_name` from a fixed time; `clean_title` (collapsing, control characters, the 60-character
+  cut, empty raises).
+- `Store.rename`: the file's title changes, `saved`, `created` and the exchanges don't, and
+  `list` order is unchanged. Unknown id → `UnknownConversation`. `make` after a rename keeps
+  the title through a second save.
+- AppTest (Chat): Export is shown after an answer with the file name and Markdown expected
+  (read from the download button's data), unsaved exchanges included. Rename through the
+  dialog (both buttons pressed on one run, as Delete's test does) changes the sidebar option;
+  an empty title keeps the dialog with its message; renaming the open conversation and then
+  Save keeps the new title in the file.
+- CLI (`CliRunner` with `input=`, in a temp working folder): `/export` (default name, mode
+  `0o600`), `/export` twice in the same minute (`-2`), `/export <folder>`, `/export <file>`, an
+  existing file PATH refused and left unchanged,
+  a missing parent folder, "Nothing to export yet."; `/rename 1 New title`, `/rename <id>
+  "Quoted title"`, an unknown ref, no title, and `/rename` of the open conversation followed by
+  `/save` keeping it.
+- Log sentinel: no question, answer, title or export path in the log after export and rename.
+
+**Done when:**
+
+1. Fast tests, ruff, ty and the slow tests pass.
+2. **No eval run.** `Answerer`, the prompts, the rewrite and retrieval don't change, so no
+   baseline can move.
+3. **Checked by hand in the browser** (`qwn ui` on the hard corpus, `QWN_DATA_DIR` and
+   `QWN_INDEX_DIR` as in Commands): the Multi-turn results conversation (2024 revenue → "And
+   in 2025?" → vessels that year), Export before saving (the file downloads; its Markdown shows
+   the three questions, the `Searched for` lines, `[file p.N]` citations and source paths), Save,
+   Rename in the sidebar, restart `qwn ui`, the new title in the list, Open, Save again: the file
+   keeps the new title. Button row and sidebar checked at the Responsive layout widths. Remove
+   the saved conversation and the downloaded file afterwards.
+4. **Checked by hand in the terminal** with real models on the same corpus, through a
+   pseudo-terminal: two questions, `/export` in a scratch folder, `/save`, `/rename 1 …`,
+   `/list` shows the new title, `/export` again makes a second file, and `/export` to the
+   first file's path is refused.
+5. **Changed source:** in the scratch copy used for the saved-conversations check (or a new
+   one), an export of a reopened conversation marks the changed and missing sources.
+6. PLAN.md updated in the same PR: this section (results under it), Start here, CLI listing,
+   Storage layout (exports are yours, outside the index), Streamlit UI → Chat. README: one line
+   on export and rename.
+
+**Out of scope:** other export formats (PDF, HTML, JSON, `.docx`); exporting page images or
+source excerpts; exporting from `qwn ask`; a `qwn chat --export` flag or a `qwn conversations`
+command group; exporting several conversations at once; renaming before the first save;
+searching conversations; autosave.
 
 ## Streamlit UI (`src/qwn/ui/`)
 
