@@ -100,9 +100,11 @@ on the Chat page or `/save` in `qwn chat` writes the conversation to
 with full answers and source cards, and follow-ups carry on from it. Sources that changed or left
 the library since are marked. No reindex.
 
-**Open follow-ups:** none. Saved conversations is the first code change since v0.10.0 (the
-follow-ups between were probes), so it's unreleased: a release PR bumps to v0.11.0 when the user
-wants it.
+**Released as v0.11.0** (2026-10-26): every follow-up above since v0.10.0 (Versioning): the
+prefill reuse, source order reuse and source order sensitivity probes (no code) and saved
+conversations. No reindex: an index from v0.10.0 works as is.
+
+**Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -4361,6 +4363,8 @@ job.
   regions, hard eval tier, explained abstention, version awareness, multi-turn questions).
   `0.9.0` releases the abstention wording probe and `qwn chat` (no reindex).
   `0.10.0` releases quiet stderr, the streaming probe (no code) and faster prefill (no reindex).
+  `0.11.0` releases the prefill reuse, source order reuse and source order sensitivity probes
+  (no code) and saved conversations (no reindex).
 - **Flow:** bump on the phase branch → PR (CI) → merge to `main` → `release.yml` → tag `vX.Y.Z` +
   GitHub Release.
 - **Note:** `0.1.0` has no tag, so the **first** merge to `main` that touches `pyproject.toml`
