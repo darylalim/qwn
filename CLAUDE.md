@@ -74,6 +74,21 @@ uv version --bump minor               # one minor release per completed phase (f
   `QWN_INDEX_DIR` (see Commands); a spoken check needs the user's microphone, so ask them.
   `qwn ui` takes the model lock only when a page opens (`services()` runs per session): to test
   "models in use", open a headless Playwright page first.
+  Fill an `st.empty` slot with one layer: `slot.container(horizontal=True)`, not a container
+  nested in `slot.container()`, which left `st.chat_input` disabled after an answer given during
+  the warm load (browser only; ask as soon as the page loads to catch it).
+  AppTest can't show that a click lands in the browser, and it doesn't rerun a dialog: press the
+  button that opens the dialog and the dialog's own button on the same run. In Playwright, a
+  selectbox's arrow is a button named "Open": find your own buttons by text
+  (`locator("button").filter(has_text=…)`). Iterate on a browser bug with the fake server in
+  `tests/ui/test_responsive.py` (~15 s a try) before a real-model rerun (minutes); to tell your
+  bug from `main`'s, run the same script after `git stash -u`.
+  A real-model Playwright check: `STREAMLIT_SERVER_PORT` and `STREAMLIT_SERVER_HEADLESS=true` on
+  `qwn ui`. The qwn log is in `qwn status`'s `logs:` folder: whether a callback ran shows there.
+- **Saved conversations** live in `index_dir/conversations/`: a check on an eval index leaves
+  files there, so remove them after. A changed-source check needs a scratch copy of the corpus
+  with its own full ingest (the index stores absolute paths; never edit `data/eval-*`). Appending
+  a PDF comment changes a file's sha256 but not its render.
 - **Eval baselines** change only via `qwn eval --update-baseline`, in the same PR as the change
   that moved them, with the per-query changes explained in the PR.
   If `queries.jsonl` changed (`eval_set_hash`), the tool won't compare runs: diff `per_query`
