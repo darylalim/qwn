@@ -86,6 +86,8 @@ uv version --bump minor               # one minor release per completed phase (f
   (PLAN.md → Faster prefill results). Adding any key to
   `RESULT_KEYS` moves `settings_hash` even at today's value: rewrite both baselines, and the hand
   diff must show no per-query change.
+  Prompt text (`SYSTEM_PROMPT`, `image_label`) isn't in `settings_hash`: a prompt change compares
+  against the baselines as is, and `--update-baseline` lists each changed query.
   A change that only affects scoring (e.g. `region`) can be predicted exactly by re-scoring the
   committed baseline's `per_query` (e.g. `locate_box`) before the full eval run.
   Run with `--update-baseline` straight away: changes print before the write, and
@@ -122,11 +124,14 @@ uv version --bump minor               # one minor release per completed phase (f
   To probe a labelling change without editing the repo, patch `qwn.answer.to_sources`:
   `Answerer.answer` looks it up by name at call time. Fix what counts as worse (a mixed
   result counts as worse) before the run, not after the first result.
+  Greedy cold answers repeat exactly: an arm that only falls back to an order you've already run
+  (e.g. a retry in rank order) is scored from that run, with no extra generation.
   The public set is saturated (recall 1.000): it catches regressions but can't show gains. Judge
   tuning changes on the hard set (PLAN.md → Harder tier results), by recall@1 before rerank and
   MRR; its answer_contains is near 1.0 too. Never change a hard query because of a model result.
   One run reports both before- and after-rerank metrics (`mrr_before_rerank`): no `--no-rerank` run needed.
   Recall@1 before rerank isn't in the summary: count `rank_embed == 1` in `per_query`.
+  Unanswerable rows in `per_query` have no `rank`/`rank_embed` keys: read them with `.get`.
   `--no-generate` changes `settings_hash`, so checking hard ranks against the generated baseline
   is a hand diff of `rank`/`rank_embed` in `per_query`.
 - **Corpus generators:** draw new facts from their own `random.Random` stream (as
@@ -149,6 +154,8 @@ uv version --bump minor               # one minor release per completed phase (f
   To compare wordings in one process, set `qwn.adapters.mlx_vlm_gen.SYSTEM_PROMPT` (it's
   imported by name) per run; assert the swapped-out text was found. Diff each run against
   today's prompt as it lands: one failing criterion ends the probe (~25 min per 41 queries).
+  `image_label` is imported by name too: patch `mlx_vlm_gen.image_label` for a label probe.
+  `Source.score` is the rerank score, so a label can mark the top page without a new field.
   Probe a retrieval idea without a reindex by monkeypatching `Retriever.rerank_input(hit, title)`
   and running `ev.run(..., ev.Options())` (no generation; ~20 min for hard + public). Probe the
   generator side separately: extra prompt text that helps ranking can break answers.
