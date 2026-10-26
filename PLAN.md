@@ -86,7 +86,13 @@ make 7 of 33 turns follow-ups hit, an expected 3.07 s per follow-up, and rule W 
 R failed. With the image labels rotated, 9 of 58 hard queries got worse and 1 better: when the
 best page isn't `[S1]`, VL-8B often refuses. Cross-turn prefill reuse stays off.
 
-**Open follow-ups:** none.
+**Open follow-ups:**
+
+- **Source order sensitivity** (planned 2026-10-25; Evaluation → Source order sensitivity):
+  probe three ways to make VL-8B's answers depend less on which page is `[S1]` (a retry after a
+  bare refusal, an order-neutral prompt line, a rank hint in the image labels), judged by rule R
+  on the hard rotation, and build the winner only if it passes. Branch
+  `followup/source-order-sensitivity`.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -118,6 +124,10 @@ best page isn't `[S1]`, VL-8B often refuses. Cross-turn prefill reuse stays off.
 12. **Source order reuse follow-up:** Evaluation → Source order reuse, Prefill reuse (step 2
     design and probe results), Multi-turn questions (the turns set), Version awareness results
     (hard-015); CLI → `qwn chat`; Streamlit UI (Chat page); Stack and memory budget.
+13. **Source order sensitivity follow-up:** Evaluation → Source order sensitivity, Source order
+    reuse (probe results: the rotation and its table), Faster prefill (rule G), Explained
+    abstention and Abstention wording results (why the prompt line avoids refusal wording);
+    Prompts and parameters (generator system prompt, labels); Security → Prompt injection.
 
 **Workflow for each phase:**
 
@@ -3528,6 +3538,119 @@ worse), but 7 to 9 hard regressions from one shift don't leave room for a 0.07 s
 Per PLAN.md, neither the rule nor the prompt is tuned to pass rule R. Cross-turn prefill reuse
 stays off for this generator; reconsider only with a generator whose answers don't move with
 source order.
+
+### Source order sensitivity (follow-up, planned 2026-10-25)
+
+**Why:** VL-8B leans on `[S1]`. With the image labels rotated by one, 9 of 58 hard queries got
+worse and 1 better (Source order reuse probe results): bare refusals when the best page leaves
+`[S1]`, and answers on unanswerable near-misses. Today this costs little, because the reranker
+puts the right page at `[S1]` for 47 of 50 answerable hard queries. Of the other three, hard-009
+(rank 2) and hard-039 (rank 4) are answered right, and hard-038 (rank 2) answers the 2025 figure
+from `[S1]` instead of the right one. It matters more as a blocker: cross-turn prefill reuse
+(3.07 s per follow-up) closed only on rule R. This follow-up **probes three fixes first** and
+builds one only if it makes the generator order-robust without costing rank-order answers.
+One follow-up PR (branch `followup/source-order-sensitivity`), no version bump, no reindex.
+Scope agreed 2026-10-25: judged by rule R on the hard rotation; all three arms below.
+
+**The arms** (each fixed here, before any run; none is tuned after a result):
+
+- **T: retry after a bare refusal.** After the model: if an answer is a bare refusal
+  (`abstained` and no valid citation) and its image sources aren't in rank order, answer once
+  more in rank order (`to_sources` as today) and use that answer. A prompt already in rank order
+  never retries, so **T does nothing on today's prompts**: it is a safety net for a later
+  feature that reorders sources (source order reuse), and it costs one cold prefill per retry.
+  It can't help answers that change without refusing (hard-014, 035, 059, 060 in the rotation).
+- **P: order-neutral prompt line.** One sentence in `SYSTEM_PROMPT`, after the sentence that
+  introduces the labels: `Sources are not in order of relevance: read every source, not only
+  [S1], before you answer.` It doesn't mention refusals or `ABSTAIN_TEXT`, because every
+  wording that did moved abstention (Abstention wording results). Nothing else in the prompt
+  changes.
+- **H: rank hint in the labels.** The image source with the highest rerank score (`Source.score`)
+  gets `[S#] page image (best match):`; every other image keeps `[S#] page image:`. If the top
+  source has no image, no label has the hint. The hint is qwn's text outside every `<source>`
+  block, so the injection defences are unchanged.
+
+**Step 1: probe (scratchpad, not the repo; real models; ~1.5 h, run in the background).** Hard
+corpus (`QWN_DATA_DIR=data/eval-hard QWN_INDEX_DIR=index/eval-hard/<hash>`), greedy, cold (no
+prompt cache), no Guard (it never changes the answer text). Retrieve and rerank each hard query
+once and reuse its hits for every run. Score each answer with `ev.answer_row(..., keep_text=True)`.
+
+- **Rotation** as in Source order reuse: the image sources' labels move by one (the top-ranked
+  page takes the last image label, the others move up); text-only sources keep their labels.
+  Done with a patched `qwn.answer.to_sources`.
+- **A0 (today):** rank order is the committed hard baseline's `per_query`; rotated is the Source
+  order reuse probe. First re-answer three rotated queries (hard-004, 015, 059) and check that
+  the text matches that probe's. If any differs, re-run A0 rotated in full before going on.
+- **P and H:** two runs each, rank order and rotated, with `mlx_vlm_gen.SYSTEM_PROMPT` (P) or
+  `mlx_vlm_gen.image_label` (H) patched (both are imported by name; assert the swapped-out text
+  was found).
+- **T needs no runs of its own.** Greedy cold answers are deterministic, so a retry's answer is
+  the same arm's rank-order answer for that query. T+A0, T+P and T+H are built from those runs;
+  their latency adds that query's rank-order `generate` time per retry.
+- **P+H** (two more runs, ~40 min): only if P and H each pass gate 1 and each fail gate 2.
+
+**What counts as worse** (fixed before the run, as in Source order reuse): a query is worse if
+it loses `citation_hit`, `citation_all`, `answer_contains` or `answer_approx`, or newly
+abstains (answerable) or stops abstaining (unanswerable). Better is the reverse. A mixed
+result counts as worse.
+
+**Gate, per arm:**
+
+1. **Rank order, against A0 (rule G's budget):** invented citations stay 0; at most one hard
+   query gets worse, and no more get worse than better. T passes by construction.
+2. **Rule R, rotated against the same arm in rank order:** at most 3 hard queries get worse,
+   and no more get worse than better.
+3. **Cost:** P and H raise mean `prompt_tokens` by at most 1 %. For T, report the retries
+   (count and added seconds) on the rotated run. That number is what a later source order reuse
+   plan must subtract from its saving, so it doesn't gate this follow-up.
+
+**Choosing:** of the arms that pass, take the one with the fewest worse rotated queries; on a
+tie, the one that changes the text of the fewest rank-order answers. A T combination counts as
+its prompt arm plus T. **None passes:** record the numbers under this section, close the
+follow-up with no code change and open the PR with `PLAN.md` only. Don't try more wordings or
+labels: VL-8B's order sensitivity is then the finding, and cross-turn reuse stays off.
+
+**Step 2: build (only if an arm passes).**
+
+- **P or H in the winner:** P changes `SYSTEM_PROMPT` in `prompts.py` (Prompts and parameters
+  updated with the line and the result). H adds `prompts.image_labels(sources) -> list[str]`
+  (the hint on the highest-scoring image source) and the adapter uses it in place of
+  `image_label` per source. No setting: prompt text isn't in `settings_hash`, so the baselines
+  compare and `--update-baseline` shows each changed query.
+- **T in the winner:** no code now. Today nothing reorders sources, so T would never run. Record
+  it as the fix that a source order reuse re-plan must include, with its retry cost.
+- **T alone wins:** `PLAN.md` only (results, Start here: source order reuse may be re-planned
+  with T).
+- **Eval:** `qwn eval --set public --guard --locate`, `qwn eval --set hard --locate` and
+  `qwn eval --set turns --locate`, each with `--update-baseline`. Public passes every exit
+  criterion. Hard per-query changes match the probe's rank-order run (same text: same hits,
+  greedy). Turns: at most one query worse, and no more worse than better. Each change is
+  explained from `answer_text` in the PR. If public or turns fails, stop: undo the code, record
+  it, `PLAN.md` only.
+
+**Tests (with the code):**
+
+- Fast (no MLX), P: `SYSTEM_PROMPT` contains the line and still contains `ABSTAIN_TEXT` and the
+  injection sentences unchanged. H: `image_labels` puts the hint on the highest-scoring image
+  source only, on none when the top source is text-only, and the labels still start with
+  `[S#]` (the `FakeGenerator` user turn shows them in order).
+- Slow, H: the adapter's real chat template carries the hint once, before the right image.
+  P: none beyond today's slow answer tests (the prompt has no new format to parse).
+
+**Done when:**
+
+1. Step 1's numbers are recorded under this section, whatever the outcome: per arm, worse and
+   better in rank order and rotated, a table of every changed query with both texts in short,
+   retries for T, mean `prompt_tokens`.
+2. No arm passes, or T alone wins: `PLAN.md` only. Otherwise the fast and slow tests, ruff and ty
+   pass; the three evals run as in step 2 with baselines rewritten in the same PR.
+3. `PLAN.md` is updated in the same PR: this section (results under it), Start here, and Prompts
+   and parameters (if P or H ships). README unchanged unless a documented number moves.
+
+**Out of scope:** re-planning source order reuse (its own planning session, after this closes);
+ensembles or several answers per question (a second full prefill on every answer); changing
+`ABSTAIN_TEXT` or the abstention sentence; sending fewer images; changing the reranker or
+`rerank_k`; changing how text-only sources are ordered.
 
 ## Phases
 
