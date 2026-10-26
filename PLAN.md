@@ -94,11 +94,15 @@ and a rank-order retry after a bare refusal (T) left every combination at 4 or 5
 order sensitivity is the finding: `SYSTEM_PROMPT` and `image_label` are unchanged, and
 cross-turn prefill reuse stays off.
 
-**Open follow-ups:** **saved conversations** (planned 2026-10-26: CLI → Saved conversations;
-implement on `followup/saved-conversations`). You save a conversation explicitly on the Chat page
-or with `/save` in `qwn chat`. It's written to `index_dir/conversations/` and can be reopened with
-full answers and source cards, so follow-ups carry on. Since v0.10.0 only probes have merged (no
-code change), so this is the first follow-up toward v0.11.0.
+The saved conversations follow-up is done (CLI → Saved conversations, results under it): Save
+on the Chat page or `/save` in `qwn chat` writes the conversation to
+`index_dir/conversations/<id>.json`; the sidebar or `/open` (`qwn chat --open N|ID`) reopens it
+with full answers and source cards, and follow-ups carry on from it. Sources that changed or left
+the library since are marked. No reindex.
+
+**Open follow-ups:** none. Saved conversations is the first code change since v0.10.0 (the
+follow-ups between were probes), so it's unreleased: a release PR bumps to v0.11.0 when the user
+wants it.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -701,8 +705,8 @@ qwn models status     # pinned vs cached revisions, disk use
 qwn ui                # runs: streamlit run src/qwn/ui/app.py
 qwn chat [--in PATH]... [--no-guard]   # follow-up (done 2026-10-24): multi-turn questions in
                             # the terminal; see `qwn chat` below
-qwn chat --open N|ID        # follow-up (planned 2026-10-26): reopen a saved conversation;
-                            # see Saved conversations below
+qwn chat --open N|ID        # follow-up (done 2026-10-26): reopen a saved conversation;
+                            # /save, /list, /open, /delete in the REPL; see Saved conversations
 ```
 
 Common flags override settings (`--top-k`, `--rerank-k`, `--max-images`, `--config PATH`).
@@ -1038,7 +1042,7 @@ answers become common in daily use, re-run this probe before building it. Shorte
 separate follow-up with its own planning session (planned 2026-10-24: Evaluation → Faster
 prefill).
 
-### Saved conversations (follow-up, planned 2026-10-26)
+### Saved conversations (follow-up, planned 2026-10-26, done 2026-10-26)
 
 **Why:** a conversation lives only in memory: closing the browser tab, restarting `qwn ui` or
 leaving `qwn chat` loses it, along with the follow-up context. You can't come back to an
@@ -1211,6 +1215,50 @@ highlights or ratings; sharing conversations between indexes; encrypting the fil
 beside them already holds the document text in the clear; FileVault covers the disk); a
 `qwn conversations` command group; saving failed exchanges.
 
+**Saved conversations results (2026-10-26, M2 Max):**
+
+- Fast tests 477 passed (`tests/unit/test_conversations.py`, the saved-conversation cases in
+  `tests/integration/test_chat_flow.py`, `tests/ui/test_saved_conversations.py`), slow tests
+  69 passed (546 in all, incl. the new Chrome reopen test), ruff and ty clean. No eval run (Done when 2).
+- **Browser check** (`qwn ui` on the hard corpus, driven with Playwright): 2024 revenue 196.9 →
+  "And in 2025?" (Searched for "…total revenue in 2025?", 214.6) → "How many vessels did the
+  company operate that year?" (Searched for "…operate in 2025?", 37). Save wrote one file
+  (folder `0700`, file `0600`). After restarting `qwn ui`, Open restored three answers with their
+  Searched for lines, scope captions, cards and thumbnails, and "Saved 10:04". "And in 2024?" was
+  rewritten from the saved history to "…total revenue in 2024?" (196.9). Open page on its card
+  outlined the passage again ("Supporting passage (approximate)"). The button row and the
+  sidebar list were checked at every Responsive layout width, light and dark
+  (`tests/ui/test_responsive.py` now saves at each width).
+- **Terminal check** (pseudo-terminal, same corpus): two questions (196.9, 214.6), `/save`
+  ("Saved as …: … (2 questions)."), `/quit`. `qwn chat --open <id>` printed the scope line and
+  the last exchange; "How many vessels did the company operate that year?" was rewritten from it
+  (37). `/open 1` then said "1 newer question isn't saved…" and went ahead on the repeat;
+  `/sources`, `/history`, `/delete 1` and `/list` ("No saved conversations.") behaved as planned.
+- **Changed source** (scratch copy of the hard corpus and its own index): after saving 2024 and
+  2025 revenue, `annual-review-2024.pdf` was edited and re-ingested and `annual-review.pdf`
+  deleted and pruned. Reopened, the cards said "This page has changed since the answer" and "No
+  longer in your library", with no thumbnail and no "Open page"; `/sources` marked the same
+  sources "(changed since this answer)" and "(no longer in your library)".
+- **Implementation notes:**
+  - **Chat page button row:** New conversation and Save sit in an `st.container(horizontal=True)`
+    placed directly in the `st.empty` slot, not in `st.columns` (Save floated mid-row at
+    1024 px), and the "Saved …" caption has its own `st.empty` slot below. Nesting a horizontal
+    container inside `slot.container()` left `st.chat_input` disabled after an answer given while
+    the models were still warm-loading (reproduced in the browser; not on `main`); the flat slot
+    doesn't.
+  - In a browser test, the sidebar's selectbox arrow is also a button named "Open": find the
+    Open button by its text (`locator("button").filter(has_text="Open")`). AppTest can't show
+    this, so `tests/ui/test_responsive.py` reopens a saved conversation in Chrome.
+  - AppTest doesn't rerun a dialog on its own: the Delete test presses the sidebar's Delete and
+    the dialog's Delete on the same run.
+  - `Store.resolve(N|ID)` serves `/open`, `/delete` and `--open`; `make(exchanges, previous)`
+    keeps a saved conversation's id and creation time, so saving again overwrites its file.
+    Ids must be 12 hex characters before any path is built. Unreadable files are logged once
+    per process by name.
+  - `qwn chat` after `/open` or `--open` prints "Opened *id*: *title*" and, with more than one
+    exchange, "N earlier questions: /history" before the last exchange. Deleting the open
+    conversation keeps it on screen as unsaved, so `/save` (or Save) makes a new file.
+
 ## Streamlit UI (`src/qwn/ui/`)
 
 Run as an `st.navigation` app with 3 pages. Models are loaded through `@st.cache_resource` wrappers
@@ -1283,7 +1331,7 @@ injection point) and `ui/sources.py` (source cards and the "Open page" dialog). 
   - Shows loaded models and MLX active/peak memory.
   - Sliders for `top_k`, `rerank_k`, `max_images`, plus guard toggles. Values live in
     `st.session_state` and are applied per request (they don't persist).
-  - **Saved conversations** *(follow-up, planned 2026-10-26)*: Save beside "New conversation",
+  - **Saved conversations** *(follow-up, done 2026-10-26)*: Save beside "New conversation",
     and a sidebar list to open or delete one; see CLI → Saved conversations.
 - **State**: `st.session_state.messages`, `st.session_state.settings`. Single local user.
 

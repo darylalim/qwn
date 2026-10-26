@@ -41,6 +41,9 @@ uv run qwn eval review                        # turn 👍/👎 Chat ratings into
   Mac, answered like a typed question, and the answer is read aloud. Silent or empty recordings
   are rejected with "Didn't catch that, try again". Voice models load on first use and unload
   after 10 idle minutes.
+- **Save a conversation:** nothing is kept unless you ask. **Save** on the Chat page (or `/save`
+  in `qwn chat`) writes it into the index folder; reopen it from the sidebar (or `/open`,
+  `qwn chat --open N`) with its answers and pages, and follow-ups carry on.
 - **Check a citation:** under an answer, **Open page** shows the cited page with the passage that
   supports the answer outlined (approximate; found when you open it, which takes a few seconds).
 - **Supported files:** PDF, PNG, JPEG, WebP, Markdown and plain text. Export slides to PDF first.

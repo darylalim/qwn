@@ -7,6 +7,7 @@ import streamlit as st
 
 from qwn.adapters.images import highlight
 from qwn.answer import Response, cite_label
+from qwn.conversations import SourceState, source_state
 from qwn.interfaces import Box, Source
 from qwn.retrieve import Hit
 from qwn.ui import services as ui
@@ -16,6 +17,12 @@ logger = logging.getLogger(__name__)
 THUMB_PX = 96
 VISIBLE_ROWS = 2  # more cards than this many rows go in "More sources"
 PER_ROW = 2
+# a reopened answer's source that no longer shows what the answer saw (PLAN.md → Saved
+# conversations): no thumbnail and no "Open page"
+STATE_CAPTIONS: dict[SourceState, str] = {
+    "changed": ":material/difference: This page has changed since the answer",
+    "missing": ":material/hide_source: No longer in your library",
+}
 
 
 def _box(response: Response, source: Source, msg_id: str) -> Box | None:
@@ -50,21 +57,26 @@ def open_page(label: str, source: Source, response: Response, msg_id: str) -> No
         st.caption(":material/highlight: Supporting passage (approximate)")
 
 
-def _card(source: Source, hit: Hit, response: Response, msg_id: str) -> None:
+def _card(source: Source, hit: Hit, response: Response, msg_id: str, state: SourceState) -> None:
     label = cite_label(source, hit)
     with st.container(border=True, horizontal=True, vertical_alignment="center"):
-        if source.image_path is not None and source.image_path.is_file():
+        shown = state == "ok" and source.image_path is not None and source.image_path.is_file()
+        if shown:
             st.image(str(source.image_path), width=THUMB_PX, alt=f"Thumbnail of {label}")
         with st.container(gap="xsmall"):
             st.markdown(f"**{label}**")
             st.badge(f"score {source.score:.2f}", icon=":material/sort:", color="gray")
+            if state != "ok":
+                st.caption(STATE_CAPTIONS[state])
+                return
             key = f"open-{msg_id}-{source.label}"
             if st.button("Open page", key=key, type="tertiary", icon=":material/open_in_full:"):
                 open_page(label, source, response, msg_id)
 
 
-def cards(response: Response, msg_id: str) -> None:
-    """The cited sources as cards, two per row; rows past the second go in an expander."""
+def cards(response: Response, msg_id: str, documents: dict[str, str]) -> None:
+    """The cited sources as cards, two per row; rows past the second go in an expander.
+    `documents` is `{path: sha256}` of today's index (one `Index.documents()` call per run)."""
     cited = response.cited_sources()
     if not cited:
         return
@@ -74,7 +86,7 @@ def cards(response: Response, msg_id: str) -> None:
         for row in row_list:
             for col, (source, hit) in zip(st.columns(PER_ROW), row, strict=False):
                 with col:
-                    _card(source, hit, response, msg_id)
+                    _card(source, hit, response, msg_id, source_state(hit, documents))
 
     draw(rows[:VISIBLE_ROWS])
     if len(rows) > VISIBLE_ROWS:

@@ -186,3 +186,111 @@ def test_turn_answers_carry_no_citations(docs, gen):
     chat(REVENUE, "Grow?")
     [(history, _)] = gen.rewrites
     assert history == [Turn(REVENUE, history[0].answer)] and "[S1]" not in history[0].answer
+
+
+# saved conversations (PLAN.md → CLI → Saved conversations)
+
+
+PROMPT = "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK} "
+
+
+def saved(home):
+    from qwn.conversations import Store
+
+    return Store(home / "index")
+
+
+def test_save_list_open_and_delete(docs, gen, home):
+    r = chat("/save", REVENUE, "/save", "/list")
+    assert r.exit_code == 0, r.output
+    assert "Nothing to save yet." in r.output
+    [summary] = saved(home).list()
+    assert f"Saved as {summary.id}: {REVENUE} (1 question)." in r.output
+    assert f"  1  {summary.id}  " in r.output and f"  1 question  {REVENUE}\n" in r.output
+
+    r = chat("/open 1", "And the outlook?", "/save", "/sources")
+    assert r.exit_code == 0, r.output
+    assert "Searching in: all documents (3)" in r.output
+    assert f"{PROMPT}{REVENUE}\nQuarterly report" in r.output  # the last exchange, reprinted
+    [(history, message)] = gen.rewrites  # the follow-up carries on from the saved history
+    assert [t.question for t in history] == [REVENUE] and message == "And the outlook?"
+    assert f"Saved as {summary.id}: {REVENUE} (2 questions)." in r.output  # same file
+    assert len(saved(home).list()) == 1
+
+    r = chat(f"/open {summary.id}", "/history", "/delete 1", "/list", "/delete 1")
+    assert r.exit_code == 0, r.output
+    assert "1 earlier question: /history" in r.output
+    assert f"Deleted {REVENUE}\n" in r.output and "No saved conversations." in r.output
+    assert "No saved conversation 1. Type /list." in r.output
+    assert saved(home).list() == []
+
+
+def test_open_at_start_and_an_unknown_one(docs, gen, home):
+    chat(REVENUE, "/save")
+    [summary] = saved(home).list()
+    r = runner.invoke(qwn.cli.app, ["chat", "--open", summary.id], input="And the outlook?\n")
+    assert r.exit_code == 0, r.output
+    assert f"Opened {summary.id}: {REVENUE}" in r.output
+    assert [t.question for t in gen.rewrites[0][0]] == [REVENUE]
+    calls = len(gen.calls)
+    r = runner.invoke(qwn.cli.app, ["chat", "--open", "9"], input="")
+    assert r.exit_code == 1
+    assert "No saved conversation 9. Run `qwn chat` and type /list." in r.output
+    assert len(gen.calls) == calls
+
+
+def test_in_wins_over_the_saved_scope_and_a_gone_scope_searches_everything(docs, gen, home):
+    report, pricing = str(docs / "report.pdf"), str(docs / "pricing.md")
+    chat(f"/in '{pricing}'", SSO, "/save")
+    [summary] = saved(home).list()
+    r = runner.invoke(qwn.cli.app, ["chat", "--open", "1", "--in", report], input=f"{SSO}\n")
+    assert r.exit_code == 0, r.output
+    assert f"Searching in: {report} (1 document) (from --in)" in r.output
+    assert {s.path for s in gen.calls[-1]} == {report}
+    r = chat("/open 1", SSO)
+    assert f"Searching in: {pricing} (1 document)" in r.output
+    assert {s.path for s in gen.calls[-1]} == {pricing}
+    from qwn.conversations import Exchange, make
+
+    first = saved(home).load(summary.id).exchanges[0]  # now scoped to a file no longer indexed
+    gone = make([Exchange(first.id, first.question, first.response, ["/nowhere/x.md"])])
+    saved(home).delete(summary.id)
+    saved(home).save(gone)
+    r = chat("/open 1")
+    assert "no longer indexed: searching all documents." in r.output
+    assert "Searching in: all documents (3)" in r.output
+
+
+def test_unsaved_changes_ask_once_then_go_ahead(docs, gen, home):
+    r = chat(REVENUE, "/save", SSO, "/quit", "/history", "/new", "/new", "/quit")
+    assert r.exit_code == 0, r.output
+    assert r.output.count("1 newer question isn't saved. /save to keep it") == 2
+    assert "New conversation." in r.output  # the repeated /new went ahead
+    r = chat("/open 1", SSO, "/quit", "/quit")
+    assert r.exit_code == 0 and r.output.count("isn't saved") == 1
+    r = chat("/open 1", SSO, SSO)  # end of input on a pipe exits at once
+    assert r.exit_code == 0 and "isn't saved" not in r.output
+
+
+def test_a_never_saved_conversation_is_discarded_silently(docs, gen, home):
+    r = chat(REVENUE, "/quit")
+    assert r.exit_code == 0 and "isn't saved" not in r.output
+    assert not (home / "index" / "conversations").exists()  # nothing written without /save
+
+
+def test_saved_answers_are_stripped_of_control_characters_when_reopened(docs, gen, home):
+    gen.extra = " \x1b[2Jred\x9b"
+    chat(REVENUE, "/save")
+    gen.extra = ""
+    r = chat("/open 1")
+    assert r.exit_code == 0 and "red" in r.output
+    assert not any(c in r.output for c in "\x1b\x9b")
+
+
+def test_sources_after_open_mark_missing_documents(docs, gen, home):
+    chat(REVENUE, "/save")
+    for page in (home / "index" / "pages").rglob("*.webp"):
+        page.unlink()  # every render gone
+    r = chat("/open 1", "/sources")
+    assert r.exit_code == 0, r.output
+    assert "report.pdf  p.1  (no longer in your library)" in r.output
