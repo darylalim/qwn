@@ -108,14 +108,17 @@ The export and rename conversations follow-up is done (CLI → Export and rename
 results under it): Export on the Chat page (a Markdown download) or `/export [PATH]` in `qwn
 chat` writes the conversation on screen with its citations and source paths, no source text;
 Rename in the sidebar or `/rename N|ID TITLE` gives a saved conversation a title of your own,
-and saving again keeps it. No reindex. Unreleased: the first change since v0.11.0.
+and saving again keeps it. No reindex.
 
 The chat box warm-load fix is done (Streamlit UI → Sidebar status timer): a question sent while
 the models were still loading left `st.chat_input` disabled after its answer, because the
 sidebar's 1 s status timer never stopped. It now stops when the load ends. No reindex.
-Unreleased.
 
-**Open follow-ups:** none planned.
+**Released as v0.12.0** (2026-10-26): every follow-up above since v0.11.0 (Versioning): export
+and rename conversations and the chat box warm-load fix. No reindex: an index from v0.11.0
+works as is.
+
+**Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -4629,6 +4632,7 @@ job.
   `0.10.0` releases quiet stderr, the streaming probe (no code) and faster prefill (no reindex).
   `0.11.0` releases the prefill reuse, source order reuse and source order sensitivity probes
   (no code) and saved conversations (no reindex).
+  `0.12.0` releases export and rename conversations and the chat box warm-load fix (no reindex).
 - **Flow:** bump on the phase branch → PR (CI) → merge to `main` → `release.yml` → tag `vX.Y.Z` +
   GitHub Release.
 - **Note:** `0.1.0` has no tag, so the **first** merge to `main` that touches `pyproject.toml`
