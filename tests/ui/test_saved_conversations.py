@@ -48,21 +48,27 @@ def open_saved(at, conversation_id: str):
     return at
 
 
-def test_save_writes_a_file_and_says_what_is_not_saved(corpus_home, generator, store):
+AUTO = "new answers are saved automatically"
+
+
+def has_save(at) -> bool:
+    return any(b.label == "Save" for b in at.button)
+
+
+def test_save_writes_a_file_then_new_answers_are_saved_automatically(corpus_home, generator, store):
     at = app()
     assert "Saved conversations appear here." in texts(at.sidebar.caption)
-    assert not any(b.label == "Save" for b in at.button)
+    assert not has_save(at)
     at.chat_input[0].set_value(REVENUE).run()
     button(at, "Save").click().run()
     assert not at.exception
     [name] = files(store)
-    assert "Saved " in texts(at.caption) and "not saved" not in texts(at.caption)
+    assert AUTO in texts(at.caption) and not has_save(at)
     at.chat_input[0].set_value("And in 2025?").run()
-    assert "1 newer exchange not saved" in texts(at.caption)
-    button(at, "Save").click().run()
-    assert files(store) == [name]  # the same file, overwritten
+    assert files(store) == [name]  # the same file, written without pressing Save
     assert len(store.load(name.removesuffix(".json")).exchanges) == 2
-    assert "not saved" not in texts(at.caption)
+    assert AUTO in texts(at.caption) and "not saved" not in texts(at.caption)
+    assert not has_save(at) and any(b.label == "Export" for b in at.download_button)
     [option] = at.sidebar.selectbox[0].options
     assert option.startswith(f"{REVENUE} · ") and option.endswith(" · 2 questions")
 
@@ -85,6 +91,29 @@ def test_an_error_exchange_is_not_saved(corpus_home, generator, store, monkeypat
     [summary] = store.list()
     [exchange] = store.load(summary.id).exchanges
     assert exchange.question == "Which plan has single sign-on?"
+
+
+def test_an_error_after_saving_is_not_autosaved(corpus_home, generator, store, monkeypatch):
+    at = app()
+    at.chat_input[0].set_value(REVENUE).run()
+    button(at, "Save").click().run()
+    [summary] = store.list()
+
+    def boom(question, sources, *, greedy=False):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(generator, "answer", boom)
+    at.chat_input[0].set_value("And in 2025?").run()
+    assert at.error and not has_save(at) and AUTO in texts(at.caption)
+    assert len(store.load(summary.id).exchanges) == 1
+
+
+def test_a_conversation_never_saved_writes_no_file(corpus_home, generator, store):
+    at = app()
+    for question in (REVENUE, "And in 2025?", "Which plan has single sign-on?"):
+        at.chat_input[0].set_value(question).run()
+    assert not at.exception and files(store) == [] and has_save(at)
+    assert "bookmark_added" not in texts(at.caption)  # no "Saved 14:02" caption
 
 
 def test_open_restores_the_conversation_and_follow_ups_carry_on(corpus_home, generator, store):
@@ -110,7 +139,9 @@ def test_open_restores_the_conversation_and_follow_ups_carry_on(corpus_home, gen
     [(history, message)] = generator.rewrites
     assert [t.question for t in history] == [REVENUE, "And in 2025?"]
     assert message == "And in 2024?"
-    assert "1 newer exchange not saved" in texts(at.caption)
+    assert AUTO in texts(at.caption) and not has_save(at)
+    assert [e.question for e in store.load(summary.id).exchanges][-1] == "And in 2024?"
+    assert files(store) == [f"{summary.id}.json"]
 
 
 def test_new_conversation_after_open_saves_a_second_file(corpus_home, generator, store):
@@ -122,6 +153,8 @@ def test_new_conversation_after_open_saves_a_second_file(corpus_home, generator,
     button(at, "New conversation").click().run()
     assert at.session_state["saved"] is None
     at.chat_input[0].set_value("Which plan has single sign-on?").run()
+    assert files(store) == [f"{summary.id}.json"]  # a new conversation isn't autosaved
+    assert len(store.load(summary.id).exchanges) == 1
     button(at, "Save").click().run()
     assert len(files(store)) == 2
 
@@ -170,6 +203,8 @@ def test_delete_asks_first_then_removes_the_file(corpus_home, generator, store):
     assert not at.exception
     assert files(store) == [] and at.session_state["saved"] is None
     assert "Saved conversations appear here." in texts(at.sidebar.caption)
+    at.chat_input[0].set_value("And in 2025?").run()
+    assert files(store) == [] and has_save(at)  # deleting stops its autosave
 
 
 # Export and Rename (PLAN.md → CLI → Export and rename conversations)
@@ -253,7 +288,6 @@ def test_renaming_the_open_conversation_then_saving_keeps_the_title(corpus_home,
     rename_to(at, "Mine")
     assert at.session_state["saved"].title == "Mine"
     at.chat_input[0].set_value("And in 2025?").run()
-    button(at, "Save").click().run()
     saved = store.load(summary.id)
     assert saved.title == "Mine" and len(saved.exchanges) == 2
 
@@ -327,3 +361,72 @@ def test_open_after_a_search_restores_the_conversation(corpus_home, generator, s
     assert [m["role"] for m in at.session_state["messages"]] == ["user", "assistant"]
     assert at.session_state["messages"][0]["content"] == SSO
     assert at.text_input(key="saved_search").value == "sign-on"  # the search stays
+
+
+# Autosave (PLAN.md → CLI → Autosave saved conversations)
+
+COPIED = "This conversation changed in another window, so it was saved as a copy."
+
+
+def saved_once(store: Store):
+    at = app()
+    at.chat_input[0].set_value(REVENUE).run()
+    button(at, "Save").click().run()
+    [summary] = store.list()
+    return summary.id
+
+
+def test_two_windows_on_one_conversation_keep_both_answers(corpus_home, generator, store):
+    conversation_id = saved_once(store)
+    first, second = open_saved(app(), conversation_id), open_saved(app(), conversation_id)
+    first.chat_input[0].set_value("And in 2025?").run()
+    assert COPIED not in texts(first.info)
+    second.chat_input[0].set_value(SSO).run()
+    assert not second.exception and COPIED in texts(second.info)
+    original = store.load(conversation_id)
+    assert [e.question for e in original.exchanges] == [REVENUE, "And in 2025?"]
+    [copy] = [s for s in store.list() if s.id != conversation_id]
+    assert [e.question for e in store.load(copy.id).exchanges] == [REVENUE, SSO]
+    assert second.session_state["saved"].id == copy.id
+    assert len(second.sidebar.selectbox[0].options) == 2
+    second.chat_input[0].set_value("And in 2024?").run()  # the copy carries on
+    assert len(store.load(copy.id).exchanges) == 3 and COPIED not in texts(second.info)
+
+
+def test_a_conversation_deleted_in_another_window_is_not_recreated(corpus_home, generator, store):
+    conversation_id = saved_once(store)
+    at = open_saved(app(), conversation_id)
+    store.delete(conversation_id)  # as the other window's Delete does
+    at.chat_input[0].set_value("And in 2025?").run()
+    assert "deleted in another window. Save to keep it again." in texts(at.info)
+    assert files(store) == [] and at.session_state["saved"] is None and has_save(at)
+
+
+def test_an_unreadable_file_is_left_alone_and_save_writes_a_copy(corpus_home, generator, store):
+    conversation_id = saved_once(store)
+    at = open_saved(app(), conversation_id)
+    store.path(conversation_id).write_text("{ hand edited")
+    at.chat_input[0].set_value("And in 2025?").run()
+    assert "Couldn't save to this conversation's file" in texts(at.error)
+    assert "1 newer exchange not saved" in texts(at.caption) and has_save(at)
+    assert store.path(conversation_id).read_text() == "{ hand edited"
+    button(at, "Save").click().run()
+    [copy] = store.list()  # the unreadable file isn't listed
+    assert copy.id != conversation_id and copy.exchanges == 2
+    assert store.path(conversation_id).read_text() == "{ hand edited"
+
+
+def test_a_failed_write_shows_the_error_and_save(corpus_home, generator, store, monkeypatch):
+    conversation_id = saved_once(store)
+    at = open_saved(app(), conversation_id)
+
+    def full(self, conversation):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Store, "autosave", full)
+    at.chat_input[0].set_value("And in 2025?").run()
+    assert "Couldn't save the conversation: [Errno 28] No space left" in texts(at.error)
+    assert "1 newer exchange not saved" in texts(at.caption)
+    monkeypatch.undo()
+    button(at, "Save").click().run()
+    assert len(store.load(conversation_id).exchanges) == 2 and AUTO in texts(at.caption)

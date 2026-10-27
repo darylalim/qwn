@@ -1,6 +1,7 @@
 """`qwn chat` end to end: a REPL over Answerer.ask with history, fakes via make_registry."""
 
 import stat
+from dataclasses import replace
 
 import pytest
 from fakes import FakeEmbedder, FakeGenerator, FakeGuard, FakeMemory, FakeReranker
@@ -216,8 +217,9 @@ def test_save_list_open_and_delete(docs, gen, home):
     assert f"{PROMPT}{REVENUE}\nQuarterly report" in r.output  # the last exchange, reprinted
     [(history, message)] = gen.rewrites  # the follow-up carries on from the saved history
     assert [t.question for t in history] == [REVENUE] and message == "And the outlook?"
-    assert f"Saved as {summary.id}: {REVENUE} (2 questions)." in r.output  # same file
-    assert len(saved(home).list()) == 1
+    assert "Already saved: new answers are saved as you go." in r.output  # autosaved
+    [again] = saved(home).list()
+    assert again.id == summary.id and again.exchanges == 2  # same file
 
     r = chat(f"/open {summary.id}", "/history", "/delete 1", "/list", "/delete 1")
     assert r.exit_code == 0, r.output
@@ -249,9 +251,9 @@ def test_in_wins_over_the_saved_scope_and_a_gone_scope_searches_everything(docs,
     assert r.exit_code == 0, r.output
     assert f"Searching in: {report} (1 document) (from --in)" in r.output
     assert {s.path for s in gen.calls[-1]} == {report}
-    r = chat("/open 1", SSO)
-    assert f"Searching in: {pricing} (1 document)" in r.output
-    assert {s.path for s in gen.calls[-1]} == {pricing}
+    r = chat("/open 1", SSO)  # the --in answer was autosaved: its scope is the last one
+    assert f"Searching in: {report} (1 document)" in r.output
+    assert {s.path for s in gen.calls[-1]} == {report}
     from qwn.conversations import Exchange, make
 
     first = saved(home).load(summary.id).exchanges[0]  # now scoped to a file no longer indexed
@@ -263,15 +265,102 @@ def test_in_wins_over_the_saved_scope_and_a_gone_scope_searches_everything(docs,
     assert "Searching in: all documents (3)" in r.output
 
 
-def test_unsaved_changes_ask_once_then_go_ahead(docs, gen, home):
-    r = chat(REVENUE, "/save", SSO, "/quit", "/history", "/new", "/new", "/quit")
+def test_answers_after_save_are_autosaved_and_quit_does_not_ask(docs, gen, home):
+    r = chat(REVENUE, "/save", SSO, "/quit")
     assert r.exit_code == 0, r.output
-    assert r.output.count("1 newer question isn't saved. /save to keep it") == 2
-    assert "New conversation." in r.output  # the repeated /new went ahead
-    r = chat("/open 1", SSO, "/quit", "/quit")
-    assert r.exit_code == 0 and r.output.count("isn't saved") == 1
-    r = chat("/open 1", SSO, SSO)  # end of input on a pipe exits at once
+    assert "(1 question). New answers are saved as you go." in r.output
+    assert "isn't saved" not in r.output
+    [summary] = saved(home).list()
+    assert [e.question for e in saved(home).load(summary.id).exchanges] == [REVENUE, SSO]
+    r = chat("/save", "/save")
+    assert "Nothing to save yet." in r.output
+
+
+def test_open_then_a_question_updates_that_file_and_new_writes_nothing(docs, gen, home):
+    chat(REVENUE, "/save")
+    [summary] = saved(home).list()
+    r = runner.invoke(qwn.cli.app, ["chat", "--open", summary.id], input=f"{SSO}\n/save\n")
+    assert r.exit_code == 0, r.output
+    assert "Already saved: new answers are saved as you go." in r.output
+    assert saved(home).load(summary.id).exchanges[-1].question == SSO
+    r = chat("/open 1", "/new", "And the outlook?", "/quit")
     assert r.exit_code == 0 and "isn't saved" not in r.output
+    assert [s.exchanges for s in saved(home).list()] == [2]
+
+
+class _Elsewhere:
+    """The fake generator's answer, then something done to the saved file meanwhile, as
+    another window or a hand edit would: the change lands before this answer's autosave."""
+
+    def __init__(self, gen, home, monkeypatch, change) -> None:
+        self.answer, self.home, self.change = gen.answer, home, change
+        monkeypatch.setattr(gen, "answer", self)
+
+    def __call__(self, question, sources, *, greedy=False):
+        [summary] = saved(self.home).list()
+        self.change(saved(self.home), summary.id)
+        return self.answer(question, sources, greedy=greedy)
+
+
+def test_a_conversation_deleted_elsewhere_is_not_recreated(docs, gen, home, monkeypatch):
+    chat(REVENUE, "/save")
+    _Elsewhere(gen, home, monkeypatch, lambda store, i: store.delete(i))
+    r = chat("/open 1", SSO, "/quit", "/quit")
+    assert r.exit_code == 0, r.output
+    assert "This conversation was deleted elsewhere. /save to keep it again." in r.output
+    assert r.output.count("2 newer questions aren't saved") == 1  # asks once, then goes
+    assert saved(home).list() == []
+
+
+def test_an_unreadable_file_is_never_overwritten(docs, gen, home, monkeypatch):
+    chat(REVENUE, "/save")
+    [summary] = saved(home).list()
+    file = saved(home).path(summary.id)
+    _Elsewhere(gen, home, monkeypatch, lambda store, i: store.path(i).write_text("{"))
+    r = chat("/open 1", SSO, "/quit", "/save", "/quit")
+    assert r.exit_code == 0, r.output
+    line = "Couldn't save to this conversation's file (see the log). /save writes a new copy."
+    assert line in r.output and r.output.count("1 newer question isn't saved") == 1
+    assert file.read_text() == "{"
+    [copy] = saved(home).list()  # the unreadable file isn't listed
+    assert copy.id != summary.id and copy.exchanges == 2
+
+
+def test_a_conversation_moved_on_elsewhere_is_saved_as_a_copy(docs, gen, home, monkeypatch):
+    from qwn.conversations import make
+
+    chat(REVENUE, "/save")
+    [summary] = saved(home).list()
+    first = saved(home).load(summary.id)
+    other = make([*first.exchanges, replace(first.exchanges[0], id="f" * 12)], first)
+
+    def moved_on(store, i):
+        if len(store.load(summary.id).exchanges) == 1:
+            store.save(other)
+
+    _Elsewhere(gen, home, monkeypatch, moved_on)
+    r = chat("/open 1", SSO)
+    assert r.exit_code == 0, r.output
+    copies = [s for s in saved(home).list() if s.id != summary.id]
+    assert len(copies) == 1
+    assert f"changed elsewhere, so it was saved as a copy: {copies[0].id}." in r.output
+    assert len(saved(home).load(summary.id).exchanges) == 2
+    assert saved(home).load(copies[0].id).exchanges[-1].question == SSO
+
+
+def test_a_failed_write_says_so_and_quit_asks(docs, gen, home, monkeypatch):
+    from qwn.conversations import Store
+
+    chat(REVENUE, "/save")
+
+    def full(self, conversation):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Store, "autosave", full)
+    r = chat("/open 1", SSO, "/quit", "/quit")
+    assert r.exit_code == 0, r.output
+    assert "Couldn't save the conversation: [Errno 28] No space left" in r.output
+    assert r.output.count("1 newer question isn't saved") == 1
 
 
 def test_a_never_saved_conversation_is_discarded_silently(docs, gen, home):
@@ -376,9 +465,8 @@ def test_rename(docs, gen, home, out):
 
 def test_renaming_the_open_conversation_survives_save(docs, gen, home, out):
     chat(REVENUE, "/save")
-    r = chat("/open 1", "/rename 1 Mine", "And the outlook?", "/save")
+    r = chat("/open 1", "/rename 1 Mine", "And the outlook?")  # autosaved
     assert r.exit_code == 0, r.output
-    assert "Saved as " in r.output and ": Mine (2 questions)." in r.output
     [summary] = saved(home).list()
     assert summary.title == "Mine" and summary.exchanges == 2
 

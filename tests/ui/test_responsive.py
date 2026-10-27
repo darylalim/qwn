@@ -38,6 +38,7 @@ WARM_SECONDS = 12
 # the caption after Save; "Saved " alone also matches (case-insensitively) the sidebar's
 # "Saved conversations appear here." and the search box's hidden label
 SAVED = re.compile(r"Saved \d\d:\d\d")
+AUTO = "new answers are saved automatically"
 
 
 def _free_port() -> int:
@@ -141,8 +142,13 @@ def test_layout(server, browser, name, width, scheme):
             page.get_by_text("Searched for:").wait_for(timeout=20_000)
             page.get_by_role("button", name="New conversation").wait_for(timeout=5_000)
             page.locator("button").filter(has_text="Export").wait_for(timeout=5_000)
-            page.get_by_role("button", name="Save").click()  # the button row, then its caption
-            page.get_by_text(SAVED).first.wait_for(timeout=10_000)
+            page.wait_for_timeout(300)  # the row with Save, before the first save
+            page.screenshot(path=SHOTS / f"chat-unsaved-{width}-{scheme}.png", full_page=True)
+            scroll, inner = _overflow(page)
+            assert scroll <= inner, f"horizontal overflow before saving: {scroll} > {inner}"
+            page.get_by_role("button", name="Save").click()  # the row without Save, its caption
+            page.get_by_text(AUTO).wait_for(timeout=10_000)
+            assert page.get_by_role("button", name="Save").count() == 0
             if width > 760:  # the sidebar's list (collapsed on narrow screens)
                 page.get_by_text("Saved conversations", exact=True).first.wait_for(timeout=10_000)
         page.wait_for_timeout(300)  # let the layout settle after the last element arrives
@@ -355,5 +361,51 @@ def test_a_pick_the_search_filters_out_clears_in_the_browser(searched, browser):
         sidebar.locator("button").filter(has_text="Open").first.click()
         page.get_by_text("Searched in:").first.wait_for(timeout=10_000)
         assert page.get_by_text(SSO).count() >= 1
+    finally:
+        context.close()
+
+
+def test_autosave_updates_the_sidebar_and_two_tabs_keep_both(server, browser):
+    """An autosaved answer shows in the sidebar on the same run (an answer causes no rerun, so
+    the list is drawn last), and two tabs on one conversation end with the original and a copy."""
+    context = browser.new_context(viewport={"width": 1512, "height": HEIGHT})
+    first = context.new_page()
+    try:
+        first.goto(server)
+        box = first.locator('[data-testid="stChatInput"] textarea')
+        box.wait_for(timeout=20_000)
+        title = "Autosave in the browser"
+        box.fill(f"{title}: {QUESTION}")
+        box.press("Enter")
+        first.get_by_role("button", name="Save").click()
+        first.get_by_text(AUTO).wait_for(timeout=10_000)
+        second = context.new_page()  # another tab: a session of its own
+        second.goto(server)
+        second.locator('[data-testid="stChatInput"]').wait_for(timeout=20_000)
+        sidebar = second.locator('[data-testid="stSidebar"]')
+        sidebar.locator('[data-testid="stSelectbox"]').click()
+        second.get_by_role("option").filter(has_text=title).first.click()
+        sidebar.locator("button").filter(has_text="Open").click()
+        second.get_by_text("Searched in:").first.wait_for(timeout=10_000)
+
+        box.fill(FOLLOW_UP)
+        box.press("Enter")
+        first.get_by_text("Searched for:").wait_for(timeout=20_000)
+        first.wait_for_timeout(1000)  # the run ends with the sidebar's list
+        first.locator('[data-testid="stSidebar"] [data-testid="stSelectbox"]').click()
+        first.get_by_role("option").first.wait_for(timeout=5_000)
+        options = first.get_by_role("option").filter(has_text=title).all_inner_texts()
+        assert any(o.endswith(" · 2 questions") for o in options), options
+        first.keyboard.press("Escape")
+
+        other = second.locator('[data-testid="stChatInput"] textarea')
+        other.fill(SSO)
+        other.press("Enter")
+        second.get_by_text("so it was saved as a copy.").wait_for(timeout=20_000)
+        second.wait_for_timeout(1000)
+        sidebar.locator('[data-testid="stSelectbox"]').click()
+        second.get_by_role("option").first.wait_for(timeout=5_000)
+        options = second.get_by_role("option").filter(has_text=title).all_inner_texts()
+        assert len(options) == 2 and all(o.endswith(" · 2 questions") for o in options), options
     finally:
         context.close()
