@@ -3,7 +3,10 @@
 Ask questions about your PDFs, images and notes, and get answers with page citations. qwn is a
 private multimodal RAG app that runs entirely on your Mac with MLX: no cloud, no telemetry.
 
-Work in progress: see `PLAN.md` for the phases.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/chat-dark.png">
+  <img alt="The Chat page: a question about a bus timetable, answered with a citation and a source card" src="docs/images/chat-light.png">
+</picture>
 
 ## Requirements
 
@@ -15,46 +18,73 @@ Work in progress: see `PLAN.md` for the phases.
 
 ```bash
 uv sync
-uv run qwn models pull     # download the pinned models (~13 GB); the only network use
+uv run qwn models pull           # download the pinned models (~13 GB); the only network use
 uv run qwn models pull --voice   # optional: speech in and out (~5 GB more)
-uv run qwn models status   # check they're all present
+uv run qwn models status         # check they're all present
 ```
 
 After `models pull`, qwn runs fully offline (`HF_HUB_OFFLINE=1`). Run `qwn` from this folder, or
-set `QWN_HOME` to it. Settings can be changed in `qwn.toml` (copy `qwn.example.toml`).
+set `QWN_HOME` to it. To change settings, copy `qwn.example.toml` to `qwn.toml` and edit it.
 
 ## Use
 
 ```bash
-uv run qwn ui                                 # Streamlit app on localhost: Chat, Library, System
-uv run qwn ingest ~/Documents/papers          # index a folder in place
-uv run qwn search "APAC revenue"              # show the best-matching pages and passages
-uv run qwn ask "What was APAC revenue in Q3?" # answer with citations, e.g. [report.pdf p.4]
-uv run qwn ask "..." --in ~/Documents/papers  # only search these files or folders
-uv run qwn ask --audio question.wav --speak answer.wav  # ask out loud, hear the answer
-uv run qwn chat                               # a conversation: follow-ups like "and in 2025?"
-uv run qwn status                             # index, model cache and memory
-uv run qwn eval review                        # turn 👍/👎 Chat ratings into private eval questions
+uv run qwn ingest ~/Documents/papers           # index a folder in place (unchanged files are skipped)
+uv run qwn ui                                  # the app on localhost: Chat, Library, System
+uv run qwn ask "What was APAC revenue in Q3?"  # one answer with citations, e.g. [report.pdf p.4]
+uv run qwn ask "..." --in ~/Documents/papers   # only search these files or folders
+uv run qwn ask --audio q.wav --speak a.wav     # ask out loud, hear the answer
+uv run qwn chat                                # a conversation: follow-ups like "and in 2025?"
+uv run qwn search "APAC revenue"               # the best-matching pages, no answer
+uv run qwn status                              # index, model cache and memory
+uv run qwn eval review                         # turn 👍/👎 Chat ratings into private eval questions
 ```
 
-- **Voice:** in the Chat page, record a question with **Ask out loud**. It's transcribed on your
-  Mac, answered like a typed question, and the answer is read aloud. Silent or empty recordings
-  are rejected with "Didn't catch that, try again". Voice models load on first use and unload
-  after 10 idle minutes.
-- **Save a conversation:** nothing is kept unless you ask. **Save** on the Chat page (or `/save`
-  in `qwn chat`) writes it into the index folder; reopen it from the sidebar (or `/open`,
-  `qwn chat --open N`) with its answers and pages, and follow-ups carry on. Once saved or
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/library-dark.png">
+  <img alt="The Library page: document counts, an upload box and the indexed files" src="docs/images/library-light.png">
+</picture>
+
+**Supported files:** PDF, PNG, JPEG, WebP, Markdown and plain text. Export slides to PDF first.
+
+**One process at a time:** only one qwn process can hold the models. Close the UI before running
+`ingest`, `search`, `ask`, `chat` or `eval` from the terminal.
+
+### In the app and in `qwn chat`
+
+| To | On the Chat page | In `qwn chat` |
+|---|---|---|
+| See an answer's sources | Source cards under it; **Open page** | `/sources` |
+| Ask out loud | **Ask out loud** | (app only) |
+| Save a conversation | **Save** | `/save` |
+| Reopen one | Pick it in the sidebar | `/open N` or `qwn chat --open N` |
+| Find one | Search box above the sidebar's list | `/list TEXT` |
+| Rename one | **Rename** in the sidebar | `/rename N TITLE` |
+| Export as Markdown | **Export** | `/export [PATH]` |
+| Only search some files | **Search in** | `/in PATH` |
+
+Type `/help` in `qwn chat` for every command.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/terminal-dark.png">
+  <img alt="qwn chat in a terminal: a question, a follow-up rewritten into a full question, both answers cited" src="docs/images/terminal-light.png">
+</picture>
+
+- **Citations:** **Open page** shows the cited page with the supporting passage outlined. The
+  outline is approximate and takes a few seconds to find.
+- **Voice:** your question is transcribed on your Mac, answered like a typed one, and the answer
+  is read aloud. Silent recordings are rejected. Voice models load on first use and unload after
+  10 idle minutes.
+- **Saving:** nothing is kept unless you save. Saved conversations live in the index folder and
+  reopen with their answers and pages; follow-ups carry on. Once a conversation is saved or
   reopened, each new answer is saved automatically.
-- **Export or rename a conversation:** **Export** on the Chat page (or `/export [PATH]` in
-  `qwn chat`) writes the conversation as Markdown, with its citations and source paths, for your
-  notes; **Rename** in the sidebar (or `/rename N TITLE`) gives a saved one a title of your own.
-- **Find a saved conversation:** type words from its title, a question or an answer in the
-  search box above the sidebar's list (or `/list TEXT` in `qwn chat`).
-- **Check a citation:** under an answer, **Open page** shows the cited page with the passage that
-  supports the answer outlined (approximate; found when you open it, which takes a few seconds).
-- **Supported files:** PDF, PNG, JPEG, WebP, Markdown and plain text. Export slides to PDF first.
-- **One process at a time:** only one qwn process can hold the models. Close the UI before running
-  `ingest`, `search`, `ask` or `eval` from the CLI.
+- **Export:** a Markdown file with the questions, answers, citations and source paths, but no
+  document text.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/page-dark.png">
+  <img alt="The Open page dialog: a bus timetable with the cell that supports the answer outlined" src="docs/images/page-light.png">
+</picture>
 
 ## How it works
 
@@ -64,8 +94,8 @@ uv run qwn eval review                        # turn 👍/👎 Chat ratings into
    merged, and a reranker keeps the best five.
 3. **Answer:** Qwen3-VL-8B reads the page images and text and answers, citing each source.
 4. **Check:** Qwen3Guard screens the question and the answer.
-5. **Highlight:** when you open a cited page, Qwen3-VL-8B finds where on it the answer is
-   supported, and the page is shown with that passage outlined.
+5. **Highlight:** when you open a cited page, Qwen3-VL-8B finds the supporting passage and
+   outlines it.
 6. **Voice (optional):** Silero VAD trims silence and rejects empty recordings, Qwen3-ASR
    transcribes the question, and Qwen3-TTS reads the answer aloud.
 
