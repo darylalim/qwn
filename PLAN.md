@@ -118,7 +118,11 @@ sidebar's 1 s status timer never stopped. It now stops when the load ends. No re
 and rename conversations and the chat box warm-load fix. No reindex: an index from v0.11.0
 works as is.
 
-**Open follow-ups:** none.
+**Open follow-ups:** search saved conversations (planned 2026-10-26: CLI → Search saved
+conversations; implement on `followup/search-conversations`). A search box above the Chat
+page's saved list and `/list TEXT` in `qwn chat` find saved conversations by words in their
+title, questions or answers (plain matching, no models). A cost gate comes first: searching 200
+conversations must take under 0.3 s. No reindex, no eval run.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -160,6 +164,10 @@ works as is.
 15. **Export and rename follow-up:** CLI → Export and rename conversations, Saved conversations
     (incl. its results and implementation notes) and `qwn chat`; Streamlit UI (Chat, Responsive
     layout); Storage layout; Runtime robustness → Logging; Security → Prompt injection.
+16. **Search saved conversations follow-up:** CLI → Search saved conversations, Export and
+    rename conversations (incl. its implementation notes: the rename callback) and Saved
+    conversations; `qwn chat`; Streamlit UI (Chat, Responsive layout); Runtime robustness →
+    Logging.
 
 **Workflow for each phase:**
 
@@ -729,6 +737,8 @@ qwn chat --open N|ID        # follow-up (done 2026-10-26): reopen a saved conver
                             # /save, /list, /open, /delete in the REPL; see Saved conversations
                             # done 2026-10-26: /export [PATH], /rename N|ID TITLE; see
                             # Export and rename conversations
+                            # planned 2026-10-26: /list TEXT; see Search saved
+                            # conversations
 ```
 
 Common flags override settings (`--top-k`, `--rerank-k`, `--max-images`, `--config PATH`).
@@ -1453,7 +1463,7 @@ either title. The sentinel log test covers export and rename.
 **Out of scope:** other export formats (PDF, HTML, JSON, `.docx`); exporting page images or
 source excerpts; exporting from `qwn ask`; a `qwn chat --export` flag or a `qwn conversations`
 command group; exporting several conversations at once; renaming before the first save;
-searching conversations; autosave.
+searching conversations (planned 2026-10-26 as its own follow-up, below); autosave.
 
 **Export and rename results (2026-10-26, M2 Max):**
 
@@ -1505,6 +1515,124 @@ searching conversations; autosave.
   (still disabled after 8 minutes); asked 20 s later, after the warm load, it's enabled at once.
   The same script on `main` (`git stash -u`) shows it, so it predates this change. Fixed in the
   next follow-up (Streamlit UI → Sidebar status timer).
+
+### Search saved conversations (follow-up, planned 2026-10-26)
+
+**Why:** saved conversations are found only by scrolling the list, most recent first, by title.
+Once there are a few dozen, the one where an answer said "214.6", or that asked about vessels,
+is hard to find again: titles are the first question (or your own), and Streamlit's selectbox
+filters on that label only. Search finds a saved conversation by any word in its title, its
+questions or its answers. **No change to retrieval, prompts, the rewrite, Guard, `Answerer` or
+the file format.** One follow-up PR (branch `followup/search-conversations`), no version bump.
+
+**Decisions (agreed 2026-10-26):**
+
+- **Words, not meaning.** A search is plain text matching in `qwn.conversations` (stdlib only):
+  no embedder, no models, no SQLite. `qwn chat` can search before the models load, and nothing
+  new is stored. Semantic search would need the ~13 GB models loaded just to list conversations
+  and stored vectors for each one.
+- **What's searched:** the title, every question, every `Searched for` rewrite
+  (`Response.standalone`) and every answer as shown (`Response.rendered()`, so the citations read
+  `[file p.N]` and a document's file name finds the conversations that cite it). Not searched:
+  the text of the sources (it isn't part of the conversation on screen, and a common page would
+  match every conversation that cites it), source paths beyond the cited file names, Guard
+  messages, and a blocked exchange's answer (it isn't shown).
+- **Both surfaces, one core:** a search box above the Chat page's saved-conversations list, and
+  `/list TEXT` in `qwn chat`. Neither has matching code of its own.
+- **Order doesn't change:** matches are listed most recently saved first, as `/list` and the
+  sidebar are today. No ranking.
+
+**Module `qwn.conversations`:**
+
+- `terms(query) -> list[str]`: `printable(query)`, NFKC-normalised and `casefold`ed, split on
+  whitespace. An empty or blank query has no terms.
+- `matches(conversation, terms) -> bool`, pure: true when **every** term is a substring of the
+  conversation's searchable text (above, normalised the same way). Terms may match in different
+  exchanges: "revenue vessels" finds the conversation that asked about each in turn. Substrings,
+  so "rev" finds "revenue" and "214.6" finds the answer that says it. No terms: true.
+- `Store.search(query) -> list[tuple[int, Summary]]`: each saved conversation that matches, with
+  its 1-based number in `list()` order (so `/open N` still means what `/list` showed), most
+  recently saved first. Each file is read once, as `list()` reads it today; unreadable files are
+  left out and logged by name as in `list()`. A blank query returns every conversation.
+- **Cost gate:** the sidebar lists (and now searches) on every rerun. Before building the UI,
+  time `Store.search` on 200 generated conversations of 10 exchanges each (fakes' `Response`s,
+  answers of ~600 characters) on the M2 Max. **Over 0.3 s: stop and ask** (the proposal would be
+  a cache of parsed conversations keyed on each file's `mtime_ns` and size). Record the number in
+  the results.
+
+**Chat page:**
+
+- **Search box** above the Saved conversations selectbox, shown once anything is saved: an
+  `st.text_input` (`key="saved_search"`, label "Search saved conversations", collapsed, placeholder
+  "Words from a title, question or answer", `icon=":material/search:"`). The selectbox offers only
+  the matches. With a search typed, a caption under the box says "3 of 12 match". No match:
+  ":material/search_off: No saved conversation matches." and no selectbox or buttons. Clearing
+  the box shows all again.
+- **The pick follows the search.** The search box's `on_change` callback (it runs before the
+  widgets are drawn) clears `saved_pick` when the picked conversation no longer matches, so the
+  selectbox is never given a value it doesn't offer. `rename_saved` sets `saved_pick` to the
+  renamed conversation only if it still matches the search, and clears it otherwise.
+- The search text lives in session state only: it isn't saved, logged or put in the URL. Open,
+  Rename and Delete keep it; "New conversation" keeps it too (it's about the list, not the
+  conversation).
+- Layout checked at every Responsive layout width, light and dark, with a search that matches
+  some, and with one that matches none.
+
+**`qwn chat`:**
+
+| Command | Does |
+|---|---|
+| `/list [TEXT…]` | No TEXT: as today. With TEXT (the rest of the line, read raw as `/rename` does, so "Bob's" works): only the matches, each with its `/list` number, in the same row format, then "3 of 12 saved conversations match." None: "No saved conversation matches *text*." (through `printable`) |
+
+- `/open N` and `/delete N` keep using `/list` numbers, which a search shows unchanged, so a
+  search never renumbers what you then open or delete.
+- `/help` shows `/list [TEXT]` with "saved conversations, most recent first; TEXT: only those
+  with these words".
+
+**Logging:** `Store.search` logs at DEBUG the number of terms, matches, conversations and
+seconds, never the query, titles or matched text. The sidebar searches on every rerun, so nothing
+at INFO. The sentinel log test covers a search.
+
+**Tests (with the code, fakes only):**
+
+- `terms`: blank → none; case, NFKC (full-width digits) and control characters.
+- `matches`: by title, question, `standalone` and answer text; a cited file name through
+  `rendered()`; terms split across exchanges; every term required; a blocked exchange's text
+  and a source's text don't match; no terms matches.
+- `Store.search`: numbers equal `list()` positions with a non-matching conversation between
+  matches; a blank query returns all; an unreadable file is left out.
+- AppTest (Chat): typing a search narrows the selectbox and shows "N of M match"; no match hides
+  the selectbox and buttons; a pick that the search filters out is cleared; renaming the picked
+  conversation to a title that no longer matches (its questions don't either) clears the pick;
+  Open after a search restores the conversation as today.
+- CLI (`CliRunner` with `input=`): `/list revenue` shows the matching rows with their `/list`
+  numbers and the count line; `/open N` with a number from a search opens that conversation;
+  no match; `/list Bob's` (an apostrophe); control characters in the search text aren't echoed.
+- Log sentinel: no search text, title or answer text in the log after a sidebar search and
+  `/list TEXT`.
+
+**Done when:**
+
+1. Fast tests, ruff, ty and the slow tests pass.
+2. **No eval run.** `Answerer`, the prompts, the rewrite and retrieval don't change, so no
+   baseline can move.
+3. **Cost gate** measured and under 0.3 s (above), recorded in the results.
+4. **Checked by hand in the browser** (`qwn ui` on the hard corpus, `QWN_DATA_DIR` and
+   `QWN_INDEX_DIR` as in Commands): save the Multi-turn results conversation (2024 revenue → "And
+   in 2025?" → vessels that year) and one other (a different hard-corpus question). Search
+   "vessels" (a question), "214.6" (an answer), the 2024 report's file name (a citation) and a
+   word in neither: each lists what it should. Pick one, then search it away: the pick clears.
+   Open a match. Checked at the Responsive layout widths. Remove the saved conversations after.
+5. **Checked by hand in the terminal** with real models on the same corpus, through a
+   pseudo-terminal: two saved conversations, `/list 214.6` shows one with its `/list` number,
+   `/open` that number opens it, `/list` of a word in neither says none match.
+6. PLAN.md updated in the same PR: this section (results under it), Start here, CLI listing,
+   Streamlit UI → Chat. README: one line on search.
+
+**Out of scope:** semantic search (the embedder) or a full-text index (SQLite FTS) for
+conversations; ranking matches; quoted phrases, `OR`, `-word` or fuzzy matching; showing or
+highlighting where a conversation matched; searching source text; searching from `qwn ask` or
+`qwn chat --open`; a `qwn conversations` command group; saving searches; autosave.
 
 ## Streamlit UI (`src/qwn/ui/`)
 
