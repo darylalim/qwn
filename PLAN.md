@@ -110,9 +110,12 @@ chat` writes the conversation on screen with its citations and source paths, no 
 Rename in the sidebar or `/rename N|ID TITLE` gives a saved conversation a title of your own,
 and saving again keeps it. No reindex. Unreleased: the first change since v0.11.0.
 
-**Open follow-ups:** none planned. A pre-existing Chat page bug, found during this follow-up's
-browser check and present on `main` too, needs a decision: a question sent while the warm load
-is still running leaves `st.chat_input` disabled after its answer (Export and rename results).
+The chat box warm-load fix is done (Streamlit UI → Sidebar status timer): a question sent while
+the models were still loading left `st.chat_input` disabled after its answer, because the
+sidebar's 1 s status timer never stopped. It now stops when the load ends. No reindex.
+Unreleased.
+
+**Open follow-ups:** none planned.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -1262,7 +1265,8 @@ beside them already holds the document text in the clear; FileVault covers the d
     1024 px), and the "Saved …" caption has its own `st.empty` slot below. Nesting a horizontal
     container inside `slot.container()` left `st.chat_input` disabled after an answer given while
     the models were still warm-loading (reproduced in the browser; not on `main`); the flat slot
-    doesn't.
+    doesn't. The same symptom came back with the flat slot: its cause was the sidebar's status
+    timer (Streamlit UI → Sidebar status timer), so the nesting may not have been the cause.
   - In a browser test, the sidebar's selectbox arrow is also a button named "Open": find the
     Open button by its text (`locator("button").filter(has_text="Open")`). AppTest can't show
     this, so `tests/ui/test_responsive.py` reopens a saved conversation in Chrome.
@@ -1496,7 +1500,8 @@ searching conversations; autosave.
 - **Found on `main`, not fixed here:** a question sent while the warm load is still running
   (asked as soon as a fresh `qwn ui` page loads) leaves `st.chat_input` disabled after its answer
   (still disabled after 8 minutes); asked 20 s later, after the warm load, it's enabled at once.
-  The same script on `main` (`git stash -u`) shows it, so it predates this change.
+  The same script on `main` (`git stash -u`) shows it, so it predates this change. Fixed in the
+  next follow-up (Streamlit UI → Sidebar status timer).
 
 ## Streamlit UI (`src/qwn/ui/`)
 
@@ -1515,6 +1520,25 @@ injection point) and `ui/sources.py` (source cards and the "Open page" dialog). 
   already escapes HTML. Document text in the dialog (text sources) is shown with `st.text`.
 - **Chat stages** come from `Answerer.ask(on_stage=...)`, called as each stage starts; the label
   becomes "Waiting for the model…" while the MLX lock is held or the warm load is still running.
+- **Sidebar status timer** *(follow-up, 2026-10-26)*: the sidebar's status line is an
+  `st.fragment` that reruns every second while the models load (`run_every="1s"`), to count the
+  loaded models. Streamlit reads `run_every` only on a full run, and a fragment rerun doesn't
+  read it again. A question sent during the warm load is a full run with the timer on; no full
+  run followed it, so the fragment kept rerunning every second for good, and `st.chat_input`
+  (`submit_mode="disable"`) stayed disabled after the answer. On its first tick after the load
+  ends (ready or failed), the fragment now calls `st.rerun()`, which reruns the page with the
+  timer off. A page opened during the load and left alone had the same endless timer, without a
+  visible symptom; it stops too.
+  - **Results (2026-10-26, M2 Max, hard corpus, real models):** asked as soon as the page
+    loaded, answer in 39 s. Without the fix, the box was still disabled 480 s later and the
+    browser sent a message every second; with it, the box was enabled with the answer and the
+    browser sent nothing more. The answer and its source card stay after the rerun. With the
+    timer removed outright (an experiment), the box was enabled too: the timer is the cause.
+  - **Test:** the fake app takes `QWN_FAKE_WARM_SECONDS` and `QWN_FAKE_ANSWER_SECONDS` (a slow
+    warm load and answer), and a Chrome test in `tests/ui/test_responsive.py` asks during the
+    load, checks that the browser stops sending timer ticks once the models are ready, and sends
+    a follow-up. Fakes never left the box disabled, even with real-model timings (60 s load, 25 s
+    answer): the test checks the cause, the timer, which fails without the fix.
 - **System sliders and toggles apply through `on_change` callbacks**, so the sidebar's Guard line
   (drawn before the page) is current on the same rerun. Memory metrics put the unit in the label
   ("Active (GB)"), since "12.4 GB" truncates in `st.columns(4)` at 1024 px.

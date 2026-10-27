@@ -26,10 +26,19 @@ page = st.navigation(
 )
 
 
-@st.fragment(run_every="1s" if svc.warm.state == "loading" else None)
+loading = svc.warm.state == "loading"
+
+
+@st.fragment(run_every="1s" if loading else None)
 def status_line() -> None:
-    """The sidebar's one status line: model loading, then Guard on/off."""
+    """The sidebar's one status line: model loading, then Guard on/off.
+
+    `run_every` is read only on a full run, so the first tick after the load ends reruns the
+    page to stop the timer: left running, it kept `st.chat_input` disabled after an answer
+    given during the warm load."""
     warm = svc.warm
+    if loading and warm.state != "loading":
+        st.rerun()
     if warm.state == "loading":
         st.caption(f":material/hourglass_top: Loading models ({warm.done}/{warm.total})…")
     elif warm.state == "failed":

@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import expect
 
 pytestmark = pytest.mark.slow
 
@@ -32,6 +33,7 @@ READY = {  # wait for a page-specific element, not a fixed delay
 CHAT_MAX_PX = 736
 QUESTION = "How much did revenue grow?"
 FOLLOW_UP = "And in 2025?"
+WARM_SECONDS = 12
 
 
 def _free_port() -> int:
@@ -40,10 +42,8 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-@pytest.fixture(scope="module")
-def server(tmp_path_factory, corpus_index):
-    _docs, index_dir = corpus_index
-    home = tmp_path_factory.mktemp("ui-home")
+def _serve(home: Path, index_dir: Path, **env: str):
+    """Start the fake app on a free port with its own QWN_HOME; yield its URL, then stop it."""
     (home / "qwn.example.toml").write_text("")
     shutil.copytree(index_dir, home / "index")
     port = _free_port()
@@ -52,6 +52,7 @@ def server(tmp_path_factory, corpus_index):
         "QWN_HOME": str(home),
         "QWN_LOG_DIR": str(home / "logs"),
         "HF_HUB_OFFLINE": "1",
+        **env,
     }
     proc = subprocess.Popen(
         [
@@ -86,6 +87,20 @@ def server(tmp_path_factory, corpus_index):
     yield url
     proc.terminate()
     proc.wait(10)
+
+
+@pytest.fixture(scope="module")
+def server(tmp_path_factory, corpus_index):
+    yield from _serve(tmp_path_factory.mktemp("ui-home"), corpus_index[1])
+
+
+@pytest.fixture
+def warming_server(tmp_path_factory, corpus_index):
+    """A fresh server whose warm load takes WARM_SECONDS: the models load once per process."""
+    home = tmp_path_factory.mktemp("ui-home-warm")
+    yield from _serve(
+        home, corpus_index[1], QWN_FAKE_WARM_SECONDS=str(WARM_SECONDS), QWN_FAKE_ANSWER_SECONDS="10"
+    )
 
 
 @pytest.fixture(scope="module")
@@ -216,5 +231,35 @@ def test_export_downloads_and_rename_lands_in_the_sidebar(server, browser, tmp_p
         page.get_by_role("option").first.wait_for(timeout=5_000)
         options = page.get_by_role("option").all_inner_texts()
         assert any(o.startswith("Renamed in the browser · ") for o in options), options
+    finally:
+        context.close()
+
+
+def test_a_question_during_the_warm_load_leaves_the_chat_box_usable(warming_server, browser):
+    """Ask as soon as the page loads, while the models are still loading. The sidebar's 1 s
+    status timer must stop once they're ready: left running, it kept the chat box disabled
+    after the answer with real models (the fakes are too quick to show that part)."""
+    context = browser.new_context(viewport={"width": 1512, "height": HEIGHT})
+    page = context.new_page()
+    sent = []  # the browser's messages: a timer tick sends one a second
+    page.on("websocket", lambda ws: ws.on("framesent", lambda f: sent.append(f)))
+    try:
+        page.goto(warming_server)
+        box = page.locator('[data-testid="stChatInput"] textarea')
+        box.wait_for(timeout=20_000)
+        box.fill(QUESTION)
+        box.press("Enter")
+        page.get_by_role("button", name="Open page").first.wait_for(
+            timeout=(WARM_SECONDS + 20) * 1000
+        )
+        page.get_by_text("Guard on").wait_for(timeout=10_000)  # the warm load has finished
+        page.wait_for_timeout(2000)  # the last tick's rerun lands
+        before = len(sent)
+        page.wait_for_timeout(3000)
+        assert len(sent) == before, f"the status timer still ticks: {len(sent) - before} in 3 s"
+        expect(box).to_be_enabled(timeout=10_000)
+        box.fill(FOLLOW_UP)
+        box.press("Enter")
+        page.get_by_text("Searched for:").wait_for(timeout=20_000)
     finally:
         context.close()
