@@ -124,6 +124,9 @@ saved conversations by words in their title, questions or answers (plain substri
 models); `/list` numbers don't change in a search. Searching 200 conversations takes 0.21 s
 (gate 0.3 s). No reindex.
 
+**Released as v0.13.0** (2026-10-27): every follow-up above since v0.12.0 (Versioning): search
+saved conversations. No reindex: an index from v0.12.0 works as is.
+
 **Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
@@ -4803,6 +4806,7 @@ job.
   `0.11.0` releases the prefill reuse, source order reuse and source order sensitivity probes
   (no code) and saved conversations (no reindex).
   `0.12.0` releases export and rename conversations and the chat box warm-load fix (no reindex).
+  `0.13.0` releases search saved conversations (no reindex).
 - **Flow:** bump on the phase branch → PR (CI) → merge to `main` → `release.yml` → tag `vX.Y.Z` +
   GitHub Release.
 - **Note:** `0.1.0` has no tag, so the **first** merge to `main` that touches `pyproject.toml`
