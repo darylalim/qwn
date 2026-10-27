@@ -489,7 +489,7 @@ CHAT_HELP = """Commands:
   /history            what the next follow-up is rewritten with
   /save               save this conversation (in the index folder; nothing is saved otherwise)
   /export [PATH]      write this conversation as Markdown (here, or in or to PATH)
-  /list               saved conversations, most recent first
+  /list [TEXT]        saved conversations, most recent first; TEXT: only those with these words
   /open N|ID          open a saved conversation (its number in /list, or its id)
   /rename N|ID TITLE  give a saved conversation a title of your own
   /delete N|ID        delete a saved conversation
@@ -644,9 +644,14 @@ class _Chat:
 
         from qwn.retrieve import EmptyScope
 
-        if line.split(maxsplit=1)[0] == "/rename":  # the title is free text: "Bob's notes"
+        first, rest = [*line.split(maxsplit=1), ""][:2]
+        if first == "/rename":  # the title is free text: "Bob's notes"
             self.warned = None
             self.rename(line)
+            return None
+        if first == "/list":  # so is a search: "Bob's"
+            self.warned = None
+            self.list_saved(rest)
             return None
         try:
             name, *args = shlex.split(line)
@@ -677,8 +682,6 @@ class _Chat:
             self.save()
         elif name == "/export":
             self.export(args[0] if args else None)
-        elif name == "/list":
-            self.list_saved()
         elif name == "/open":
             self.open_ref(args[0])
         elif name == "/delete":
@@ -855,15 +858,23 @@ class _Chat:
         end = "" if renamed.title.endswith((".", "?", "!", "…")) else "."
         typer.echo(_plain(f"Renamed to {renamed.title}{end}"))
 
-    def list_saved(self) -> None:
+    def list_saved(self, text: str = "") -> None:
+        """/list [TEXT…]: every saved conversation, or only those with these words, each with
+        its /list number (a search never renumbers what /open N then opens)."""
         from qwn.conversations import saved_when
 
-        summaries = self.store.list()
-        if not summaries:
+        found, total = self.store.search(text)
+        if not total:
             typer.echo("No saved conversations.")
-        for i, s in enumerate(summaries, start=1):
+            return
+        if not found:
+            typer.echo(f"No saved conversation matches {' '.join(_plain(text).split())}.")
+            return
+        for i, s in found:
             n = f"{s.exchanges} question{'s' if s.exchanges != 1 else ''}"
             typer.echo(_plain(f"{i:>3}  {s.id}  {saved_when(s.saved)}  {n}  {s.title}"))
+        if text.strip():
+            typer.echo(f"{len(found)} of {total} saved conversations match.")
 
     def open_ref(self, ref: str) -> None:
         from qwn.conversations import UnknownConversation

@@ -256,3 +256,74 @@ def test_renaming_the_open_conversation_then_saving_keeps_the_title(corpus_home,
     button(at, "Save").click().run()
     saved = store.load(summary.id)
     assert saved.title == "Mine" and len(saved.exchanges) == 2
+
+
+# Search (PLAN.md → CLI → Search saved conversations)
+
+SSO = "Which plan has single sign-on?"
+
+
+def two_saved(store: Store) -> tuple[str, str]:
+    """The revenue conversation and the sign-on one, saved in that order: ids (revenue, sso)."""
+    ids = []
+    for question in (REVENUE, SSO):
+        at = app()
+        at.chat_input[0].set_value(question).run()
+        button(at, "Save").click().run()
+        ids.append(at.session_state["saved"].id)
+    return ids[0], ids[1]
+
+
+def search(at, text: str):
+    at.text_input(key="saved_search").set_value(text).run()
+    assert not at.exception
+    return at
+
+
+def test_search_narrows_the_saved_list(corpus_home, generator, store):
+    revenue, sso = two_saved(store)
+    at = app()
+    assert "match" not in texts(at.sidebar.caption)  # nothing typed: no count
+    assert at.sidebar.selectbox[0].options and len(at.sidebar.selectbox[0].options) == 2
+    for text, expect in (("12 PERCENT", [revenue]), ("report.pdf", [revenue]), ("sign-on", [sso])):
+        search(at, text)
+        assert [o.split(" · ")[0] for o in at.sidebar.selectbox[0].options] == [
+            store.load(i).title for i in expect
+        ]
+        assert "1 of 2 match" in texts(at.sidebar.caption)
+    search(at, "zebra")
+    assert "No saved conversation matches." in texts(at.sidebar.caption)
+    assert not at.sidebar.selectbox and not any(b.label == "Open" for b in at.button)
+    search(at, "")
+    assert len(at.sidebar.selectbox[0].options) == 2 and "match" not in texts(at.sidebar.caption)
+
+
+def test_a_pick_the_search_filters_out_is_cleared(corpus_home, generator, store):
+    revenue, _ = two_saved(store)
+    at = app()
+    at.sidebar.selectbox[0].select(revenue).run()
+    search(at, "percent")
+    assert at.sidebar.selectbox[0].value == revenue  # still matches: kept
+    search(at, "sign-on")
+    assert at.session_state["saved_pick"] is None and at.sidebar.selectbox[0].value is None
+    assert button(at, "Open").disabled
+
+
+def test_renaming_the_pick_out_of_the_search_clears_it(corpus_home, generator, store):
+    revenue, _ = two_saved(store)
+    store.rename(revenue, "Zebra notes")
+    at = search(app(), "zebra")  # only the title matches
+    at.sidebar.selectbox[0].select(revenue).run()
+    rename_to(at, "Mine")
+    assert store.load(revenue).title == "Mine"
+    assert at.session_state["saved_pick"] is None
+    assert "No saved conversation matches." in texts(at.sidebar.caption)
+
+
+def test_open_after_a_search_restores_the_conversation(corpus_home, generator, store):
+    _, sso = two_saved(store)
+    at = search(app(), "sign-on")
+    at = open_saved(at, sso)
+    assert [m["role"] for m in at.session_state["messages"]] == ["user", "assistant"]
+    assert at.session_state["messages"][0]["content"] == SSO
+    assert at.text_input(key="saved_search").value == "sign-on"  # the search stays

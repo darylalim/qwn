@@ -118,11 +118,13 @@ sidebar's 1 s status timer never stopped. It now stops when the load ends. No re
 and rename conversations and the chat box warm-load fix. No reindex: an index from v0.11.0
 works as is.
 
-**Open follow-ups:** search saved conversations (planned 2026-10-26: CLI → Search saved
-conversations; implement on `followup/search-conversations`). A search box above the Chat
-page's saved list and `/list TEXT` in `qwn chat` find saved conversations by words in their
-title, questions or answers (plain matching, no models). A cost gate comes first: searching 200
-conversations must take under 0.3 s. No reindex, no eval run.
+The search saved conversations follow-up is done (CLI → Search saved conversations, results
+under it): a search box above the Chat page's saved list and `/list TEXT` in `qwn chat` find
+saved conversations by words in their title, questions or answers (plain substring matching, no
+models); `/list` numbers don't change in a search. Searching 200 conversations takes 0.21 s
+(gate 0.3 s). No reindex.
+
+**Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -737,7 +739,7 @@ qwn chat --open N|ID        # follow-up (done 2026-10-26): reopen a saved conver
                             # /save, /list, /open, /delete in the REPL; see Saved conversations
                             # done 2026-10-26: /export [PATH], /rename N|ID TITLE; see
                             # Export and rename conversations
-                            # planned 2026-10-26: /list TEXT; see Search saved
+                            # done 2026-10-27: /list TEXT; see Search saved
                             # conversations
 ```
 
@@ -1173,7 +1175,7 @@ prompts, the rewrite, Guard or `Answerer`.** One follow-up PR (branch
 | Command | Does |
 |---|---|
 | `/save` | Saves the conversation (exchanges with a `Response`, blocks included). Prints "Saved as *id*: *title* (N questions)." Before any answer: "Nothing to save yet." |
-| `/list` | Saved conversations, most recent first: `  1  a1b2c3d4e5f6  2026-10-26 14:02  4 questions  What was total revenue in 2024?`. "No saved conversations." when empty |
+| `/list [TEXT…]` | Saved conversations, most recent first: `  1  a1b2c3d4e5f6  2026-10-26 14:02  4 questions  What was total revenue in 2024?`. "No saved conversations." when empty. With TEXT, only the matches, with their `/list` numbers (Search saved conversations) |
 | `/open N\|ID` | Opens one by its number in `/list` order (most recent first) or its id. It replaces the history and the scope, then prints the scope line and the last exchange (its question, then the answer as `_print_response` prints it) so you see where you left off. `/history` shows the rest |
 | `/delete N\|ID` | Deletes one. Prints "Deleted *title*." No confirmation: the REPL has no undo for `/new` either, and you name the conversation explicitly |
 
@@ -1550,10 +1552,13 @@ the file format.** One follow-up PR (branch `followup/search-conversations`), no
   conversation's searchable text (above, normalised the same way). Terms may match in different
   exchanges: "revenue vessels" finds the conversation that asked about each in turn. Substrings,
   so "rev" finds "revenue" and "214.6" finds the answer that says it. No terms: true.
-- `Store.search(query) -> list[tuple[int, Summary]]`: each saved conversation that matches, with
-  its 1-based number in `list()` order (so `/open N` still means what `/list` showed), most
-  recently saved first. Each file is read once, as `list()` reads it today; unreadable files are
-  left out and logged by name as in `list()`. A blank query returns every conversation.
+- `Store.search(query) -> tuple[list[tuple[int, Summary]], int]`: each saved conversation that
+  matches, with its 1-based number in `list()` order (so `/open N` still means what `/list`
+  showed), most recently saved first, and how many saved conversations there are in all (for "3
+  of 12"). Each file is read once, as `list()` reads it today; unreadable files are left out and
+  logged by name as in `list()`. A blank query returns every conversation. *(Changed 2026-10-27
+  while building: the plan returned the matches only, but both surfaces show "N of M", and a
+  second `list()` for M read every file twice, ~0.38 s on the gate's 200, over its 0.3 s.)*
 - **Cost gate:** the sidebar lists (and now searches) on every rerun. Before building the UI,
   time `Store.search` on 200 generated conversations of 10 exchanges each (fakes' `Response`s,
   answers of ~600 characters) on the M2 Max. **Over 0.3 s: stop and ask** (the proposal would be
@@ -1628,6 +1633,40 @@ at INFO. The sentinel log test covers a search.
    `/open` that number opens it, `/list` of a word in neither says none match.
 6. PLAN.md updated in the same PR: this section (results under it), Start here, CLI listing,
    Streamlit UI → Chat. README: one line on search.
+
+**Search saved conversations results (2026-10-27, M2 Max):**
+
+- **Cost gate passed:** `Store.search` on 200 generated conversations of 10 exchanges each
+  (5 sources per answer, answers ~600 characters, 84 KB per file) took 0.21 s median, 0.22 s at
+  worst over 7 runs each of a blank, a matching, a three-word and a non-matching query, against
+  0.3 s. `list()` alone took 0.16 s: reading the files is most of it, the matching ~0.05 s. No
+  cache.
+- Fast tests 506 passed (`terms`, `matches`, `Store.search` in `tests/unit/test_conversations.py`;
+  the search cases in `tests/ui/test_saved_conversations.py` and
+  `tests/integration/test_chat_flow.py`), ruff and ty clean. The slow tests add the search box at
+  every Responsive layout width, light and dark (a search that matches some and one that matches
+  none, sidebar opened on narrow screens), and Chrome clearing a pick that a search filters out:
+  slow tests 84 passed. The older browser tests waited for `get_by_text("Saved ")`, which
+  Playwright matches case-insensitively, so it found the search box's hidden label "Search saved
+  conversations" first; they now wait for "Saved HH:MM" (`SAVED`) and the exact "Saved
+  conversations" label. No eval run (Done when 2).
+- **The pick callback is a safeguard, not a fix, on Streamlit 1.65:** with `search_changed`
+  removed, both AppTest and Chrome cleared a selectbox value that the new options don't include
+  by themselves. It stays, as agreed, so the selectbox is never handed a value it doesn't offer;
+  it reads the files a second time only on a search's Enter.
+- **Browser check** (`qwn ui` on the hard corpus, real models, Playwright): saved 2024 revenue
+  → "And in 2025?" → "How many vessels did the company operate that year?" (37), and "Which port
+  does the server listen on?" (8443). "vessels" (a question), "214.6" (an answer) and
+  `annual-review-2024.pdf` (the first answer's citation) each listed only the revenue
+  conversation with "1 of 2 match"; "walrus" showed "No saved conversation matches." with no
+  list or buttons. Picking the revenue conversation, then searching "8443", emptied the box and
+  disabled Open. In a new session, a search for "vessels" then Open restored all three answers
+  and kept the search. No horizontal overflow at any Responsive layout width, light or dark.
+  The log had no search text, title or answer. The saved conversations were removed after.
+- **Terminal check** (pseudo-terminal, real models, the same two conversations): `/list 214.6`
+  showed `  2  …  3 questions  What was Halvorsen Marine's total revenue in 2024?` and "1 of 2
+  saved conversations match."; `/open 2` opened it (the last exchange reprinted, 37 vessels);
+  `/list walrus` said "No saved conversation matches walrus."
 
 **Out of scope:** semantic search (the embedder) or a full-text index (SQLite FTS) for
 conversations; ranking matches; quoted phrases, `OR`, `-word` or fuzzy matching; showing or
@@ -1730,6 +1769,9 @@ injection point) and `ui/sources.py` (source cards and the "Open page" dialog). 
   - **Export and rename** *(follow-up, done 2026-10-26)*: Export (a Markdown download of the
     conversation on screen) beside Save, and Rename beside Open and Delete in the sidebar; see
     CLI → Export and rename conversations.
+  - **Search** *(follow-up, done 2026-10-27)*: a search box above the sidebar's saved list
+    finds conversations by words in their title, questions or answers; see CLI → Search saved
+    conversations.
 - **State**: `st.session_state.messages`, `st.session_state.settings`. Single local user.
 
 ### Answer highlighting (phase 6)
