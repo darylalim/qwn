@@ -127,7 +127,10 @@ models); `/list` numbers don't change in a search. Searching 200 conversations t
 **Released as v0.13.0** (2026-10-27): every follow-up above since v0.12.0 (Versioning): search
 saved conversations. No reindex: an index from v0.12.0 works as is.
 
-**Open follow-ups:** none.
+**Open follow-ups:** autosave saved conversations (CLI → Autosave saved conversations, planned
+2026-10-27): once you save or open a conversation, each new answer is written to its file
+automatically; a conversation never saved still stays in memory. Implement on
+`followup/autosave`.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -173,6 +176,10 @@ saved conversations. No reindex: an index from v0.12.0 works as is.
     rename conversations (incl. its implementation notes: the rename callback) and Saved
     conversations; `qwn chat`; Streamlit UI (Chat, Responsive layout); Runtime robustness →
     Logging.
+17. **Autosave follow-up:** CLI → Autosave saved conversations, Saved conversations (Decisions
+    and implementation notes: the button row, `make`), Export and rename conversations (rename
+    of the open conversation) and `qwn chat`; Streamlit UI (Chat, Responsive layout); Storage
+    layout; Runtime robustness → Logging.
 
 **Workflow for each phase:**
 
@@ -1521,7 +1528,7 @@ searching conversations (planned 2026-10-26 as its own follow-up, below); autosa
   The same script on `main` (`git stash -u`) shows it, so it predates this change. Fixed in the
   next follow-up (Streamlit UI → Sidebar status timer).
 
-### Search saved conversations (follow-up, planned 2026-10-26)
+### Search saved conversations (follow-up, planned 2026-10-26, done 2026-10-27)
 
 **Why:** saved conversations are found only by scrolling the list, most recent first, by title.
 Once there are a few dozen, the one where an answer said "214.6", or that asked about vessels,
@@ -1674,7 +1681,155 @@ at INFO. The sentinel log test covers a search.
 **Out of scope:** semantic search (the embedder) or a full-text index (SQLite FTS) for
 conversations; ranking matches; quoted phrases, `OR`, `-word` or fuzzy matching; showing or
 highlighting where a conversation matched; searching source text; searching from `qwn ask` or
-`qwn chat --open`; a `qwn conversations` command group; saving searches; autosave.
+`qwn chat --open`; a `qwn conversations` command group; saving searches; autosave (planned
+2026-10-27 as its own follow-up, below).
+
+### Autosave saved conversations (follow-up, planned 2026-10-27)
+
+**Why:** a saved conversation goes stale as soon as you ask another question. The Chat page's
+caption says "2 newer exchanges not saved" until you press Save again, and `qwn chat` stops
+`/quit`, `/new` and `/open` to ask whether to throw those exchanges away. Closing the browser tab
+or restarting `qwn ui` loses them without asking. Reopening an old conversation to ask one more
+question has the same problem. Autosave keeps a conversation you chose to keep up to date.
+**No change to retrieval, prompts, the rewrite, Guard, `Answerer` or the file format.** One
+follow-up PR (branch `followup/autosave`), no version bump.
+
+**Decisions (agreed 2026-10-27):**
+
+- **Only conversations you've saved autosave.** Once you Save (`/save`) or Open (`/open`,
+  `--open`) a conversation, each new exchange a save would keep (an answer, blocked ones
+  included; never an error) is written to its file as soon as the answer is shown. A
+  conversation you never saved stays in memory and is lost on exit, as today: **no question
+  reaches disk until you first ask for it**, so the privacy default in Saved conversations →
+  Decisions holds. It now means "saving starts when you ask", not "each save is a click".
+  No setting: autosaving every conversation is out of scope.
+- **A reopened conversation carries on in its file.** A follow-up asked after Open is written
+  to the same file and moves it to the top of the list (`saved` changes). "New conversation"
+  (`/new`) starts a separate one in memory. Deleting the open conversation stops its autosave and
+  leaves it on screen as unsaved, as today.
+- **Autosave never loses an exchange written elsewhere.** Two browser tabs on one `qwn ui` can
+  have the same conversation open (`qwn chat` and `qwn ui` can't both run: the model lock). Before
+  each write the file is read again (below). A conversation deleted elsewhere isn't recreated, and
+  one that has moved on elsewhere is saved as a copy instead of being overwritten.
+
+**Module `qwn.conversations`:**
+
+- `Store.autosave(conversation) -> Autosaved`, used by both surfaces after each new exchange
+  in a saved conversation. It reads the file strictly first (`_read`), then:
+  - **`saved`:** the file's exchange ids are a prefix of `conversation`'s (the usual case):
+    write it through `save` with the **file's** title, so a rename made in another tab is kept.
+  - **`copied`:** the file's exchange ids aren't a prefix (another tab added an exchange to the
+    same conversation): write `conversation` as a new conversation (`make(exchanges)` with a new
+    id, today's `created`, and the file's title), so neither tab's exchanges are lost. The open
+    conversation is the copy from then on.
+  - **`gone`:** no file (deleted in another tab): write nothing.
+  - **`unreadable`:** the file can't be read (`UnknownConversation`, e.g. a hand edit): write
+    nothing, so a file qwn doesn't understand is never overwritten. Logged by name, as `list`
+    does.
+  - `Autosaved(state, conversation: Conversation | None)`, frozen: the conversation as written
+    (`saved`, `copied`), else `None`. An `OSError` on write propagates, as `save`'s does.
+- `save` and `make` are unchanged. The explicit Save/`/save` path stays as it is (it overwrites
+  the open conversation's file with what's on screen, as today).
+- **Cost:** one extra read of one file per answer (~1 ms for the 84 KB files of the search gate),
+  against a ~20 s answer. No gate.
+
+**Chat page:**
+
+- **After an answer** (in the `if question:` block, after the assistant message is appended), if
+  `st.session_state.saved` isn't `None` and the new message has a `response`, call
+  `store.autosave(make(answered(), st.session_state.saved))` and act on its state:
+  - `saved`: `st.session_state.saved` takes the result.
+  - `copied`: the same, and `st.info(":material/content_copy: This conversation changed in
+    another window, so it was saved as a copy.")` under the answer, through `notice`.
+  - `gone`: `st.session_state.saved = None`, and the notice "This conversation was deleted in
+    another window. Save to keep it again."
+  - `unreadable`: `saved` is unchanged, so the caption counts the exchange as not saved, and the
+    error notice "Couldn't save to this conversation's file: see the log. Save to write a new
+    copy." Save then writes a new conversation (`make(answered())`, no previous), never the
+    unreadable file.
+  - `OSError`: as Save's error today ("Couldn't save the conversation: …"); `saved` unchanged.
+- **The Save button shows only when it would do something:** before the first save, or while
+  exchanges aren't saved (after a failed autosave). Otherwise the row is New conversation and
+  Export, and the caption says ":material/bookmark_added: Saved 14:02 · new answers are saved
+  automatically". After a failure it says, as today, "Saved 14:02 · 1 newer exchange not saved".
+  The row changes width, so it's checked at every Responsive layout width, light and dark, both
+  with and without Save.
+- Open, Rename, Delete, search and Export don't change. The sidebar's list shows the new saved
+  time and question count on the next rerun, which the answer already causes.
+
+**`qwn chat`:**
+
+- **After an answer** in a saved or opened conversation, the new exchange is autosaved through
+  `Store.autosave`. Success prints nothing (the REPL stays quiet between answers; `/list` shows
+  the time). The other states print one line after the answer: `copied` "This conversation
+  changed elsewhere, so it was saved as a copy: *id*.", `gone` "This conversation was deleted
+  elsewhere. /save to keep it again.", `unreadable` "Couldn't save to this conversation's file
+  (see the log). /save writes a new copy.", and an `OSError` "Couldn't save the conversation:
+  …" in red on stderr.
+- **`/save`** keeps its message the first time and adds "New answers are saved as you go." On a
+  conversation already saved with nothing new: "Already saved: new answers are saved as you go."
+  After a failed autosave it writes as today (a new copy for `unreadable`, as above).
+- **The "repeat to discard" prompt stays** for `/quit`, Ctrl-D, `/new` and `/open`, but now only
+  fires after a failed autosave (`unsaved()` is non-zero only then). A conversation never saved
+  is still discarded silently.
+- `/help`: `/save` reads "save this conversation; later answers are saved as you go (nothing is
+  saved otherwise)".
+- **Privacy:** `/save` (and opening a saved conversation) is still what starts writing questions
+  to disk, and `/export` the only thing that writes them outside the index.
+
+**Logging:** `Store.autosave` logs its state, the id(s), the exchange count and seconds at INFO
+(`conversation autosaved: id=… state=saved exchanges=4 seconds=0.004`), a copy with both ids,
+never titles, questions or answers. The sentinel log test covers each state.
+
+**Tests (with the code, fakes only):**
+
+- `Store.autosave`: `saved` (prefix) writes the new exchanges, updates `saved`, keeps the
+  file's title when the in-memory title differs (a rename elsewhere) and keeps `created`;
+  `copied` when the file has an exchange id ours lacks (the original file unchanged, a new file
+  with our exchanges, the file's title and a new id); `gone` writes nothing and creates no file;
+  `unreadable` (invalid JSON, an unknown `format`) leaves the file byte-identical.
+- AppTest (Chat): after Save, a second question is in the file without pressing Save, the
+  caption reads "…new answers are saved automatically" and there's no Save button; an error
+  exchange isn't written and doesn't show the button; a never-saved conversation writes no file
+  after several answers; Open then a follow-up writes it to the opened file; New conversation
+  after that, then a question, writes nothing; deleting the open conversation in the sidebar then
+  asking writes nothing. Two sessions on one store (two `AppTest`s): both open the same
+  conversation and each asks once, giving the original updated by the first and a copy holding
+  the second's exchanges, with the copy notice; deleting in one then asking in the other gives
+  `gone`'s notice and no file. An `OSError` from the store shows the error and the Save button,
+  and Save then writes.
+- CLI (`CliRunner` with `input=`): `/save`, a question, then the file holds both exchanges and
+  `/quit` doesn't ask; `--open <id>` then a question updates that file; `/new` then a question
+  writes nothing; a never-saved session writes no file; `/save` twice says "Already saved…";
+  `gone` and `unreadable` (the file deleted or corrupted between questions by the test through
+  the fake answerer) print their lines, and `/quit` then asks once.
+- Log sentinel: no question, answer or title in the log after an autosave of each state.
+
+**Done when:**
+
+1. Fast tests, ruff, ty and the slow tests pass.
+2. **No eval run.** `Answerer`, the prompts, the rewrite and retrieval don't change, so no
+   baseline can move.
+3. **Checked by hand in the browser** (`qwn ui` on the hard corpus, `QWN_DATA_DIR` and
+   `QWN_INDEX_DIR` as in Commands): 2024 revenue, Save, "And in 2025?": the caption says "new
+   answers are saved automatically" with no Save button; restart `qwn ui`, Open: both answers are
+   there. Ask "How many vessels did the company operate that year?" and restart again: three
+   answers. Two tabs with that conversation open, a question in each: the second shows the copy
+   notice and the sidebar lists both. A conversation never saved writes no file. Layout checked
+   at every Responsive layout width, light and dark, with and without Save. Remove the saved
+   conversations afterwards.
+4. **Checked by hand in the terminal** with real models on the same corpus, through a
+   pseudo-terminal: a question, `/save`, a second question, `/quit` (no prompt);
+   `qwn chat --open <id>` shows the second exchange; a third question, `/quit`; `/list` shows 3
+   questions. A session with no `/save` leaves no new file.
+5. PLAN.md updated in the same PR: this section (results under it), Start here, Saved
+   conversations → Decisions (a pointer to this section from "Saving is explicit"), CLI listing,
+   Storage layout (when files are written), Streamlit UI → Chat. README: one line on autosave.
+
+**Out of scope:** autosaving conversations you never saved, or a setting for it; autosaving
+failed exchanges; turning autosave off for one conversation; merging two tabs' exchanges into one
+file (a copy is made instead); version history or undo of a saved file; saving partial answers
+mid-stream; autosave in `qwn ask`.
 
 ## Streamlit UI (`src/qwn/ui/`)
 
