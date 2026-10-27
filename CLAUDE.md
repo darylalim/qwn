@@ -52,6 +52,8 @@ uv version --bump minor               # one minor release per completed phase (f
   `CliRunner` output includes stderr. Ruff rejects literal `›` (RUF001): write
   `"\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}"`. `FakeGenerator.rewrite` records every call
   with history, even when it returns the message unchanged.
+  In a class with a `list` method (`conversations.Store`), `list[...]` in an annotation after
+  `def list` is the method: a `TypeError` at import. Define such methods above it.
   `registry.generator()` (any role) is a `_Locked` wrapper: it forwards reads only, so setting
   a field on it is silently ignored, and it wraps anything callable (mlx-vlm's model and
   processor). To change an adapter field in a slow test or probe, use `registry.<role>()._inner`.
@@ -87,9 +89,13 @@ uv version --bump minor               # one minor release per completed phase (f
   AppTest can't show that a click lands in the browser, and it doesn't rerun a dialog: press the
   button that opens the dialog and the dialog's own button on the same run. In Playwright, a
   selectbox's arrow is a button named "Open": find your own buttons by text
-  (`locator("button").filter(has_text=…)`). Iterate on a browser bug with the fake server in
-  `tests/ui/test_responsive.py` (~15 s a try) before a real-model rerun (minutes); to tell your
-  bug from `main`'s, run the same script after `git stash -u`.
+  (`locator("button").filter(has_text=…)`). `get_by_text("Saved ")` is case-insensitive and
+  finds a collapsed label (still in the DOM): the search box's "Search saved conversations"
+  broke 13 waits. Wait on a regex or `exact=True` (`SAVED` in `tests/ui/test_responsive.py`).
+  Streamlit 1.65 drops a keyed selectbox value its new options lack, in AppTest and Chrome: a
+  test that a callback clears the pick passes without the callback. Iterate on a browser bug
+  with the fake server in `tests/ui/test_responsive.py` (~15 s a try) before a real-model rerun
+  (minutes); to tell your bug from `main`'s, run the same script after `git stash -u`.
   A real-model Playwright check: `STREAMLIT_SERVER_PORT` and `STREAMLIT_SERVER_HEADLESS=true` on
   `qwn ui`. The qwn log is in `qwn status`'s `logs:` folder: whether a callback ran shows there.
 - **Saved conversations** live in `index_dir/conversations/`: a check on an eval index leaves
