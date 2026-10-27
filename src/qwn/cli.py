@@ -487,7 +487,8 @@ CHAT_HELP = """Commands:
   /sources            every source the last answer was given, cited ones marked *
   /in PATH...         search only these files or folders (no PATH: everything); keeps the history
   /history            what the next follow-up is rewritten with
-  /save               save this conversation (in the index folder; nothing is saved otherwise)
+  /save               save this conversation; later answers are saved as you go
+                      (in the index folder; nothing is saved otherwise)
   /export [PATH]      write this conversation as Markdown (here, or in or to PATH)
   /list [TEXT]        saved conversations, most recent first; TEXT: only those with these words
   /open N|ID          open a saved conversation (its number in /list, or its id)
@@ -561,7 +562,9 @@ def chat(
 
 
 class _Chat:
-    """One `qwn chat` session: the scope and the completed exchanges, in memory until /save."""
+    """One `qwn chat` session: the scope and the completed exchanges, in memory until /save (or
+    /open); from then on each new answer is autosaved (PLAN.md → CLI → Autosave saved
+    conversations)."""
 
     def __init__(
         self,
@@ -581,6 +584,8 @@ class _Chat:
         self.exchanges: list[Exchange] = []
         self.last: Response | None = None  # for /sources: None before an answer, after a block
         self.saved: Conversation | None = None  # the conversation as last saved or opened
+        self.lost = False  # autosave found the file deleted elsewhere: these exchanges aren't saved
+        self.unreadable: str | None = None  # a file autosave couldn't read: /save never writes it
         self.warned: str | None = None  # the command just refused for unsaved exchanges
 
     def scope_line(self) -> str:
@@ -622,9 +627,12 @@ class _Chat:
             self.ask(line, warm)
 
     def unsaved(self) -> int:
-        """Exchanges newer than the last save of a saved (or opened) conversation. A conversation
-        never saved counts none: it is discarded silently, as saving is explicit."""
-        return len(self.exchanges) - len(self.saved.exchanges) if self.saved else 0
+        """Exchanges a failed autosave left off disk: newer than the last save, or all of them
+        when the file was deleted elsewhere. A conversation never saved counts none: it is
+        discarded silently, as saving starts only when you ask."""
+        if self.saved is None:
+            return len(self.exchanges) if self.lost else 0
+        return len(self.exchanges) - len(self.saved.exchanges)
 
     def may_discard(self, name: str) -> bool:
         """Whether `name` (/quit, /new, /open) may drop unsaved exchanges: it asks once, and
@@ -671,7 +679,7 @@ class _Chat:
         if name == "/help":
             typer.echo(CHAT_HELP)
         elif name == "/new":
-            self.exchanges, self.last, self.saved = [], None, None
+            self.exchanges, self.last, self.saved, self.lost = [], None, None, False
             typer.echo("New conversation.")
         elif name == "/sources":
             if self.last is None:
@@ -757,6 +765,34 @@ class _Chat:
         _print_response(response, all_sources=False)
         self.exchanges.append(Exchange(uuid.uuid4().hex[:12], question, response, self.searched()))
         self.last = response if response.blocked is None else None
+        self.autosave()
+
+    def autosave(self) -> None:
+        """Write the new exchange to the saved (or opened) conversation's file. Quiet when it
+        works; one line when the file moved on, went or can't be read elsewhere."""
+        from qwn.conversations import make
+
+        if self.saved is None:
+            return
+        try:
+            done = self.store.autosave(make(self.exchanges, self.saved))
+        except OSError as e:
+            typer.secho(f"Couldn't save the conversation: {e}", fg="red", err=True)
+            return
+        if done.conversation is not None:  # saved or copied
+            self.saved = done.conversation
+        if done.state == "copied":
+            typer.echo(
+                f"This conversation changed elsewhere, so it was saved as a copy: {self.saved.id}."
+            )
+        elif done.state == "gone":
+            self.saved, self.lost = None, True
+            typer.echo("This conversation was deleted elsewhere. /save to keep it again.")
+        elif done.state == "unreadable":
+            self.unreadable = self.saved.id
+            typer.echo(
+                "Couldn't save to this conversation's file (see the log). /save writes a new copy."
+            )
 
     def pairs(self) -> "list[tuple[str, Response]]":
         return [(e.question, e.response) for e in self.exchanges]
@@ -779,14 +815,22 @@ class _Chat:
         if not self.exchanges:
             typer.echo("Nothing to save yet.")
             return
+        if self.saved is not None and not self.unsaved():
+            typer.echo("Already saved: new answers are saved as you go.")
+            return
+        previous = self.saved if self.saved and self.saved.id != self.unreadable else None
         try:
-            self.saved = self.store.save(make(self.exchanges, self.saved))
+            self.saved = self.store.save(make(self.exchanges, previous))
         except OSError as e:
             typer.secho(f"Couldn't save the conversation: {e}", fg="red", err=True)
             return
+        self.lost = False
         n = len(self.saved.exchanges)
         title = _plain(self.saved.title)
-        typer.echo(f"Saved as {self.saved.id}: {title} ({n} question{'s' if n != 1 else ''}).")
+        typer.echo(
+            f"Saved as {self.saved.id}: {title} ({n} question{'s' if n != 1 else ''}). "
+            "New answers are saved as you go."
+        )
 
     def export(self, where: str | None) -> None:
         """Write the conversation as Markdown: to a file PATH (never over an existing one), or a
@@ -892,7 +936,7 @@ class _Chat:
         from qwn.retrieve import EmptyScope
 
         self.exchanges = list(conversation.exchanges)
-        self.saved = conversation
+        self.saved, self.lost = conversation, False
         last = conversation.exchanges[-1].response
         self.last = last if last.blocked is None else None
         typer.echo(f"Opened {conversation.id}: {_plain(conversation.title)}")

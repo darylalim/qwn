@@ -482,3 +482,85 @@ def test_a_search_logs_counts_only(tmp_path, caplog):
         store.search(f"{SENTINEL} question")
     assert "conversations searched: terms=2 matches=1 conversations=1 seconds=" in caplog.text
     assert SENTINEL not in caplog.text and "question" not in caplog.text
+
+
+# autosave (PLAN.md → CLI → Autosave saved conversations)
+
+
+def _later(c: cv.Conversation, root: Path, ref: str = "c" * 12) -> cv.Conversation:
+    """`c` with one more exchange, as the open conversation after a new answer."""
+    more = cv.Exchange(ref, f"{SENTINEL} and in 2025?", response(root), [], False)
+    return cv.make((*c.exchanges, more), previous=c)
+
+
+def _clock(monkeypatch) -> None:
+    """`now` a minute later on each call."""
+    minutes = iter(range(60))
+    monkeypatch.setattr(cv, "now", lambda: f"2026-10-27T14:{next(minutes):02d}:00+08:00")
+
+
+def test_autosave_writes_new_exchanges_with_the_files_title(tmp_path, monkeypatch):
+    store = cv.Store(tmp_path)
+    _clock(monkeypatch)
+    first = store.save(convo(tmp_path))  # created 14:00, saved 14:01
+    store.rename(first.id, "Renamed elsewhere")  # the open conversation still has the old title
+    done = store.autosave(_later(first, tmp_path))
+    assert done.state == "saved" and done.conversation is not None
+    loaded = store.load(first.id)
+    assert loaded == untimed(done.conversation) and len(loaded.exchanges) == 3
+    assert loaded.title == "Renamed elsewhere" and loaded.created == first.created
+    assert loaded.saved == "2026-10-27T14:02:00+08:00"
+    assert len(list(store.folder.iterdir())) == 1
+
+
+def test_autosave_copies_when_the_file_moved_on_elsewhere(tmp_path, monkeypatch):
+    store = cv.Store(tmp_path)
+    _clock(monkeypatch)
+    first = store.save(convo(tmp_path))
+    store.autosave(_later(first, tmp_path, "d" * 12))  # another tab's answer
+    before = store.path(first.id).read_bytes()
+    done = store.autosave(_later(first, tmp_path, "e" * 12))  # ours, on the old file
+    assert done.state == "copied" and done.conversation is not None
+    copy = done.conversation
+    assert copy.id != first.id and copy.title == first.title and copy.created != first.created
+    assert store.path(first.id).read_bytes() == before  # the original is unchanged
+    assert [e.id for e in store.load(copy.id).exchanges][-1] == "e" * 12
+    assert {s.id for s in store.list()} == {first.id, copy.id}
+
+
+def test_autosave_of_a_deleted_conversation_writes_nothing(tmp_path):
+    store = cv.Store(tmp_path)
+    first = store.save(convo(tmp_path))
+    store.delete(first.id)
+    done = store.autosave(_later(first, tmp_path))
+    assert done == cv.Autosaved("gone", None)
+    assert list(store.folder.iterdir()) == []
+
+
+@pytest.mark.parametrize("change", ["{ not json", '{"format": 99}'])
+def test_autosave_never_overwrites_an_unreadable_file(tmp_path, change, caplog):
+    store = cv.Store(tmp_path)
+    first = store.save(convo(tmp_path))
+    store.path(first.id).write_text(change)
+    with caplog.at_level(logging.INFO, logger="qwn"):
+        done = store.autosave(_later(first, tmp_path))
+    assert done == cv.Autosaved("unreadable", None)
+    assert store.path(first.id).read_text() == change
+    assert f"id={first.id} state=unreadable" in caplog.text
+
+
+def test_autosave_logs_ids_and_counts_only(tmp_path, caplog):
+    store = cv.Store(tmp_path)
+    first = store.save(convo(tmp_path))
+    with caplog.at_level(logging.DEBUG, logger="qwn"):
+        store.autosave(_later(first, tmp_path, "d" * 12))  # saved
+        copy = store.autosave(_later(first, tmp_path, "e" * 12)).conversation  # copied
+        assert copy is not None
+        store.path(first.id).write_text("{")
+        store.autosave(_later(first, tmp_path))  # unreadable
+        store.delete(copy.id)
+        store.autosave(_later(copy, tmp_path))  # gone
+    for state in ("saved", "copied", "gone", "unreadable"):
+        assert f"state={state}" in caplog.text
+    assert f"id={copy.id} from={first.id}" in caplog.text
+    assert SENTINEL not in caplog.text and "build it" not in caplog.text

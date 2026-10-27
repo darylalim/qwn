@@ -10,7 +10,8 @@ answers: only ids, counts, file names and timings.
 Export (`markdown`) and rename are in PLAN.md → CLI → Export and rename conversations: an export
 is the only file qwn writes your questions to outside the index, and only when you ask. Search
 (`terms`, `matches`, `Store.search`) is plain substring matching, no models: PLAN.md → CLI →
-Search saved conversations.
+Search saved conversations. Autosave (`Store.autosave`) keeps a conversation you saved or opened
+up to date after each answer: PLAN.md → CLI → Autosave saved conversations.
 """
 
 import json
@@ -87,6 +88,15 @@ class Conversation:
     def pairs(self) -> list[tuple[str, Response]]:
         """(question, Response) pairs, for `qwn.answer.conversation`."""
         return [(e.question, e.response) for e in self.exchanges]
+
+
+AutosaveState = Literal["saved", "copied", "gone", "unreadable"]
+
+
+@dataclass(frozen=True)
+class Autosaved:  # what `Store.autosave` did
+    state: AutosaveState
+    conversation: Conversation | None  # as written (saved, copied), else None
 
 
 @dataclass(frozen=True)
@@ -311,6 +321,56 @@ class Store:
             time.perf_counter() - start,
         )
         return saved
+
+    def autosave(self, conversation: Conversation) -> Autosaved:
+        """Write a saved (or opened) conversation after a new exchange, without losing one
+        written elsewhere: the file is read again first. Its exchanges a prefix of ours: write
+        ours with the file's title (a rename in another tab stays). Not a prefix (another tab
+        moved it on): write ours as a copy. No file (deleted elsewhere): nothing. A file that
+        can't be read: nothing, so it is never overwritten. An `OSError` on write propagates."""
+        start = time.perf_counter()
+        file = self.path(conversation.id)
+        written: Conversation | None = None
+        if not file.is_file():
+            state: AutosaveState = "gone"
+        else:
+            try:
+                current = self._read(file)
+            except UnknownConversation:
+                state = "unreadable"
+            else:
+                ours = [e.id for e in conversation.exchanges]
+                theirs = [e.id for e in current.exchanges]
+                if ours[: len(theirs)] == theirs:
+                    state = "saved"
+                    written = replace(
+                        conversation, title=current.title, created=current.created, saved=now()
+                    )
+                else:
+                    state = "copied"
+                    copy = make(conversation.exchanges)
+                    written = replace(copy, title=current.title, saved=now())
+                self._write(written)
+        seconds = time.perf_counter() - start
+        if state == "copied":
+            assert written is not None
+            logger.info(
+                "conversation autosaved: id=%s from=%s state=copied exchanges=%d seconds=%.3f",
+                written.id,
+                conversation.id,
+                len(written.exchanges),
+                seconds,
+            )
+        else:
+            logger.log(
+                logging.WARNING if state == "unreadable" else logging.INFO,
+                "conversation autosaved: id=%s state=%s exchanges=%d seconds=%.3f",
+                conversation.id,
+                state,
+                len(conversation.exchanges),
+                seconds,
+            )
+        return Autosaved(state, written)
 
     def rename(self, conversation_id: str, title: str) -> Conversation:
         """Give a saved conversation a title of your own. Only the title changes: `saved` stays,

@@ -1,10 +1,12 @@
 """Chat: ask a question (typed or spoken), see the answer with its cited pages, rate it.
 
 A follow-up is rewritten into a standalone question using the last few exchanges (PLAN.md →
-Evaluation → Multi-turn questions). A conversation is written to disk only when you save it, and
-the sidebar searches, reopens and renames saved ones (PLAN.md → CLI → Saved conversations, →
-Export and rename conversations, → Search saved conversations). Export downloads the conversation
-on screen as Markdown. See PLAN.md → Streamlit UI and → Voice input pipeline.
+Evaluation → Multi-turn questions). A conversation is written to disk only once you save (or
+open) it; from then on each new answer is saved automatically (PLAN.md → CLI → Autosave saved
+conversations). The sidebar searches, reopens and renames saved ones (PLAN.md → CLI → Saved
+conversations, → Export and rename conversations, → Search saved conversations). Export
+downloads the conversation on screen as Markdown. See PLAN.md → Streamlit UI and → Voice input
+pipeline.
 """
 
 import hashlib
@@ -194,12 +196,47 @@ def answered() -> list[Exchange]:
 
 
 def save_conversation() -> None:
-    """Save callback: write the whole conversation (the same file once it has been saved)."""
+    """Save callback: write the whole conversation (the same file once it has been saved, but
+    never a file autosave couldn't read: that gets a new copy)."""
+    saved = st.session_state.saved
+    if saved is not None and saved.id == st.session_state.get("unreadable"):
+        saved = None
     try:
-        st.session_state.saved = store.save(make(answered(), st.session_state.saved))
+        st.session_state.saved = store.save(make(answered(), saved))
     except OSError as e:
         logger.exception("save failed")
         st.session_state.notice = ("error", f"Couldn't save the conversation: {e}")
+
+
+def autosave(msg: dict) -> None:
+    """After an answer in a saved or opened conversation: write it to the file, and say so
+    under the answer when that file was deleted, moved on in another window or can't be read."""
+    saved = st.session_state.saved
+    if saved is None or "response" not in msg:
+        return  # never saved, or an error: nothing to write
+    try:
+        done = store.autosave(make(answered(), saved))
+    except OSError as e:
+        logger.exception("autosave failed")
+        show_notice("error", f"Couldn't save the conversation: {e}")
+        return
+    if done.state in ("saved", "copied"):
+        st.session_state.saved = done.conversation
+    if done.state == "copied":
+        show_notice(
+            "copy", "This conversation changed in another window, so it was saved as a copy."
+        )
+    elif done.state == "gone":
+        st.session_state.saved = None
+        show_notice(
+            "info", "This conversation was deleted in another window. Save to keep it again."
+        )
+    elif done.state == "unreadable":  # saved stays, so the caption counts the answer not saved
+        st.session_state.unreadable = saved.id
+        show_notice(
+            "error",
+            "Couldn't save to this conversation's file: see the log. Save to write a new copy.",
+        )
 
 
 def open_conversation() -> None:
@@ -293,55 +330,19 @@ def rename(summary: Summary) -> None:
 
 
 choices = scope_choices(sorted(indexed))
-with st.sidebar:
-    search = st.session_state.get("saved_search", "")
-    found, total = store.search(search)
-    summaries = {s.id: s for _, s in found}
-    if not total:
-        st.caption(":material/bookmarks: Saved conversations appear here.")
-    else:
-        st.text_input(
-            "Search saved conversations",
-            key="saved_search",
-            label_visibility="collapsed",
-            placeholder="Words from a title, question or answer",
-            icon=":material/search:",
-            on_change=search_changed,
-        )
-    if total and not summaries:
-        st.caption(":material/search_off: No saved conversation matches.")
-    elif total:
-        if search.strip():
-            st.caption(f"{len(summaries)} of {total} match")
-        pick = st.selectbox(
-            "Saved conversations",
-            list(summaries),
-            index=None,
-            key="saved_pick",
-            placeholder="Open a saved conversation",
-            format_func=lambda i: (
-                f"{summaries[i].title} · {saved_when(summaries[i].saved)} · "
-                f"{summaries[i].exchanges} question{'s' if summaries[i].exchanges != 1 else ''}"
-            ),
-        )
-        with st.container(horizontal=True):
-            st.button(
-                "Open",
-                icon=":material/history:",
-                disabled=pick is None,
-                on_click=open_conversation,
-            )
-            if st.button("Rename", icon=":material/edit:", disabled=pick is None) and pick:
-                rename(summaries[pick])
-            if st.button("Delete", icon=":material/delete:", disabled=pick is None) and pick:
-                confirm_delete(summaries[pick])
 
-if (notice := st.session_state.pop("notice", None)) is not None:
-    kind, text = notice
+
+def show_notice(kind: str, text: str) -> None:
     if kind == "error":
         st.error(text, icon=":material/error:")
+    elif kind == "copy":
+        st.info(text, icon=":material/content_copy:")
     else:
         st.info(text, icon=":material/info:")
+
+
+if (notice := st.session_state.pop("notice", None)) is not None:
+    show_notice(*notice)
 
 history = st.container()
 with history:
@@ -406,12 +407,15 @@ if question:
             show_answer(msg, last=True)
             if spoken:
                 speak(msg)
+            autosave(msg)
 if st.session_state.messages:
-    exchanges = answered()
+    exchanges, saved = answered(), st.session_state.saved
+    newer = len(exchanges) - len(saved.exchanges) if saved is not None else 0
     with actions.container(horizontal=True):  # side by side; wraps on a phone
         st.button("New conversation", icon=":material/add_comment:", on_click=new_conversation)
         if exchanges:
-            st.button("Save", icon=":material/bookmark:", on_click=save_conversation)
+            if saved is None or newer > 0:  # before the first save, or after a failed autosave
+                st.button("Save", icon=":material/bookmark:", on_click=save_conversation)
             current, exported = make(exchanges, st.session_state.saved), now()
             st.download_button(
                 "Export",
@@ -421,7 +425,61 @@ if st.session_state.messages:
                 icon=":material/download:",
                 on_click="ignore",  # downloading doesn't rerun the page
             )
-    if (saved := st.session_state.saved) is not None:
-        n = len(exchanges) - len(saved.exchanges)
-        newer = f" · {n} newer exchange{'s' if n != 1 else ''} not saved" if n > 0 else ""
-        saved_note.caption(f":material/bookmark_added: Saved {saved_time(saved)}{newer}")
+    if saved is not None:
+        state = (
+            f"{newer} newer exchange{'s' if newer != 1 else ''} not saved"
+            if newer > 0
+            else "new answers are saved automatically"
+        )
+        saved_note.caption(f":material/bookmark_added: Saved {saved_time(saved)} · {state}")
+
+
+def saved_list() -> None:
+    """The sidebar's search and saved list. Drawn last, after an answer's autosave, so the list
+    shows the new saved time, question count or copy on the same run (an answer causes no
+    rerun); until then the browser shows the last run's list."""
+    with st.sidebar:
+        search = st.session_state.get("saved_search", "")
+        found, total = store.search(search)
+        summaries = {s.id: s for _, s in found}
+        if not total:
+            st.caption(":material/bookmarks: Saved conversations appear here.")
+        else:
+            st.text_input(
+                "Search saved conversations",
+                key="saved_search",
+                label_visibility="collapsed",
+                placeholder="Words from a title, question or answer",
+                icon=":material/search:",
+                on_change=search_changed,
+            )
+        if total and not summaries:
+            st.caption(":material/search_off: No saved conversation matches.")
+        elif total:
+            if search.strip():
+                st.caption(f"{len(summaries)} of {total} match")
+            pick = st.selectbox(
+                "Saved conversations",
+                list(summaries),
+                index=None,
+                key="saved_pick",
+                placeholder="Open a saved conversation",
+                format_func=lambda i: (
+                    f"{summaries[i].title} · {saved_when(summaries[i].saved)} · "
+                    f"{summaries[i].exchanges} question{'s' if summaries[i].exchanges != 1 else ''}"
+                ),
+            )
+            with st.container(horizontal=True):
+                st.button(
+                    "Open",
+                    icon=":material/history:",
+                    disabled=pick is None,
+                    on_click=open_conversation,
+                )
+                if st.button("Rename", icon=":material/edit:", disabled=pick is None) and pick:
+                    rename(summaries[pick])
+                if st.button("Delete", icon=":material/delete:", disabled=pick is None) and pick:
+                    confirm_delete(summaries[pick])
+
+
+saved_list()

@@ -127,10 +127,14 @@ models); `/list` numbers don't change in a search. Searching 200 conversations t
 **Released as v0.13.0** (2026-10-27): every follow-up above since v0.12.0 (Versioning): search
 saved conversations. No reindex: an index from v0.12.0 works as is.
 
-**Open follow-ups:** autosave saved conversations (CLI → Autosave saved conversations, planned
-2026-10-27): once you save or open a conversation, each new answer is written to its file
-automatically; a conversation never saved still stays in memory. Implement on
-`followup/autosave`.
+The autosave follow-up is done (CLI → Autosave saved conversations, results under it): once
+you save or open a conversation, each new answer is written to its file (`Store.autosave`); a
+conversation never saved still stays in memory. A file deleted elsewhere isn't recreated, one
+that moved on in another tab gets a copy, and one that can't be read is never overwritten. The
+Chat page shows Save only when it would do something, and draws the sidebar's list last so it's
+current after an answer. No reindex.
+
+**Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -557,7 +561,7 @@ class Tts(Protocol):
 | Source files | Streamlit uploads are copied to `data_dir`. CLI ingest indexes files **in place** (absolute paths) | your corpus | ignored |
 | Index database | `index_dir/qwn.db` (single SQLite file, WAL mode) | ~4 KB per chunk for vectors + text | ignored |
 | Page renders | `index_dir/pages/<doc_id>/<page>.webp` (WebP q85, 150 dpi) | ~50–150 KB per page | ignored |
-| Saved conversations | `index_dir/conversations/<id>.json` (folder `0700`, files `0600`), written only when you save (CLI → Saved conversations) | KB each | ignored |
+| Saved conversations | `index_dir/conversations/<id>.json` (folder `0700`, files `0600`), written when you save, then after each new answer in a saved or opened conversation (CLI → Saved conversations, Autosave saved conversations) | KB each | ignored |
 | Exports | wherever you put them: a browser download, or `/export`'s folder (`0600`); outside the index, never written on their own (CLI → Export and rename conversations) | KB each | yours |
 | Eval sets | `eval/public/` (generator + questions, committed); `eval/private/` (your questions, **never committed**) | KB | private ignored |
 | Eval runs | `eval/results/*.json`; `eval/public/baseline.json` committed, `eval/private/baseline.json` ignored | KB | results ignored |
@@ -751,6 +755,8 @@ qwn chat --open N|ID        # follow-up (done 2026-10-26): reopen a saved conver
                             # Export and rename conversations
                             # done 2026-10-27: /list TEXT; see Search saved
                             # conversations
+                            # done 2026-10-27: answers autosave after /save or /open;
+                            # see Autosave saved conversations
 ```
 
 Common flags override settings (`--top-k`, `--rerank-k`, `--max-images`, `--config PATH`).
@@ -1101,6 +1107,8 @@ prompts, the rewrite, Guard or `Answerer`.** One follow-up PR (branch
   default holds: no question reaches disk unless you ask. Once saved (or reopened), a
   conversation has an id, and saving again overwrites the same file with the whole
   conversation. New exchanges aren't written until you save again: there is no autosave.
+  *(Changed 2026-10-27: once saved or opened, each new answer is written automatically; see
+  Autosave saved conversations. Saving still starts only when you ask.)*
 - **Stored in the index:** `index_dir/conversations/<id>.json`, one file per conversation.
   Saved sources point at chunks and page renders in that index, so they belong with it: backing
   up or moving `index_dir/` takes them along, an eval index (`QWN_INDEX_DIR`) keeps its own, and
@@ -1184,7 +1192,7 @@ prompts, the rewrite, Guard or `Answerer`.** One follow-up PR (branch
 
 | Command | Does |
 |---|---|
-| `/save` | Saves the conversation (exchanges with a `Response`, blocks included). Prints "Saved as *id*: *title* (N questions)." Before any answer: "Nothing to save yet." |
+| `/save` | Saves the conversation (exchanges with a `Response`, blocks included). Prints "Saved as *id*: *title* (N questions)." Before any answer: "Nothing to save yet." *(Autosave, 2026-10-27: adds "New answers are saved as you go."; nothing new: "Already saved: new answers are saved as you go.")* |
 | `/list [TEXT…]` | Saved conversations, most recent first: `  1  a1b2c3d4e5f6  2026-10-26 14:02  4 questions  What was total revenue in 2024?`. "No saved conversations." when empty. With TEXT, only the matches, with their `/list` numbers (Search saved conversations) |
 | `/open N\|ID` | Opens one by its number in `/list` order (most recent first) or its id. It replaces the history and the scope, then prints the scope line and the last exchange (its question, then the answer as `_print_response` prints it) so you see where you left off. `/history` shows the rest |
 | `/delete N\|ID` | Deletes one. Prints "Deleted *title*." No confirmation: the REPL has no undo for `/new` either, and you name the conversation explicitly |
@@ -1200,6 +1208,7 @@ prompts, the rewrite, Guard or `Answerer`.** One follow-up PR (branch
   exchanges newer than the last save print "2 newer questions aren't saved. /save to keep them,
   or repeat the command to discard them." and do nothing. Repeating the same command right away
   goes ahead. A conversation never saved is discarded silently, as today (explicit saving).
+  *(Autosave, 2026-10-27: this now fires only after a failed autosave.)*
   When stdin isn't a TTY (scripts, tests with `input=`), end of input exits at once.
 - **`/sources`** after `/open` lists the last answer's sources, with `changed`/`missing`
   marked after the path.
@@ -1684,7 +1693,7 @@ highlighting where a conversation matched; searching source text; searching from
 `qwn chat --open`; a `qwn conversations` command group; saving searches; autosave (planned
 2026-10-27 as its own follow-up, below).
 
-### Autosave saved conversations (follow-up, planned 2026-10-27)
+### Autosave saved conversations (follow-up, planned 2026-10-27, done 2026-10-27)
 
 **Why:** a saved conversation goes stale as soon as you ask another question. The Chat page's
 caption says "2 newer exchanges not saved" until you press Save again, and `qwn chat` stops
@@ -1756,6 +1765,11 @@ follow-up PR (branch `followup/autosave`), no version bump.
   with and without Save.
 - Open, Rename, Delete, search and Export don't change. The sidebar's list shows the new saved
   time and question count on the next rerun, which the answer already causes.
+  *(Changed 2026-10-27, agreed during implementation: an answer causes no rerun. In Chrome the
+  list still read "1 question" 3 s after an autosaved follow-up. The Chat page now draws its
+  sidebar block last (`saved_list()`), after the answer and its autosave, so the list is
+  current on the same run; while an answer is generated, the browser shows the last run's list.
+  `st.rerun()` after an autosave was rejected: it would cut off a spoken answer's autoplay.)*
 
 **`qwn chat`:**
 
@@ -1830,6 +1844,32 @@ never titles, questions or answers. The sentinel log test covers each state.
 failed exchanges; turning autosave off for one conversation; merging two tabs' exchanges into one
 file (a copy is made instead); version history or undo of a saved file; saving partial answers
 mid-stream; autosave in `qwn ask`.
+
+#### Autosave results (2026-10-27, M2 Max, hard corpus, real models)
+
+- **Tests:** fast tests 523 passed; slow tests 85 passed (incl. Chrome at every Responsive layout
+  width, light and dark, with Save before the first save and without it after, and a new Chrome
+  test: an autosaved answer is in the sidebar's list on the same run, and two tabs end with the
+  original and a copy). Ruff and ty clean. No eval run (Done when 2).
+- **Implementation notes:** the Chat page draws its sidebar block last (`saved_list()`): in
+  Chrome the list still read "1 question" 3 s after an autosaved follow-up when it was drawn
+  first, because an answer causes no rerun (Streamlit UI → Chat; agreed during implementation).
+  A file autosave couldn't read is remembered by id (`unreadable` in the session, `_Chat.unreadable`),
+  so Save/`/save` writes a new copy and never that file; in `qwn chat` a `gone` file sets `lost`,
+  so `unsaved()` counts every exchange and `/quit` asks once.
+- **Browser** (`qwn ui` on `data/eval-hard`, Playwright): 2024 revenue (196.9), Save, "And in
+  2025?" (214.6): caption "Saved 09:54 · new answers are saved automatically", no Save button,
+  sidebar "· 2 questions" on the same run. A second tab's never-saved question wrote no file and
+  showed Save. Restart, Open: 2 answers; "How many vessels did the company operate that year?";
+  restart, Open: 3 answers (4 after the next step's first tab). Two tabs with it open, a question
+  in each: the first updated the file (no notice), the second showed the copy notice and the
+  sidebar listed both (5 questions each). No horizontal overflow at any width, light or dark,
+  without Save. The saved conversations were removed afterwards.
+- **Terminal** (`qwn chat`, pseudo-terminal): a question, `/save` ("… (1 question). New answers
+  are saved as you go."), "And in 2025?", `/quit` with no prompt; `qwn chat --open <id>` showed
+  the second exchange; a third question, `/list` "3 questions", `/quit` with no prompt. A
+  session with no `/save` left no new file. The vessels rewrite read "in 2024" after a 2025
+  answer (37 vessels from the 2025 review): a rewrite miss, not autosave's, left as it is.
 
 ## Streamlit UI (`src/qwn/ui/`)
 
@@ -1924,6 +1964,10 @@ injection point) and `ui/sources.py` (source cards and the "Open page" dialog). 
     `st.session_state` and are applied per request (they don't persist).
   - **Saved conversations** *(follow-up, done 2026-10-26)*: Save beside "New conversation",
     and a sidebar list to open or delete one; see CLI → Saved conversations.
+  - **Autosave** *(follow-up, done 2026-10-27)*: once saved or opened, each new answer is
+    written to the conversation's file; Save shows only before the first save or after a failed
+    autosave, and the sidebar's list is drawn last so it's current after an answer; see CLI →
+    Autosave saved conversations.
   - **Export and rename** *(follow-up, done 2026-10-26)*: Export (a Markdown download of the
     conversation on screen) beside Save, and Rename beside Open and Delete in the sidebar; see
     CLI → Export and rename conversations.
