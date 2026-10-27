@@ -74,9 +74,16 @@ uv version --bump minor               # one minor release per completed phase (f
   `QWN_INDEX_DIR` (see Commands); a spoken check needs the user's microphone, so ask them.
   `qwn ui` takes the model lock only when a page opens (`services()` runs per session): to test
   "models in use", open a headless Playwright page first.
-  Fill an `st.empty` slot with one layer: `slot.container(horizontal=True)`, not a container
-  nested in `slot.container()`, which left `st.chat_input` disabled after an answer given during
-  the warm load (browser only; ask as soon as the page loads to catch it).
+  Fill an `st.empty` slot with one layer: `slot.container(horizontal=True)`.
+  A fragment's `run_every` is read only on a full run: a timer set during the warm load ran
+  forever and kept `st.chat_input` (`submit_mode="disable"`) disabled after an answer (real
+  models only; ask as soon as the page loads). A timed fragment ends its own timer with
+  `st.rerun()` (`ui/app.py` `status_line`). To see a timer that never stops, count the
+  browser's websocket `framesent` events: one a second while it ticks. Fakes can miss a timing
+  bug that real models show: test its cause, as `tests/ui/test_responsive.py` does with
+  `QWN_FAKE_WARM_SECONDS` and `QWN_FAKE_ANSWER_SECONDS`.
+  Changing a selectbox option's label (a rename) doesn't update the selected box in the browser
+  unless its key is set again: do the change in an `on_click` callback that re-sets the key.
   AppTest can't show that a click lands in the browser, and it doesn't rerun a dialog: press the
   button that opens the dialog and the dialog's own button on the same run. In Playwright, a
   selectbox's arrow is a button named "Open": find your own buttons by text
