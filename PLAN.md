@@ -134,6 +134,9 @@ that moved on in another tab gets a copy, and one that can't be read is never ov
 Chat page shows Save only when it would do something, and draws the sidebar's list last so it's
 current after an answer. No reindex.
 
+**Released as v0.14.0** (2026-10-27): every follow-up above since v0.13.0 (Versioning): autosave
+saved conversations. No reindex: an index from v0.13.0 works as is.
+
 **Open follow-ups:** none.
 
 **Reading order** (the plan is long; read only what the current phase needs):
@@ -5006,6 +5009,7 @@ job.
   (no code) and saved conversations (no reindex).
   `0.12.0` releases export and rename conversations and the chat box warm-load fix (no reindex).
   `0.13.0` releases search saved conversations (no reindex).
+  `0.14.0` releases autosave saved conversations (no reindex).
 - **Flow:** bump on the phase branch → PR (CI) → merge to `main` → `release.yml` → tag `vX.Y.Z` +
   GitHub Release.
 - **Note:** `0.1.0` has no tag, so the **first** merge to `main` that touches `pyproject.toml`
