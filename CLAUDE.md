@@ -26,7 +26,7 @@ PRs after the required CI check passes (`gh pr checks N --watch`, then `gh pr me
 uv sync                               # install from uv.lock
 uv run ruff format . && uv run ruff check --fix .
 uv run ty check
-uv run pytest -m "not slow"           # fast tests: fakes only, no model downloads (~15 s)
+uv run pytest -m "not slow"           # fast tests: fakes only, no model downloads (~35 s)
 uv run pytest                         # everything incl. slow real-model tests (~13 GB models, local only)
 uv run qwn models pull [--voice]      # the ONLY command that may use the network; download only, safe while `qwn ui` runs
 uv run qwn eval --set public --guard --locate   # all exit criteria; ~40 min with answers: run in background
@@ -98,10 +98,23 @@ uv version --bump minor               # one minor release per completed phase (f
   (minutes); to tell your bug from `main`'s, run the same script after `git stash -u`.
   A real-model Playwright check: `STREAMLIT_SERVER_PORT` and `STREAMLIT_SERVER_HEADLESS=true` on
   `qwn ui`. The qwn log is in `qwn status`'s `logs:` folder: whether a callback ran shows there.
+  An answer causes no rerun: whatever the page drew before it (the sidebar's saved list) is stale
+  until the next click. Draw such a block last (`chat.py` `saved_list()`), not `st.rerun()`,
+  which cuts off a spoken answer's autoplay.
+  Real-model Playwright gotchas: `get_by_role("button", name="Save", exact=True)` misses (the
+  icon's text is part of the name); wait for an answer by "Searched in:" inside its
+  `stChatMessage` (a refusal has no "Open page"); "Searched for:" appears before the run ends,
+  so wait ~1 s before reading the sidebar. A throwaway browser probe is a test file in
+  `tests/ui/` that imports `server` and `browser` from `test_responsive`; run it with `-m ""`
+  (it lacks that file's slow mark; ~6 s).
 - **Saved conversations** live in `index_dir/conversations/`: a check on an eval index leaves
   files there, so remove them after. A changed-source check needs a scratch copy of the corpus
   with its own full ingest (the index stores absolute paths; never edit `data/eval-*`). Appending
   a PDF comment changes a file's sha256 but not its render.
+  To test another window: two `AppTest`s on one store are two tabs; in `qwn chat` tests, wrap
+  `gen.answer` to change the saved file before an answer (`_Elsewhere` in
+  `tests/integration/test_chat_flow.py`). `make(..., previous)` doesn't call `now()`: in tests
+  that pin times, use a fake clock that ticks once per call.
 - **Eval baselines** change only via `qwn eval --update-baseline`, in the same PR as the change
   that moved them, with the per-query changes explained in the PR.
   If `queries.jsonl` changed (`eval_set_hash`), the tool won't compare runs: diff `per_query`
