@@ -107,6 +107,16 @@ uv version --bump minor               # one minor release per completed phase (f
   so wait ~1 s before reading the sidebar. A throwaway browser probe is a test file in
   `tests/ui/` that imports `server` and `browser` from `test_responsive`; run it with `-m ""`
   (it lacks that file's slow mark; ~6 s).
+  "Open page" shows "Finding the supporting passage…" first: wait for the dialog's
+  `Supporting passage \(approximate\)|Couldn't pinpoint` (unanchored: the caption's icon is
+  text), then `stStatusWidget` hidden. The dialog prints absolute paths (your home folder).
+- **README screenshots** (`docs/images/<view>-{light,dark}.png`, a `<picture>` each): real
+  models on the hard corpus at 1512 px, 2× scale, `color_scheme` per context (the theme follows
+  it), `pngquant` after. Pick a query with `locate_hit` true in the last hard result (hard-032's
+  outline lands a row off; hard-033 is right) and short cited answers (hard-034 hedges).
+  Rewrite `/Users/<name>` to `~` in the page before the shot. A `qwn chat` image is a pty
+  capture rendered as HTML: keep each line's text after its last `\r` (the status line).
+  The README's action table pairs Chat page buttons with `qwn chat` commands: update both.
 - **Saved conversations** live in `index_dir/conversations/`: a check on an eval index leaves
   files there, so remove them after. A changed-source check needs a scratch copy of the corpus
   with its own full ingest (the index stores absolute paths; never edit `data/eval-*`). Appending
