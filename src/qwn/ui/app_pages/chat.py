@@ -2,9 +2,9 @@
 
 A follow-up is rewritten into a standalone question using the last few exchanges (PLAN.md →
 Evaluation → Multi-turn questions). A conversation is written to disk only when you save it, and
-the sidebar reopens and renames saved ones (PLAN.md → CLI → Saved conversations, → Export and
-rename conversations). Export downloads the conversation on screen as Markdown. See PLAN.md →
-Streamlit UI and → Voice input pipeline.
+the sidebar searches, reopens and renames saved ones (PLAN.md → CLI → Saved conversations, →
+Export and rename conversations, → Search saved conversations). Export downloads the conversation
+on screen as Markdown. See PLAN.md → Streamlit UI and → Voice input pipeline.
 """
 
 import hashlib
@@ -241,6 +241,18 @@ def confirm_delete(summary: Summary) -> None:
             st.rerun()
 
 
+def matching() -> set[str]:
+    """The ids the sidebar's search shows (all, with no search)."""
+    return {s.id for _, s in store.search(st.session_state.get("saved_search", ""))[0]}
+
+
+def search_changed() -> None:
+    """The search box's callback (it runs before the widgets are drawn): drop the pick when the
+    new search filters it out, so the selectbox is never given a value it doesn't offer."""
+    if st.session_state.get("saved_pick") not in matching():
+        st.session_state.saved_pick = None
+
+
 def rename_saved(summary: Summary) -> None:
     """The Rename dialog's callback. It runs before the page is drawn, so it can set the
     sidebar's pick again: without that the browser keeps showing the old title in the box."""
@@ -256,7 +268,8 @@ def rename_saved(summary: Summary) -> None:
         saved = st.session_state.saved
         if saved is not None and saved.id == renamed.id:  # the next Save keeps the new title
             st.session_state.saved = replace(saved, title=renamed.title)
-        st.session_state.saved_pick = renamed.id
+        # set again so the browser shows the new title; cleared if the search no longer finds it
+        st.session_state.saved_pick = renamed.id if renamed.id in matching() else None
     st.session_state.renamed = True  # closes the dialog
 
 
@@ -281,10 +294,25 @@ def rename(summary: Summary) -> None:
 
 choices = scope_choices(sorted(indexed))
 with st.sidebar:
-    summaries = {s.id: s for s in store.list()}
-    if not summaries:
+    search = st.session_state.get("saved_search", "")
+    found, total = store.search(search)
+    summaries = {s.id: s for _, s in found}
+    if not total:
         st.caption(":material/bookmarks: Saved conversations appear here.")
     else:
+        st.text_input(
+            "Search saved conversations",
+            key="saved_search",
+            label_visibility="collapsed",
+            placeholder="Words from a title, question or answer",
+            icon=":material/search:",
+            on_change=search_changed,
+        )
+    if total and not summaries:
+        st.caption(":material/search_off: No saved conversation matches.")
+    elif total:
+        if search.strip():
+            st.caption(f"{len(summaries)} of {total} match")
         pick = st.selectbox(
             "Saved conversations",
             list(summaries),

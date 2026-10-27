@@ -8,7 +8,9 @@ it goes through the same filters as a fresh answer. Nothing here logs titles, qu
 answers: only ids, counts, file names and timings.
 
 Export (`markdown`) and rename are in PLAN.md → CLI → Export and rename conversations: an export
-is the only file qwn writes your questions to outside the index, and only when you ask.
+is the only file qwn writes your questions to outside the index, and only when you ask. Search
+(`terms`, `matches`, `Store.search`) is plain substring matching, no models: PLAN.md → CLI →
+Search saved conversations.
 """
 
 import json
@@ -17,6 +19,7 @@ import os
 import re
 import tempfile
 import time
+import unicodedata
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field, fields, replace
@@ -120,6 +123,37 @@ def clean_title(text: str) -> str:
     if not title:
         raise ValueError("A title can't be empty.")
     return title
+
+
+def terms(query: str) -> list[str]:
+    """A search's words, normalised as the searchable text is. A blank query has none."""
+    return _normalise(query).split()
+
+
+def matches(conversation: Conversation, words: list[str]) -> bool:
+    """True when every word is a substring of the conversation's searchable text; words may
+    match in different exchanges. No words: true."""
+    if not words:
+        return True
+    text = _searchable(conversation)
+    return all(w in text for w in words)
+
+
+def _searchable(conversation: Conversation) -> str:
+    """What a search reads, normalised: the title, and per exchange the question, the
+    `Searched for` rewrite and the answer as shown (citations as `[file p.N]`). Not source
+    text, Guard messages or a blocked exchange's answer (none of them is the conversation as
+    shown)."""
+    parts = [conversation.title]
+    for e in conversation.exchanges:
+        parts += [e.question, e.response.standalone or ""]
+        if e.response.blocked is None:
+            parts.append(e.response.rendered())
+    return _normalise("\n".join(parts))
+
+
+def _normalise(text: str) -> str:
+    return unicodedata.normalize("NFKC", printable(text)).casefold()
 
 
 def make(exchanges: Iterable[Exchange], previous: Conversation | None = None) -> Conversation:
@@ -303,24 +337,46 @@ class Store:
             Path(tmp).unlink(missing_ok=True)
             raise
 
-    def list(self) -> list[Summary]:
-        """Every readable saved conversation, most recently saved first."""
+    def search(self, query: str) -> tuple[list[tuple[int, Summary]], int]:
+        """The saved conversations matching `query` (`terms`, `matches`), each with its 1-based
+        number in `list` order, most recently saved first; and how many there are in all (the
+        "3 of 12"), from the same single read. A blank query matches all."""
+        start = time.perf_counter()
+        words = terms(query)
+        scanned = self._scan()
+        found = [(n, s) for n, (s, c) in enumerate(scanned, start=1) if matches(c, words)]
+        logger.debug(
+            "conversations searched: terms=%d matches=%d conversations=%d seconds=%.3f",
+            len(words),
+            len(found),
+            len(scanned),
+            time.perf_counter() - start,
+        )
+        return found, len(scanned)
+
+    def _scan(self) -> list[tuple[Summary, Conversation]]:
+        """Each readable file read once, most recently saved first; unreadable ones logged by
+        name, once per process (the Chat page lists on every rerun)."""
         if not self.folder.is_dir():
             return []
-        found: list[Summary] = []
+        found: list[tuple[Summary, Conversation]] = []
         for file in self.folder.glob("*.json"):
             if not _ID.match(file.stem):
                 continue
             try:
                 c = self._read(file)
             except UnknownConversation:
-                if file not in _reported:  # the Chat page lists on every rerun
+                if file not in _reported:
                     _reported.add(file)
                     logger.warning("unreadable saved conversation left out: %s", file.name)
                 continue
-            found.append(Summary(c.id, c.title, c.saved, len(c.exchanges)))
-        found.sort(key=lambda s: datetime.fromisoformat(s.saved), reverse=True)
+            found.append((Summary(c.id, c.title, c.saved, len(c.exchanges)), c))
+        found.sort(key=lambda sc: datetime.fromisoformat(sc[0].saved), reverse=True)
         return found
+
+    def list(self) -> list[Summary]:
+        """Every readable saved conversation, most recently saved first."""
+        return [s for s, _ in self._scan()]
 
     def load(self, conversation_id: str) -> Conversation:
         conversation = self._read(self.path(conversation_id))

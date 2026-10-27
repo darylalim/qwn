@@ -395,3 +395,49 @@ def test_export_and_rename_log_no_content(docs, gen, home, out, caplog):
     assert (folder / EXPORT).is_file()
     assert "conversation exported" in caplog.text and "conversation renamed" in caplog.text
     assert sentinel not in caplog.text
+
+
+# /list TEXT (PLAN.md → CLI → Search saved conversations)
+
+
+def test_list_searches_and_keeps_list_numbers(docs, gen, home):
+    chat(REVENUE, "/save")
+    chat(SSO, "/save")
+    summaries = saved(home).list()
+    n = next(i for i, s in enumerate(summaries, start=1) if s.title == REVENUE)
+    revenue, sso = summaries[n - 1], summaries[2 - n]
+    r = chat("/list quarterly", f"/open {n}", "/list QUARTERLY report.PDF", "/list zebra", "/list ")
+    assert r.exit_code == 0, r.output
+    first, rest = r.output.split(f"Opened {revenue.id}", 1)
+    assert f"  {n}  {revenue.id}  " in first and sso.id not in first  # an answer word
+    assert "1 of 2 saved conversations match." in first
+    assert f"  {n}  {revenue.id}  " in rest and "1 of 2 saved conversations match." in rest
+    assert "No saved conversation matches zebra." in rest
+    assert rest.count(f"  {3 - n}  {sso.id}  ") == 1 and "2 of 2" not in rest  # blank: as /list
+
+
+def test_list_search_text_is_read_raw_and_not_echoed_with_control_characters(docs, gen, home):
+    chat(REVENUE, "/save", "/rename 1 Bob's notes")
+    r = chat("/list Bob's", "/list zeb\x1b[2Jra \x07")
+    assert r.exit_code == 0, r.output
+    assert "Bob's notes" in r.output and "1 of 1 saved conversations match." in r.output
+    assert "No saved conversation matches zebra." in r.output and "\x1b" not in r.output
+
+
+def test_list_with_nothing_saved(docs, gen, home):
+    r = chat("/list revenue", "/help")
+    assert r.exit_code == 0, r.output
+    assert "No saved conversations." in r.output
+    assert "/list [TEXT]" in r.output and "TEXT: only those with these words" in r.output
+
+
+def test_a_search_logs_no_content(docs, gen, home, caplog):
+    import logging
+
+    sentinel = "ZEBRAQUARTZSENTINEL"
+    caplog.set_level(logging.DEBUG)
+    r = chat(f"{REVENUE} {sentinel}", "/save", f"/list {sentinel}", "/list revenue")
+    assert r.exit_code == 0, r.output
+    assert r.output.count("1 of 1 saved conversations match.") == 2
+    assert "conversation saved" in caplog.text
+    assert sentinel not in caplog.text and "revenue" not in caplog.text.lower()

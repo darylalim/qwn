@@ -415,3 +415,70 @@ def test_export_and_rename_log_no_content(tmp_path, caplog):
         cv.write_export(out / "x.md", cv.markdown(store.load(c.id), {}, EXPORTED))
     assert c.id in caplog.text and "conversation exported: bytes=" in caplog.text
     assert SENTINEL not in caplog.text and "build it" not in caplog.text
+
+
+# search (PLAN.md → CLI → Search saved conversations)
+
+
+def test_terms():
+    assert cv.terms("") == [] and cv.terms(" \n\t ") == []
+    assert cv.terms("  Revenue  VESSELS ") == ["revenue", "vessels"]
+    assert cv.terms("\uff12\uff11\uff14\uff0e\uff16") == ["214.6"]  # full-width digits: NFKC
+    assert cv.terms("zeb\x1b[2Jra\x07 Straße") == ["zebra", "strasse"]
+
+
+def searchable(root: Path) -> cv.Conversation:
+    """Revenue, then vessels, then a blocked question; each source's text says PAGEONLY."""
+    first = replace(response(root, text="Revenue grew 12% [S1]."), standalone="2024 revenue?")
+    second = replace(response(root, text="Seven vessels [S2]."), standalone=None)
+    for r in (first, second):
+        for s in r.sources:
+            object.__setattr__(s, "text", "PAGEONLY")
+    exchanges = [
+        cv.Exchange("a" * 12, "How much did revenue grow?", first),
+        cv.Exchange("c" * 12, "And the fleet?", second),
+        cv.Exchange("b" * 12, "How do I build it?", blocked()),
+    ]
+    return replace(cv.make(exchanges), title="Annual numbers")
+
+
+def test_matches(tmp_path):
+    c = searchable(tmp_path)
+
+    def finds(query: str) -> bool:
+        return cv.matches(c, cv.terms(query))
+
+    assert finds("") and finds("annual")  # no terms; the title
+    assert finds("FLEET") and finds("2024") and finds("12%")  # question, standalone, answer
+    assert finds("doc1.pdf p.1") and finds("doc2.pdf")  # cited file names, as rendered
+    assert finds("revenue vessels") and finds("rev ves")  # terms across exchanges; substrings
+    assert not finds("revenue walrus")  # every term
+    assert finds("build it")  # a blocked exchange's question is shown
+    assert not finds("PAGEONLY")  # source text
+    assert not finds("Violent") and not finds("Politically")  # Guard messages
+    assert not finds("[S1]") and not finds("/docs")  # raw markers, source paths
+
+
+def test_store_search_numbers_match_list(tmp_path, monkeypatch):
+    store = cv.Store(tmp_path)
+    hours = iter(range(10, 24))
+    monkeypatch.setattr(cv, "now", lambda: f"2026-10-26T{next(hours)}:00:00+08:00")
+    a = store.save(searchable(tmp_path))
+    store.save(convo(tmp_path))  # no "fleet": between the two matches in list order
+    b = store.save(replace(searchable(tmp_path), id=cv.new_id(), title="Later"))
+    assert [s.id for s in store.list()][::2] == [b.id, a.id]
+    found, total = store.search("fleet")
+    assert [(n, s.id) for n, s in found] == [(1, b.id), (3, a.id)] and total == 3
+    assert [s.id for _, s in store.search("  ")[0]] == [s.id for s in store.list()]
+    assert store.search("walrus") == ([], 3)
+    (store.folder / f"{'f' * 12}.json").write_text("{")
+    assert store.search("")[1] == 3  # unreadable: left out
+
+
+def test_a_search_logs_counts_only(tmp_path, caplog):
+    store = cv.Store(tmp_path)
+    store.save(convo(tmp_path))
+    with caplog.at_level(logging.DEBUG, logger="qwn"):
+        store.search(f"{SENTINEL} question")
+    assert "conversations searched: terms=2 matches=1 conversations=1 seconds=" in caplog.text
+    assert SENTINEL not in caplog.text and "question" not in caplog.text

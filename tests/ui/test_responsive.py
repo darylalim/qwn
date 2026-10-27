@@ -5,6 +5,7 @@ Screenshots go to tests/ui/screenshots/ (gitignored) for the visual review.
 """
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -34,6 +35,9 @@ CHAT_MAX_PX = 736
 QUESTION = "How much did revenue grow?"
 FOLLOW_UP = "And in 2025?"
 WARM_SECONDS = 12
+# the caption after Save; "Saved " alone also matches (case-insensitively) the sidebar's
+# "Saved conversations appear here." and the search box's hidden label
+SAVED = re.compile(r"Saved \d\d:\d\d")
 
 
 def _free_port() -> int:
@@ -138,9 +142,9 @@ def test_layout(server, browser, name, width, scheme):
             page.get_by_role("button", name="New conversation").wait_for(timeout=5_000)
             page.locator("button").filter(has_text="Export").wait_for(timeout=5_000)
             page.get_by_role("button", name="Save").click()  # the button row, then its caption
-            page.get_by_text("Saved ", exact=False).first.wait_for(timeout=10_000)
+            page.get_by_text(SAVED).first.wait_for(timeout=10_000)
             if width > 760:  # the sidebar's list (collapsed on narrow screens)
-                page.get_by_text("Saved conversations").first.wait_for(timeout=10_000)
+                page.get_by_text("Saved conversations", exact=True).first.wait_for(timeout=10_000)
         page.wait_for_timeout(300)  # let the layout settle after the last element arrives
         page.screenshot(path=SHOTS / f"{name}-{width}-{scheme}.png", full_page=True)
 
@@ -174,7 +178,7 @@ def test_a_saved_conversation_reopens_from_the_sidebar(server, browser):
         box.fill(QUESTION)
         box.press("Enter")
         page.get_by_role("button", name="Save").click()
-        page.get_by_text("Saved ", exact=False).first.wait_for(timeout=10_000)
+        page.get_by_text(SAVED).first.wait_for(timeout=10_000)
 
         page = context.new_page()  # a new session: nothing on screen
         page.goto(server)
@@ -212,7 +216,7 @@ def test_export_downloads_and_rename_lands_in_the_sidebar(server, browser, tmp_p
         assert "[report.pdf p.1]" in text
 
         page.get_by_role("button", name="Save").click()
-        page.get_by_text("Saved ", exact=False).first.wait_for(timeout=10_000)
+        page.get_by_text(SAVED).first.wait_for(timeout=10_000)
         sidebar = page.locator('[data-testid="stSidebar"]')
         sidebar.locator('[data-testid="stSelectbox"]').click()
         page.get_by_role("option").filter(has_text=QUESTION).first.click()
@@ -261,5 +265,95 @@ def test_a_question_during_the_warm_load_leaves_the_chat_box_usable(warming_serv
         box.fill(FOLLOW_UP)
         box.press("Enter")
         page.get_by_text("Searched for:").wait_for(timeout=20_000)
+    finally:
+        context.close()
+
+
+SSO = "Which plan has single sign-on?"
+
+
+def _save(page, server, question: str) -> None:
+    page.goto(server)
+    box = page.locator('[data-testid="stChatInput"] textarea')
+    box.wait_for(timeout=20_000)
+    box.fill(question)
+    box.press("Enter")
+    page.get_by_role("button", name="Open page").first.wait_for(timeout=20_000)
+    page.get_by_role("button", name="Save").click()
+    page.get_by_text(SAVED).first.wait_for(timeout=10_000)
+
+
+def _search(page, text: str) -> None:
+    field = page.locator('[data-testid="stSidebar"]').get_by_placeholder(
+        "Words from a title, question or answer"
+    )
+    field.fill(text)
+    field.press("Enter")
+    page.wait_for_timeout(500)
+
+
+@pytest.fixture(scope="module")
+def searched(server, browser):
+    """Two saved conversations on the shared server: revenue, then single sign-on."""
+    context = browser.new_context(viewport={"width": 1512, "height": HEIGHT})
+    page = context.new_page()
+    for question in (QUESTION, SSO):
+        _save(page, server, question)
+    context.close()
+    return server
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize("width", WIDTHS)
+def test_search_layout(searched, browser, width, scheme):
+    SHOTS.mkdir(exist_ok=True)
+    context = browser.new_context(viewport={"width": width, "height": HEIGHT}, color_scheme=scheme)
+    page = context.new_page()
+    try:
+        page.goto(searched)
+        page.locator('[data-testid="stChatInput"]').wait_for(timeout=20_000)
+        sidebar = page.locator('[data-testid="stSidebar"]')
+        if width <= 760:  # collapsed: open it, as a phone user would
+            page.locator('[data-testid="stExpandSidebarButton"]').click()
+            page.wait_for_timeout(500)
+        for name, text, expect_text in (
+            ("some", "sign-on", " match"),
+            ("none", "walrus", "No saved conversation matches."),
+        ):
+            _search(page, text)
+            sidebar.get_by_text(expect_text).first.wait_for(timeout=10_000)
+            page.screenshot(path=SHOTS / f"chat-search-{name}-{width}-{scheme}.png", full_page=True)
+            scroll, inner = _overflow(page)
+            assert scroll <= inner, f"horizontal overflow: {scroll} > {inner}"
+        assert sidebar.locator('[data-testid="stSelectbox"]').count() == 0  # none: no list
+    finally:
+        context.close()
+
+
+def test_a_pick_the_search_filters_out_clears_in_the_browser(searched, browser):
+    """AppTest drops a selectbox value it no longer offers by itself; this is the browser."""
+    context = browser.new_context(viewport={"width": 1512, "height": HEIGHT})
+    page = context.new_page()
+    try:
+        page.goto(searched)
+        page.locator('[data-testid="stChatInput"]').wait_for(timeout=20_000)
+        sidebar = page.locator('[data-testid="stSidebar"]')
+        selectbox = sidebar.locator('[data-testid="stSelectbox"]')
+        selectbox.click()
+        page.get_by_role("option").filter(has_text=QUESTION).first.click()
+        page.wait_for_timeout(300)
+        assert selectbox.locator("input").input_value().startswith(QUESTION)
+        _search(page, "single")  # the revenue conversation doesn't match
+        sidebar.get_by_text(" match").first.wait_for(timeout=10_000)
+        assert selectbox.locator("input").input_value() == ""
+        assert sidebar.locator("button").filter(has_text="Open").first.is_disabled()
+        selectbox.click()
+        page.get_by_role("option").first.wait_for(timeout=5_000)
+        options = page.get_by_role("option").all_inner_texts()
+        assert options and all(o.startswith(SSO) for o in options), options
+        page.get_by_role("option").first.click()
+        sidebar.locator("button").filter(has_text="Open").first.click()
+        page.get_by_text("Searched in:").first.wait_for(timeout=10_000)
+        assert page.get_by_text(SSO).count() >= 1
     finally:
         context.close()
