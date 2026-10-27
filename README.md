@@ -44,6 +44,9 @@ uv run qwn eval review                        # turn 👍/👎 Chat ratings into
 - **Save a conversation:** nothing is kept unless you ask. **Save** on the Chat page (or `/save`
   in `qwn chat`) writes it into the index folder; reopen it from the sidebar (or `/open`,
   `qwn chat --open N`) with its answers and pages, and follow-ups carry on.
+- **Export or rename a conversation:** **Export** on the Chat page (or `/export [PATH]` in
+  `qwn chat`) writes the conversation as Markdown, with its citations and source paths, for your
+  notes; **Rename** in the sidebar (or `/rename N TITLE`) gives a saved one a title of your own.
 - **Check a citation:** under an answer, **Open page** shows the cited page with the passage that
   supports the answer outlined (approximate; found when you open it, which takes a few seconds).
 - **Supported files:** PDF, PNG, JPEG, WebP, Markdown and plain text. Export slides to PDF first.

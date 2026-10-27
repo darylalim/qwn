@@ -170,3 +170,89 @@ def test_delete_asks_first_then_removes_the_file(corpus_home, generator, store):
     assert not at.exception
     assert files(store) == [] and at.session_state["saved"] is None
     assert "Saved conversations appear here." in texts(at.sidebar.caption)
+
+
+# Export and Rename (PLAN.md → CLI → Export and rename conversations)
+
+
+@pytest.fixture
+def downloads(monkeypatch):
+    """The arguments of every `st.download_button` call, newest last (AppTest keeps the file
+    only during a run), with a fixed clock for the export time."""
+    import qwn.conversations
+
+    calls: list[dict] = []
+    real = st.download_button
+
+    def record(label, data, **kwargs):
+        calls.append({"label": label, "data": data, **kwargs})
+        return real(label, data, **kwargs)
+
+    monkeypatch.setattr(st, "download_button", record)
+    monkeypatch.setattr(qwn.conversations, "now", lambda: "2026-10-26T14:05:31+08:00")
+    return calls
+
+
+def test_export_offers_the_conversation_on_screen_as_markdown(corpus_home, generator, downloads):
+    at = app()
+    assert not at.download_button and not downloads  # nothing to export before an answer
+    at.chat_input[0].set_value(REVENUE).run()
+    at.chat_input[0].set_value("And in 2025?").run()
+    assert not at.exception
+    [export] = at.download_button
+    assert export.label == "Export"
+    last = downloads[-1]
+    assert last["file_name"] == "qwn-conversation-2026-10-26-1405.md"
+    assert last["mime"] == "text/markdown" and last["on_click"] == "ignore"
+    text = last["data"]
+    assert text.startswith(f"# {REVENUE}\n\nExported from qwn, 2026-10-26 14:05 · 2 questions")
+    assert "· not saved\n" in text  # unsaved exchanges are exported too
+    assert "## 2. And in 2025?" in text and f"Searched for: {REVENUE} And in 2025?" in text
+    assert "[report.pdf p.1]" in text and f"{corpus_home[1] / 'report.pdf'}, page 1" in text
+    button(at, "Save").click().run()
+    assert "· saved 2026-10-26 " in downloads[-1]["data"]
+
+
+def rename_to(at, title: str):
+    """Open the Rename dialog and press its Rename on the same run (AppTest doesn't rerun a
+    dialog by itself; see the Delete test)."""
+    button(at, "Rename").click().run()
+    [field] = [t for t in at.text_input if t.label == "Title"]
+    field.set_value(title)
+    sidebar, confirm = (b for b in at.button if b.label == "Rename")
+    sidebar.click()
+    confirm.click().run()
+    assert not at.exception
+    return at
+
+
+def test_rename_through_the_dialog(corpus_home, generator, store):
+    at = app()
+    at.chat_input[0].set_value(REVENUE).run()
+    button(at, "Save").click().run()
+    [summary] = store.list()
+    at = app()  # a new session: the open conversation isn't this one
+    assert button(at, "Rename").disabled
+    at.sidebar.selectbox[0].select(summary.id).run()
+    rename_to(at, "  ")
+    assert "A title can't be empty." in texts(at.error)
+    assert store.load(summary.id).title == REVENUE  # unchanged, the dialog still open
+    rename_to(at, "Revenue by year")
+    assert not at.error
+    [option] = at.sidebar.selectbox[0].options
+    assert option.startswith("Revenue by year · ")
+    assert store.load(summary.id).saved == summary.saved
+
+
+def test_renaming_the_open_conversation_then_saving_keeps_the_title(corpus_home, generator, store):
+    at = app()
+    at.chat_input[0].set_value(REVENUE).run()
+    button(at, "Save").click().run()
+    [summary] = store.list()
+    at.sidebar.selectbox[0].select(summary.id).run()
+    rename_to(at, "Mine")
+    assert at.session_state["saved"].title == "Mine"
+    at.chat_input[0].set_value("And in 2025?").run()
+    button(at, "Save").click().run()
+    saved = store.load(summary.id)
+    assert saved.title == "Mine" and len(saved.exchanges) == 2

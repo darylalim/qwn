@@ -6,6 +6,9 @@ has storage code of its own. A saved file holds questions, answers and document 
 loaded strictly (nothing half-loaded, no image path outside the index) and everything shown from
 it goes through the same filters as a fresh answer. Nothing here logs titles, questions or
 answers: only ids, counts, file names and timings.
+
+Export (`markdown`) and rename are in PLAN.md → CLI → Export and rename conversations: an export
+is the only file qwn writes your questions to outside the index, and only when you ask.
 """
 
 import json
@@ -16,12 +19,12 @@ import tempfile
 import time
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from qwn.answer import Response
+from qwn.answer import Response, cite_label
 from qwn.guard import Check
 from qwn.index import Chunk
 from qwn.interfaces import Source, Verdict
@@ -36,6 +39,16 @@ _ID = re.compile(r"^[0-9a-f]{12}$")
 _reported: set[Path] = set()  # unreadable files already logged, once per process
 
 SourceState = Literal["ok", "changed", "missing"]
+STATE_NOTES: dict[SourceState, str] = {
+    "changed": " (changed since this answer)",
+    "missing": " (no longer in your library)",
+}
+
+# ANSI escape sequences (CSI, OSC, two-byte), then any other C0/C1 control but newline and tab
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-_]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+_HEADING = re.compile(r"^( {0,3})#", re.MULTILINE)
+_EXPORT_NAME = "qwn-conversation-{:%Y-%m-%d-%H%M}{}.md"
 
 
 class UnknownConversation(LookupError):
@@ -89,21 +102,35 @@ def now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def printable(text: str) -> str:
+    """Model or document text with escape sequences and control characters (but newline and
+    tab) dropped, so it can't move a terminal's cursor or hide in an exported file."""
+    return _CONTROL.sub("", _ANSI.sub("", text))
+
+
 def title_for(question: str) -> str:
     """The first question with whitespace collapsed, cut to `TITLE_CHARS` with an ellipsis."""
     title = " ".join(question.split())
     return title if len(title) <= TITLE_CHARS else title[: TITLE_CHARS - 1].rstrip() + "…"
 
 
+def clean_title(text: str) -> str:
+    """A title you typed: control characters dropped, whitespace collapsed, cut as `title_for`."""
+    title = title_for(printable(text))
+    if not title:
+        raise ValueError("A title can't be empty.")
+    return title
+
+
 def make(exchanges: Iterable[Exchange], previous: Conversation | None = None) -> Conversation:
-    """The conversation to save: `previous`'s id and creation time if it was saved or opened
-    before (saving again overwrites its file), else new ones."""
+    """The conversation to save: `previous`'s id, title and creation time if it was saved or
+    opened before (saving again overwrites its file, and keeps a renamed title), else new ones."""
     items = tuple(exchanges)
     if not items:
         raise ValueError("a conversation needs at least one exchange")
     return Conversation(
         id=previous.id if previous else new_id(),
-        title=title_for(items[0].question),
+        title=previous.title if previous else title_for(items[0].question),
         created=previous.created if previous else now(),
         saved=previous.saved if previous else "",
         exchanges=items,
@@ -130,6 +157,96 @@ def source_state(hit: Hit, documents: dict[str, str]) -> SourceState:
     return "ok" if sha == hit.chunk.sha256 else "changed"
 
 
+def source_states(conversation: Conversation, documents: dict[str, str]) -> dict[str, SourceState]:
+    """`source_state` for every source in the conversation, by chunk id."""
+    return {
+        h.chunk.chunk_id: source_state(h, documents)
+        for e in conversation.exchanges
+        for h in e.response.hits
+    }
+
+
+def export_name(conversation: Conversation, exported: str) -> str:
+    """The default export file name, from the export time: never the title, which could hold a
+    `/` or say what the documents are in a file listing (`conversation` is unused for that)."""
+    return _EXPORT_NAME.format(datetime.fromisoformat(exported), "")
+
+
+def free_path(folder: Path, name: str) -> Path:
+    """`folder / name`, or with `-2`, `-3`, … before `.md` when that file exists."""
+    path, n = folder / name, 1
+    while path.exists():
+        n += 1
+        path = folder / f"{name.removesuffix('.md')}-{n}.md"
+    return path
+
+
+def write_export(path: Path, text: str) -> None:
+    """Write an export `0o600`, never over an existing file (`FileExistsError`, even for one
+    that appears after the caller checked), never creating folders (`FileNotFoundError`)."""
+    start = time.perf_counter()
+    data = text.encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    path.chmod(0o600)  # os.open's mode is masked by the umask
+    logger.info(
+        "conversation exported: bytes=%d seconds=%.3f", len(data), time.perf_counter() - start
+    )
+
+
+def markdown(conversation: Conversation, states: dict[str, SourceState], exported: str) -> str:
+    """The conversation as Markdown, for your notes: questions, answers with `[file p.N]`
+    citations, and each answer's cited sources (path, page, whether it changed since). No
+    source text or page images. Pure: `states` from `source_states`, `exported` a local
+    ISO-8601 time. Everything that can carry document text goes through `_md`."""
+    n = len(conversation.exchanges)
+    saved = f"saved {saved_when(conversation.saved)}" if conversation.saved else "not saved"
+    lines = [
+        f"# {_md_line(conversation.title)}",
+        "",
+        f"Exported from qwn, {saved_when(exported)} · {n} question{'s' if n != 1 else ''} · "
+        f"{saved}",
+    ]
+    for i, e in enumerate(conversation.exchanges, start=1):
+        r = e.response
+        lines += ["", f"## {i}. {_md_line(e.question)}"]
+        if e.spoken:
+            lines += ["", "(spoken question)"]
+        if r.standalone:
+            lines += ["", f"Searched for: {_md_line(r.standalone)}"]
+        if e.scope:
+            lines += ["", f"Searched in: {_md_line(', '.join(e.scope))}"]
+        lines += [x for check in r.warnings for x in ("", f"> ⚠ {_md_line(check.message())}")]
+        if (block := r.blocked) is not None:
+            lines += ["", f"> ⛔ {_md_line(block.message())}"]
+            continue
+        lines += ["", _md(r.rendered())]
+        cited = r.cited_sources()
+        if cited:
+            lines += ["", "Sources:", ""]
+        for source, hit in cited:
+            page = f", page {source.page}" if source.page is not None else ""
+            note = STATE_NOTES.get(states.get(source.chunk_id, "ok"), "")
+            lines.append(
+                f"- [{_md_line(cite_label(source, hit))}] {_md_line(source.path)}{page}{note}"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def _md(text: str) -> str:
+    """Model or document text made inert in a Markdown viewer: no control characters, raw HTML
+    shown as text, no image a viewer would fetch, no line that becomes a heading. Links stay
+    text with their URL: following one takes a click."""
+    text = printable(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return _HEADING.sub(r"\1\\#", text.replace("![", "!\\["))
+
+
+def _md_line(text: str) -> str:
+    """`_md` on one line (a heading, a path): newlines and tabs collapsed to spaces."""
+    return _md(" ".join(printable(text).split()))
+
+
 class Store:
     """Saved conversations in `index_root / "conversations"`, one `<id>.json` each."""
 
@@ -152,8 +269,27 @@ class Store:
             now(),
             conversation.exchanges,
         )
-        target = self.path(saved.id)
-        data = json.dumps(self._dump(saved), indent=2, sort_keys=True, ensure_ascii=False)
+        self._write(saved)
+        logger.info(
+            "conversation saved: id=%s exchanges=%d seconds=%.3f",
+            saved.id,
+            len(saved.exchanges),
+            time.perf_counter() - start,
+        )
+        return saved
+
+    def rename(self, conversation_id: str, title: str) -> Conversation:
+        """Give a saved conversation a title of your own. Only the title changes: `saved` stays,
+        so a rename doesn't move it up the list. `ValueError` for an empty title."""
+        renamed = replace(self._read(self.path(conversation_id)), title=clean_title(title))
+        self._write(renamed)
+        logger.info("conversation renamed: id=%s", renamed.id)
+        return renamed
+
+    def _write(self, conversation: Conversation) -> None:
+        """Atomically: a temp file in the folder, then `os.replace`."""
+        target = self.path(conversation.id)
+        data = json.dumps(self._dump(conversation), indent=2, sort_keys=True, ensure_ascii=False)
         self.folder.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.folder.chmod(0o700)  # mkdir's mode is masked by the umask
         fd, tmp = tempfile.mkstemp(dir=self.folder, prefix=".", suffix=".tmp")  # 0o600
@@ -166,13 +302,6 @@ class Store:
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
             raise
-        logger.info(
-            "conversation saved: id=%s exchanges=%d seconds=%.3f",
-            saved.id,
-            len(saved.exchanges),
-            time.perf_counter() - start,
-        )
-        return saved
 
     def list(self) -> list[Summary]:
         """Every readable saved conversation, most recently saved first."""

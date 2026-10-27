@@ -3,7 +3,6 @@
 import json
 import logging
 import os
-import re
 import time
 import uuid
 from collections.abc import Callable
@@ -429,15 +428,12 @@ def ask(
         typer.echo(f"Spoken answer: {speak} ({len(spoken) / SAMPLE_RATE:.1f} s)", err=True)
 
 
-# ANSI escape sequences (CSI, OSC, two-byte), then any other C0/C1 control but newline and tab
-_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-_]")
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
-
-
 def _plain(text: str) -> str:
     """Model or document text made safe to print: an echoed answer can't move the cursor or
     rewrite earlier lines (PLAN.md → CLI → `qwn chat`, Privacy and security)."""
-    return _CONTROL.sub("", _ANSI.sub("", text))
+    from qwn.conversations import printable
+
+    return printable(text)
 
 
 def _print_response(
@@ -459,12 +455,6 @@ def _print_response(
     _print_sources(response, all_sources=all_sources, states=states)
 
 
-STATE_NOTES = {
-    "changed": "  (changed since this answer)",
-    "missing": "  (no longer in your library)",
-}
-
-
 def _print_sources(
     response: "Response",
     *,
@@ -474,6 +464,7 @@ def _print_sources(
     """The cited sources, or with `all_sources` every source the model was given (cited `*`).
     `states` (by chunk id) marks a saved answer's sources that changed or left the library."""
     from qwn.answer import cite_label
+    from qwn.conversations import STATE_NOTES
 
     pairs = list(zip(response.sources, response.hits, strict=True))
     listed = pairs if all_sources else response.cited_sources()
@@ -485,20 +476,23 @@ def _print_sources(
         mark = "*" if all_sources and source.label in cited else " "
         where = f"  p.{source.page}" if source.page is not None else ""
         note = STATE_NOTES.get((states or {}).get(source.chunk_id, "ok"), "")
+        note = f" {note}" if note else ""  # two spaces before it, as between the columns
         typer.echo(_plain(f" {mark}[{cite_label(source, hit)}]  {source.path}{where}{note}"))
 
 
 CHAT_HELP = """Commands:
-  /help         this list
-  /quit         leave (or Ctrl-D)
-  /new          start a new conversation (keeps the scope)
-  /sources      every source the last answer was given, cited ones marked *
-  /in PATH...   search only these files or folders (no PATH: everything); keeps the history
-  /history      what the next follow-up is rewritten with
-  /save         save this conversation (in the index folder; nothing is saved otherwise)
-  /list         saved conversations, most recent first
-  /open N|ID    open a saved conversation (its number in /list, or its id)
-  /delete N|ID  delete a saved conversation
+  /help               this list
+  /quit               leave (or Ctrl-D)
+  /new                start a new conversation (keeps the scope)
+  /sources            every source the last answer was given, cited ones marked *
+  /in PATH...         search only these files or folders (no PATH: everything); keeps the history
+  /history            what the next follow-up is rewritten with
+  /save               save this conversation (in the index folder; nothing is saved otherwise)
+  /export [PATH]      write this conversation as Markdown (here, or in or to PATH)
+  /list               saved conversations, most recent first
+  /open N|ID          open a saved conversation (its number in /list, or its id)
+  /rename N|ID TITLE  give a saved conversation a title of your own
+  /delete N|ID        delete a saved conversation
 Keys: Ctrl-C clears the line, or cancels an answer; ↑ recalls earlier questions."""
 HISTORY_CHARS = 120  # /history cuts each answer here
 PROMPT = "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK} "
@@ -650,6 +644,10 @@ class _Chat:
 
         from qwn.retrieve import EmptyScope
 
+        if line.split(maxsplit=1)[0] == "/rename":  # the title is free text: "Bob's notes"
+            self.warned = None
+            self.rename(line)
+            return None
         try:
             name, *args = shlex.split(line)
         except ValueError as e:  # an unclosed quote
@@ -677,6 +675,8 @@ class _Chat:
                 _print_sources(self.last, all_sources=True, states=self.states(self.last))
         elif name == "/save":
             self.save()
+        elif name == "/export":
+            self.export(args[0] if args else None)
         elif name == "/list":
             self.list_saved()
         elif name == "/open":
@@ -784,6 +784,76 @@ class _Chat:
         n = len(self.saved.exchanges)
         title = _plain(self.saved.title)
         typer.echo(f"Saved as {self.saved.id}: {title} ({n} question{'s' if n != 1 else ''}).")
+
+    def export(self, where: str | None) -> None:
+        """Write the conversation as Markdown: to a file PATH (never over an existing one), or a
+        dated name in a folder PATH or the current folder (`-2` etc. when it's taken)."""
+        from qwn.conversations import (
+            export_name,
+            free_path,
+            make,
+            markdown,
+            now,
+            source_states,
+            write_export,
+        )
+
+        if not self.exchanges:
+            typer.echo("Nothing to export yet.")
+            return
+        conversation = make(self.exchanges, self.saved)
+        exported = now()
+        target = Path(where).expanduser() if where else Path.cwd()
+        if target.is_dir():
+            target = free_path(target, export_name(conversation, exported))
+        documents = {d.path: d.sha256 for d in self.answerer.retriever.index.documents()}
+        text = markdown(conversation, source_states(conversation, documents), exported)
+        try:
+            write_export(target, text)
+        except FileExistsError:
+            typer.secho(
+                _plain(f"{target} exists. /export PATH to choose another."), fg="red", err=True
+            )
+            return
+        except FileNotFoundError:
+            typer.secho(_plain(f"No folder {target.parent}."), fg="red", err=True)
+            return
+        except OSError as e:
+            typer.secho(_plain(f"Couldn't export to {target}: {e.strerror}."), fg="red", err=True)
+            return
+        n = len(conversation.exchanges)
+        typer.echo(_plain(f"Exported {n} question{'s' if n != 1 else ''} to {target}."))
+
+    def rename(self, line: str) -> None:
+        """/rename N|ID TITLE…: the rest of the line is the title, quotes optional."""
+        from dataclasses import replace
+
+        from qwn.conversations import UnknownConversation
+
+        _, ref, title = [*line.split(maxsplit=2), "", ""][:3]
+        if len(title) >= 2 and title[0] == title[-1] and title[0] in "'\"":
+            title = title[1:-1]
+        if not ref:
+            typer.echo("Which one? /rename N TITLE or /rename ID TITLE (see /list).")
+            return
+        if not title.strip():
+            typer.echo("Which title? /rename N TITLE.")
+            return
+        try:
+            renamed = self.store.rename(self.store.resolve(ref).id, title)
+        except UnknownConversation:
+            typer.secho(f"No saved conversation {_plain(ref)}. Type /list.", fg="red", err=True)
+            return
+        except ValueError as e:  # nothing left after dropping control characters
+            typer.secho(str(e), fg="red", err=True)
+            return
+        except OSError as e:
+            typer.secho(f"Couldn't rename the conversation: {e}", fg="red", err=True)
+            return
+        if self.saved is not None and self.saved.id == renamed.id:
+            self.saved = replace(self.saved, title=renamed.title)  # the next /save keeps it
+        end = "" if renamed.title.endswith((".", "?", "!", "…")) else "."
+        typer.echo(_plain(f"Renamed to {renamed.title}{end}"))
 
     def list_saved(self) -> None:
         from qwn.conversations import saved_when
