@@ -137,7 +137,12 @@ current after an answer. No reindex.
 **Released as v0.14.0** (2026-10-27): every follow-up above since v0.13.0 (Versioning): autosave
 saved conversations. No reindex: an index from v0.13.0 works as is.
 
-**Open follow-ups:** none.
+The demo video follow-up is planned (Demo video, planned 2026-11-09): a scripted 75–90 s
+1080p feature reel of the hard corpus with real models, captions only, quiet background music
+and one voice shot, published as GitHub Release assets and linked from the README. No code in
+`src/qwn/`, no version bump.
+
+**Open follow-ups:** demo video (implement next on `followup/demo-video`).
 
 **Reading order** (the plan is long; read only what the current phase needs):
 
@@ -187,6 +192,10 @@ saved conversations. No reindex: an index from v0.13.0 works as is.
     and implementation notes: the button row, `make`), Export and rename conversations (rename
     of the open conversation) and `qwn chat`; Streamlit UI (Chat, Responsive layout); Storage
     layout; Runtime robustness → Logging.
+18. **Demo video follow-up:** Demo video; Streamlit UI (Chat, Answer highlighting, Voice input
+    pipeline → Phase 4 findings, Responsive layout, Theme); CLI → `qwn chat`; Evaluation →
+    Harder tier and Multi-turn questions (the turns set); License; CLAUDE.md → README
+    screenshots and Terminal checks.
 
 **Workflow for each phase:**
 
@@ -4605,6 +4614,200 @@ independent of source order within rule R. Per this section, no further wordings
 tried. Source order reuse stays closed; reconsider it only with a generator whose answers don't
 move with source order (a T retry would then cost ~17.5 s per bare refusal on a reordered prompt,
 3.3 s per reordered query at today's rate).
+
+## Demo video (follow-up, planned 2026-11-09)
+
+**Why:** the README shows still screenshots. A short video shows what they can't: a question
+turning into a cited answer, the supporting passage highlighted on the page, a spoken question
+answered aloud. Its audience is YouTube viewers who haven't installed qwn. **No change to
+`src/qwn/`, retrieval, prompts, Guard or the eval sets.** One follow-up PR (branch
+`followup/demo-video`), no version bump and no release PR: like the README rewrite (PR #81), it
+ships no code users run.
+
+**Decisions (agreed 2026-11-09):**
+
+- **A short feature reel, 75–90 s, 1080p (1920×1080, 30 fps), dark theme.** Hook first: the
+  first shot is a question turning into a cited answer, not setup.
+- **Scripted and repeatable.** A committed timeline and two scripts (record, assemble) make the
+  video from the hard eval corpus (synthetic documents) with real models. After a UI change,
+  re-run them; nothing is edited by hand. Greedy decoding makes answers repeat, so the timeline
+  names its queries and the record step checks each answer on screen.
+- **On-screen captions only, no narration.** Captions carry every point, so the video works
+  muted (YouTube's feed and phones autoplay muted).
+- **Audio: quiet background music, plus the voice shot.** No TTS narrator: it would blur which
+  voice is qwn's spoken answer. The music ducks out for the voice shot, so the only speech in the
+  video is the feature itself.
+- **Two outputs from one timeline:** `qwn-demo.mp4` (music, for YouTube) and
+  `qwn-demo-silent.mp4` (no audio track: README, GIFs, social clips). Same cuts and captions.
+- **Honest about waits.** An answer takes ~12–30 s. Waits are sped up, never cut out, and
+  every sped-up stretch carries a "sped up N×" label for its whole length. The end card says
+  waits were sped up.
+- **Published as GitHub Release assets**, not committed (`dist/` is gitignored). The user uploads
+  to YouTube; the README links to the video.
+
+**Shot list (timeline order; times are targets, the timeline file sets them):**
+
+| # | ~Time | Shot | Query (picked by rule in step 3) | Caption (draft) |
+|---|---|---|---|---|
+| 1 | 0–8 s | Chat: type a question, cited answer appears | hard-033 (`locate_hit` true, short cited answer) | "Ask your documents. Get answers with page citations." |
+| 2 | 8–16 s | Open page on shot 1's answer: supporting passage highlighted | same | "Check every answer against the source page" |
+| 3 | 16–28 s | A question answered from a scan, table or chart | rule F | "It reads the pages themselves: scans, tables, charts" |
+| 4 | 28–38 s | A follow-up that needs the turn before | rule T | "Ask follow-up questions" |
+| 5 | 38–48 s | Voice: spoken question → transcript → cited answer, spoken aloud | rule V | "Ask out loud. Hear the answer. Still offline." |
+| 6 | 48–55 s | A question the documents can't answer: a clean refusal | rule A | "Not in your documents? It says so." |
+| 7 | 55–63 s | Library: PDFs, scans, screenshots and notes indexed (the hard corpus has no slides) | none | "PDFs, images and notes, all indexed on your Mac" |
+| 8 | 63–73 s | `qwn chat` in a terminal | rule F (another query) | "Or ask from the terminal" |
+| 9 | 73–83 s | End card | none | "100% on-device · Qwen3-VL-8B on MLX · Apple Silicon · waits sped up" + repo URL |
+
+If the cut runs over 90 s, drop shot 8 first, then shorten shot 7. Voice stays.
+
+**Left out (agreed):** saved conversations, search, export, rename, the eval, light mode. They
+belong in a longer walkthrough, if one is ever made.
+
+**Query rules** (applied in step 3 to the last hard result with `answer_text`, today
+`eval/results/20261025T195301Z-hard.json`, and the last turns result; never change a query
+because of a video). Every answer shot also needs `rank` 1, `citation_hit`, `answer_contains`
+true and an answer of at most 40 words. 31 hard queries pass that today.
+
+- **F (figure):** tag `scan`, `table` or `chart`, and `locate_hit` true. Prefer one whose
+  thumbnail is visibly not plain text.
+- **T (follow-up):** a turns conversation whose first question and follow-up both retrieve the
+  expected page at rank 1 with `rewrite_hit`. The shot asks both live; only the follow-up's wait
+  is on screen at full length.
+- **V (voice):** an answerable hard query not used in another shot, with an answer of at most 25
+  words, so the spoken answer is ~10 s or less.
+- **A (abstain):** an unanswerable hard query whose answer is the bare refusal (7 words; 7 of 9
+  today).
+
+Step 3 lists the candidates with their `answer_text`; the user picks, and the ids go in the
+timeline.
+
+**Files (all outside `src/qwn/`, so the adapter rule doesn't apply; no new dependencies):**
+
+- `docs/video/timeline.toml`: shots in order, each with its kind (`chat`, `open_page`,
+  `followup`, `voice`, `refusal`, `library`, `terminal`, `card`), query ids, caption text and
+  timing, speed factor for waits, and the music cues. The one source for both outputs.
+- `scripts/demo_video/timeline.py`: stdlib only (`tomllib`). Parses and validates the timeline,
+  and turns it plus the record step's `events.json` into the ffmpeg arguments, the music volume
+  curve and the SRT. All pure functions with fast tests (`tests/unit/test_demo_timeline.py`,
+  loading the file by path; no ffmpeg or Chrome in CI).
+- `scripts/demo_video/record.py`: real models, Playwright and a pty. Writes raw frames,
+  `events.json` and audio to a folder.
+- `scripts/demo_video/assemble.py`: ffmpeg only, no models, seconds per run. Writes `dist/video/`.
+- External tool: **ffmpeg** (Homebrew 7.1.1 here, a GPL build because of `libx264`). It's run as
+  a separate program to encode the video, never imported or shipped, so qwn's Apache-2.0 license
+  and the License table are unchanged. Confirm with the user in the PR.
+
+**Record step** (`uv run python scripts/demo_video/record.py --index index/eval-hard/<hash>
+--question-wav PATH --out <folder>`; ~10 min):
+
+- Refuses to start if `qwn ui` or `qwn chat` is running (the model lock), or if the hard index's
+  `conversations/` folder isn't empty (the sidebar would show them). It saves nothing: no Save
+  click, so there's no autosave.
+- Starts `qwn ui` on the hard corpus (`QWN_DATA_DIR=data/eval-hard`, `QWN_INDEX_DIR`,
+  `STREAMLIT_SERVER_PORT`, `STREAMLIT_SERVER_HEADLESS=true`), and Chrome through Playwright
+  (`channel="chrome"`) at a **1280×720 viewport, `device_scale_factor` 1.5** (1920×1080
+  pixels; at 1920 px CSS the 736 px Chat column is too small to read on a phone),
+  `color_scheme="dark"`, microphone permission for the page's origin, and the flags
+  `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream
+  --use-file-for-fake-audio-capture=<wav>%noloop --autoplay-policy=no-user-gesture-required`.
+- **Home folder:** an init script (`add_init_script`) keeps a `MutationObserver` that rewrites
+  the user's home path to `~` in text and in `title`/`alt` attributes before each frame, as the
+  README screenshots did by hand. Before each frame the script asserts no text node still holds
+  it, and fails otherwise.
+- **Warm-up off camera:** open the page, wait for the warm load, ask one typed and one spoken
+  warm-up question (voice models load on first use; cold TTS ~17 s), then New conversation. Every
+  shot starts from New conversation.
+- **Capture:** the method chosen in step 1 (CDP `Page.startScreencast` frames with timestamps,
+  or Playwright's `record_video`). Each shot logs its events (start, question sent, answer shown,
+  dialog open, audio start, end) on the frames' clock to `events.json`.
+- **Checks** (the step fails, saying which shot and why): each answer on screen contains its
+  query's `answer_contains`, the refusal is `ABSTAIN_TEXT`, and the voice shot's transcript has
+  the query's words (lowercased, punctuation removed). Otherwise re-record the WAV.
+- **Spoken answer audio:** Playwright's video has no sound. When the `<audio>` element appears,
+  the script fetches its `src` (`page.request`, localhost) to `answer.wav` and logs the time;
+  autoplay starts it then. TTS samples at temperature 0.9, so the audio differs between recording
+  runs, but it always comes from the run that made the frames.
+- **Terminal shot:** after stopping `qwn ui` (one model owner), run `qwn chat` on the same index
+  through `pty.openpty()` as in CLAUDE.md → Terminal checks, type the question with a fixed delay
+  per character, and record `(time, bytes)` until the child exits. The script replays that log in
+  a local HTML page (theme colours from `.streamlit/config.toml`, each line's text after its last
+  `\r`, no external scripts) and captures it like the other shots.
+- **Cards and captions** are local HTML pages rendered in the same Chrome with Streamlit's
+  bundled Source Sans (OFL; the UI's own font, loaded by `@font-face` from the installed
+  package, never the network). Captions are transparent PNGs that assemble overlays, so ffmpeg
+  needs no font.
+
+**Assemble step** (`uv run python scripts/demo_video/assemble.py <folder> --music PATH`):
+
+- Frames → a constant 30 fps clip per shot. Each wait between "question sent" and "answer shown"
+  plays at the timeline's speed factor with the "sped up N×" label; everything else plays at 1×.
+- Captions and the label are overlaid from the PNGs. `qwn-demo.srt` gets the same captions, for
+  YouTube's subtitle upload.
+- **Music** (`--music`, a file the user picks): fades in over 1 s, sits at about −18 dB under
+  the picture, fades to silence 0.5 s before the voice shot's question and back 0.5 s after its
+  spoken answer ends, and fades out over the end card's last 2 s. The voice shot carries the
+  question WAV and `answer.wav` at their logged times. The mix is loudness-normalised to −14 LUFS
+  (two-pass `loudnorm`, YouTube's target).
+- **Outputs** (`dist/video/`): `qwn-demo.mp4` (H.264 High, yuv420p, CRF 18, AAC 192 kb/s
+  48 kHz, `+faststart`), `qwn-demo-silent.mp4` (same video stream, no audio),
+  `qwn-demo.srt` and `qwn-demo-thumbnail.png` (1280×720, from shot 1's answer frame and the
+  title, for YouTube).
+
+**Inputs not committed:**
+
+- **Music:** the user's choice. The licence must allow use in a monetisable YouTube video:
+  YouTube Audio Library (no attribution), CC0, or CC-BY with a credit line in the video
+  description. Nothing "personal use only". The file stays out of the repo (most libraries don't
+  allow redistributing the file itself). The PR records its title, source URL and licence.
+- **Spoken question:** the user records the rule V question once (~3 s, 16-bit WAV, quiet room).
+  It's the user's voice, so it stays out of the repo too, passed by `--question-wav`.
+
+**Steps:**
+
+1. **Capture probe** (scratch, then decide). Record the same 10 s of the Chat page (an answer
+   appearing, then the Open page dialog) with CDP screencast (PNG frames) and with
+   `record_video` at the same size, and take a Playwright screenshot of the final state. **Gate
+   C:** a method passes if its last frame's SSIM against the screenshot is at least 0.97
+   (ffmpeg's `ssim` filter). Playwright's video encoder has a low fixed bitrate, so small answer
+   text may blur. Use the passing method with the higher SSIM. If neither passes, stop and
+   propose an alternative (e.g. screenshots at fixed intervals).
+2. **Fake microphone probe.** Through the real Chat page on the hard index, a TTS-made WAV of a
+   hard query (scratch; not the user's voice) played by the fake-capture flags must produce a
+   transcript with the query's words. If `st.audio_input` doesn't record from the fake device in
+   Chrome, stop and propose another way (the voice shot is agreed, so drop it only with the
+   user's OK).
+3. **Pick queries** by the rules above; the user picks among the candidates. The user records
+   the rule V WAV and picks the music.
+4. **Build** `timeline.py` with its tests, then `record.py` and `assemble.py`, iterating on the
+   cut until it reads well. Assemble runs in seconds, so caption and timing edits don't need a
+   new recording.
+5. **User review:** the user watches `qwn-demo.mp4` and `qwn-demo-silent.mp4` in full and
+   approves. Changes go back to step 4.
+6. **Publish** (outward-facing: ask the user first): `gh release upload <latest tag>
+   dist/video/qwn-demo.mp4 dist/video/qwn-demo-silent.mp4` on the latest release (today
+   v0.14.0). The user uploads the music version, `qwn-demo.srt` and the thumbnail to YouTube. The
+   README gets a "Demo" line near the top: the thumbnail (committed as
+   `docs/images/demo-thumbnail.png`, `pngquant` after) linking to the YouTube video, and a link to
+   the release asset. Later releases don't carry the asset; the README link names its tag.
+
+**Exit criteria:**
+
+- Gates C and the fake microphone probe pass (results recorded under Demo video results).
+- `record.py` then `assemble.py` run end to end on the hard index with real models, and all
+  record checks pass (answers, refusal, transcript, no home path in any frame).
+- `ffprobe` on `qwn-demo.mp4`: 1920×1080, 30 fps, H.264 yuv420p, AAC, 75–90 s; integrated
+  loudness −14 ± 1 LUFS. `qwn-demo-silent.mp4` has no audio stream and the same video length.
+- Running `assemble.py` twice on one recording gives a byte-identical `qwn-demo.srt` and the same
+  frame count.
+- Every stretch played above 1× carries the label (checked in `timeline.py` and its tests).
+- The user approved the video (step 5); the release assets are uploaded and the README links
+  work.
+- Format, lint, ty and fast tests pass. `record.py` and `assemble.py` aren't run in CI.
+
+**Out of scope:** narration, a longer walkthrough, light-mode or 4K versions, non-English
+captions, automating the YouTube upload (needs the user's account), and any UI change made only
+to look better on video (stop and ask first).
 
 ## Phases
 
