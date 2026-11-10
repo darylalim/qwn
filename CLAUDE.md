@@ -35,6 +35,8 @@ uv run python eval/public/build_corpus.py <scratch>/new   # then diff -r against
 uv run qwn eval --set hard --locate   # measurement set, no exit criteria; ~35 min: run in background
 QWN_RERANK_CANDIDATES=5 uv run qwn eval --set hard --no-generate --force   # any setting via QWN_* env, for sweeps
 uv run qwn ui                         # Streamlit (localhost only)
+uv run python scripts/demo_video/record.py --out dist/recording   # real models, ~8 min; qwn ui/chat closed
+uv run python scripts/demo_video/assemble.py dist/recording --music PATH   # ffmpeg only, ~20 s → dist/video/
 QWN_DATA_DIR=data/eval-hard QWN_INDEX_DIR=index/eval-hard/<hash> uv run qwn ui   # browser check on known facts; your library untouched
 uv version --bump minor               # one minor release per completed phase (from phase 1)
 ```
@@ -192,6 +194,9 @@ uv version --bump minor               # one minor release per completed phase (f
   Unanswerable rows in `per_query` have no `rank`/`rank_embed` keys: read them with `.get`.
   `--no-generate` changes `settings_hash`, so checking hard ranks against the generated baseline
   is a hand diff of `rank`/`rank_embed` in `per_query`.
+- **Demo video:** captions, speeds and holds live in `docs/video/timeline.toml`: edit, then
+  re-assemble (no re-record). The record checks passed on frames that were still wrong (serif
+  font, answer under the caption): look at frames from the cut before calling it done.
 - **Corpus generators:** draw new facts from their own `random.Random` stream (as
   `SEED_DECOYS` in `eval/hard/build_corpus.py`), never from an existing one, so every existing
   document stays byte-identical. Unit tests that need a corpus build use the session fixture
