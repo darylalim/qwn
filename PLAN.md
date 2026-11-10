@@ -4636,7 +4636,10 @@ ships no code users run.
   muted (YouTube's feed and phones autoplay muted).
 - **Audio: quiet background music, plus the voice shot.** No TTS narrator: it would blur which
   voice is qwn's spoken answer. The music ducks out for the voice shot, so the only speech in the
-  video is the feature itself.
+  video is the feature itself. **Amended 2026-11-10 (agreed):** the user won't record their
+  voice, so Qwen3-TTS (Apache-2.0) speaks the question in a preset other than the answers'
+  `ryan`. A "question voice: synthetic" tag sits on screen for the whole voice shot, and the
+  end card and YouTube description say so too.
 - **Two outputs from one timeline:** `qwn-demo.mp4` (music, for YouTube) and
   `qwn-demo-silent.mp4` (no audio track: README, GIFs, social clips). Same cuts and captions.
 - **Honest about waits.** An answer takes ~12–30 s. Waits are sped up, never cut out, and
@@ -4667,7 +4670,7 @@ belong in a longer walkthrough, if one is ever made.
 **Query rules** (applied in step 3 to the last hard result with `answer_text`, today
 `eval/results/20261025T195301Z-hard.json`, and the last turns result; never change a query
 because of a video). Every answer shot also needs `rank` 1, `citation_hit`, `answer_contains`
-true and an answer of at most 40 words. 31 hard queries pass that today.
+true and an answer of at most 40 words. 37 hard queries pass that today (recounted 2026-11-10).
 
 - **F (figure):** tag `scan`, `table` or `chart`, and `locate_hit` true. Prefer one whose
   thumbnail is visibly not plain text.
@@ -4691,6 +4694,8 @@ timeline.
   and turns it plus the record step's `events.json` into the ffmpeg arguments, the music volume
   curve and the SRT. All pure functions with fast tests (`tests/unit/test_demo_timeline.py`,
   loading the file by path; no ffmpeg or Chrome in CI).
+- `scripts/demo_video/make_question.py`: the voice shot's synthetic question through qwn's TTS
+  (a preset other than `ryan`), written to `docs/video/question.wav` (committed).
 - `scripts/demo_video/record.py`: real models, Playwright and a pty. Writes raw frames,
   `events.json` and audio to a folder.
 - `scripts/demo_video/assemble.py`: ffmpeg only, no models, seconds per run. Writes `dist/video/`.
@@ -4718,12 +4723,15 @@ timeline.
 - **Warm-up off camera:** open the page, wait for the warm load, ask one typed and one spoken
   warm-up question (voice models load on first use; cold TTS ~17 s), then New conversation. Every
   shot starts from New conversation.
-- **Capture:** the method chosen in step 1 (CDP `Page.startScreencast` frames with timestamps,
-  or Playwright's `record_video`). Each shot logs its events (start, question sent, answer shown,
-  dialog open, audio start, end) on the frames' clock to `events.json`.
+- **Capture:** a screenshot loop (chosen in step 1, Demo video results): `page.screenshot(type=
+  "jpeg", quality=95)` back to back, each frame saved with its `time.monotonic()` stamp (~24 fps,
+  native 1920×1080). Waits poll their condition between frames, not in a blocking
+  `wait_for`. Each shot logs its events (start, question sent, answer shown, dialog open, audio
+  start, end) on the frames' clock to `events.json`.
 - **Checks** (the step fails, saying which shot and why): each answer on screen contains its
   query's `answer_contains`, the refusal is `ABSTAIN_TEXT`, and the voice shot's transcript has
-  the query's words (lowercased, punctuation removed). Otherwise re-record the WAV.
+  the query's words (lowercased, punctuation removed). Otherwise make the WAV again, or pick
+  another preset.
 - **Spoken answer audio:** Playwright's video has no sound. When the `<audio>` element appears,
   the script fetches its `src` (`page.request`, localhost) to `answer.wav` and logs the time;
   autoplay starts it then. TTS samples at temperature 0.9, so the audio differs between recording
@@ -4760,8 +4768,12 @@ timeline.
   YouTube Audio Library (no attribution), CC0, or CC-BY with a credit line in the video
   description. Nothing "personal use only". The file stays out of the repo (most libraries don't
   allow redistributing the file itself). The PR records its title, source URL and licence.
-- **Spoken question:** the user records the rule V question once (~3 s, 16-bit WAV, quiet room).
-  It's the user's voice, so it stays out of the repo too, passed by `--question-wav`.
+- **Spoken question:** synthetic (amended 2026-11-10), not an uncommitted input any more.
+  `scripts/demo_video/make_question.py --voice <preset>` makes it with qwn's TTS (16 kHz mono
+  16-bit, 0.5 s lead, 1.5 s tail; its own process, before `qwn ui` starts), and the WAV the user
+  picks by ear is committed as `docs/video/question.wav` (~0.2 MB). TTS samples at temperature
+  0.9, so committing the take keeps re-recordings identical. `record.py` reads it by default
+  (`--question-wav` overrides).
 
 **Steps:**
 
@@ -4771,14 +4783,17 @@ timeline.
    C:** a method passes if its last frame's SSIM against the screenshot is at least 0.97
    (ffmpeg's `ssim` filter). Playwright's video encoder has a low fixed bitrate, so small answer
    text may blur. Use the passing method with the higher SSIM. If neither passes, stop and
-   propose an alternative (e.g. screenshots at fixed intervals).
+   propose an alternative (e.g. screenshots at fixed intervals). **Amended 2026-11-10 (agreed):**
+   a method must also deliver native 1920×1080 frames (an upscaled 1280×720 frame doesn't
+   count); the screenshot loop was added as a third arm. Done: the screenshot loop
+   (Demo video results).
 2. **Fake microphone probe.** Through the real Chat page on the hard index, a TTS-made WAV of a
    hard query (scratch; not the user's voice) played by the fake-capture flags must produce a
    transcript with the query's words. If `st.audio_input` doesn't record from the fake device in
    Chrome, stop and propose another way (the voice shot is agreed, so drop it only with the
    user's OK).
-3. **Pick queries** by the rules above; the user picks among the candidates. The user records
-   the rule V WAV and picks the music.
+3. **Pick queries** by the rules above; the user picks among the candidates. The user picks
+   the question's TTS preset by ear and picks the music.
 4. **Build** `timeline.py` with its tests, then `record.py` and `assemble.py`, iterating on the
    cut until it reads well. Assemble runs in seconds, so caption and timing edits don't need a
    new recording.
@@ -4808,6 +4823,108 @@ timeline.
 **Out of scope:** narration, a longer walkthrough, light-mode or 4K versions, non-English
 captions, automating the YouTube upload (needs the user's account), and any UI change made only
 to look better on video (stop and ask first).
+
+### Demo video results
+
+**Gate C (capture probe, 2026-11-10).** Real models on the hard index, hard-033 asked after one
+off-camera warm-up, then Open page, Chrome 1280×720 at `device_scale_factor` 1.5, dark. Each
+method in its own browser context (Playwright's recorder is itself a screencast); its last
+frame scored against a `page.screenshot()` taken at the same moment.
+
+| Method | Native frame | SSIM | Rate |
+|---|---|---|---|
+| `record_video` (size 1920×1080) | 1280×720 in the top-left of a grey 1920×1080 canvas | 0.612 | 25 fps VP8 |
+| CDP `Page.startScreencast`, PNG, max 1920×1080 | 1280×720, upscaled | 0.974 | ~50 fps (frames on change) |
+| Screenshot loop, JPEG q95 | 1920×1080 | 0.9993 | 23.9 fps (gap p50 40 ms, p95 53 ms, max 254 ms) |
+
+Both video APIs capture at CSS size and ignore the device scale, in headed and headless Chrome
+(an uncapped screencast sends 1280×720). Only `captureScreenshot` with `clip.scale`, which
+`page.screenshot()` sends, renders device pixels: PNG ~20/s, JPEG q95 ~30/s on an idle page,
+~24/s on the Chat page while VL-8B answers. The screencast passed the SSIM bar as first written,
+but softer text loses the reason for the 1.5× scale, so Gate C was amended (step 1) and the
+**screenshot loop was chosen** (agreed 2026-11-10). Two runs' final screenshots matched at
+SSIM 0.9985 (greedy answers repeat on screen).
+
+**Fake microphone probe (2026-11-10): passed.** A scratch WAV of hard-022's question ("How often
+is Cold store B inspected?") made by qwn's own TTS (16 kHz mono 16-bit, 0.5 s lead, 1.5 s tail,
+6.7 s), passed as `--use-file-for-fake-audio-capture=<wav>%noloop` with the other fake-media and
+autoplay flags and the microphone permission granted for the page's origin. The probe clicks
+`st.audio_input`'s **Record**, waits the WAV's length + 0.5 s, then **Stop recording**. Two takes
+in one page, with New conversation between: both transcripts were "How often is cold store B
+inspected?" (no query word missing), both answered from operations-manual.pdf p.3 with the
+expected "every 28 days", and the spoken answer followed. **`%noloop` restarts the file for
+each capture**, so the off-camera spoken warm-up can use the same WAV, and it doesn't use up
+the shot's question. The widget draws the question's waveform while recording, which shows on
+camera. Each take took ~41 s from Record to the answer's text.
+
+**Query picks (step 3, agreed 2026-11-10)** from `20261025T195301Z-hard.json` and
+`20261023T182047Z-turns.json`. 37 hard queries pass the answer-shot bar; F has 12 candidates,
+T 7, V 33 and A 7 (the bare refusal).
+
+| Shot | Rule | Query | Expected answer (last run) |
+|---|---|---|---|
+| 1, 2 | (fixed) | hard-033: When does bus 5 get to Ferry Terminal on route 7? | Bus 5 gets to Ferry Terminal at 12:39 |
+| 3 | F | hard-049 (chart, paraphrase): Which part of the world brought in the most money between July and September? | The Americas … 31.7 million euros |
+| 4 | T | turn-012: "What is the isolation point for the Generator room?" then "How often is that room inspected?" | IP-210; every 21 days (rewritten to "…the Generator room…") |
+| 5 | V | hard-022: How often is Cold store B inspected? (synthetic voice, see below) | every 28 days |
+| 6 | A | hard-051: What was Halvorsen Marine's total revenue in 2023? (2024 and 2025 exist) | the bare refusal |
+| 8 | F | hard-027 (faded scan): What is the total due on invoice INV-83317? | 173.40 pounds |
+
+turn-012's first question is hard-024 (rank 1, IP-210 in the hard run). Shot 4 asks it live,
+so its answer must match `answer_contains` of hard-024, and the follow-up must match turn-012's.
+
+**Question voice (2026-11-10).** The user chose a synthetic question over recording their own.
+The question in five Qwen3-TTS presets, each transcribed by qwn's own voice pipeline
+(`Voice.transcribe`):
+
+| Preset | Speech | Transcript | Query words missing |
+|---|---|---|---|
+| aiden | 4.08 s | How often is cold store B inspected? | none |
+| serena | 3.68 s | How often is Cold Store B inspected? | none |
+| vivian | 3.44 s | How often is cold store B inspected? | none |
+| dylan | 3.20 s | How often is coal store be inspected? | cold, b |
+| eric | 3.04 s | How often is Coldstore be inspected? | cold, store, b |
+
+dylan and eric fail the record step's transcript check; the user picked **serena** (committed as
+`docs/video/question.wav`, the take the user heard).
+
+**Build (step 4, 2026-11-10).** `timeline.py` (21 fast tests), `make_question.py`, `record.py`
+and `assemble.py`. Three recordings; each passed every record check (answers, refusal,
+transcript, no home path in any frame) and left no saved conversation. Fixes from looking at
+the cuts, not from a check:
+
+- Chrome treats each `file://` page as its own origin, so an `@font-face` URL to Streamlit's
+  Source Sans was blocked silently and the overlays fell back to a serif: the font is embedded
+  as a `data:` URI.
+- At a 720 CSS px viewport, a fresh answer lands under the caption. The recorder scrolls the
+  latest question to just below it **before every frame** of a hold (camera work, no UI
+  change): one scroll wasn't enough, because the status block collapses ("Answering…" to
+  "Done") after it and the page shifts.
+- The warm-up's recording stayed in the voice widget for every shot: each shot starts with the
+  widget's own **Reset** pressed (off camera).
+- The terminal replay stops at the prompt after the answer (no `^D`).
+- JPEG frames decode as full-range `yuvj420p`: the filter converts to TV range, `yuv420p`.
+- Answer waits ran 26–37 s (warm), so the chat waits play at 10x (the dialog and speech waits
+  at 8x, the follow-up's first answer at 16x): 85.3 s.
+
+Third cut, voice-only audio (no music yet): 85.33 s, 2560 frames, H.264 High 1920x1080 yuv420p
+30 fps, AAC 48 kHz, −14.7 LUFS; the silent file has the same 2560 frames and no audio stream.
+Assembling the same recording twice gave a byte-identical SRT and the same frame count
+(~17 s per run).
+
+**Review changes (2026-11-10, agreed).** After watching the third cut: (1) the voice shot's
+framing switches, once the speech starts, to keep the audio player above the chat input
+(the spoken question's text may slide under the caption by then; its transcript was already
+on screen). (2) The Open page shot zooms (`zoom = 1.8`, `zoom_ease_s = 1.5`, smoothstep) once
+the dialog is ready, on the page image's middle at the height of the query's eval `region`, so
+the answer's whole row, label to last column, fills the frame. The outline is drawn into the
+page image, so the record step can't read its box: `region` stands in (`locate_hit` is true,
+so the outline overlaps it). `timeline.py` computes each frame's crop box (3 more tests);
+`assemble.py` renders those ~150 frames with Pillow (already a dependency), with sub-pixel
+crops, because ffmpeg's `zoompan` rounds to whole pixels and jitters. The outline itself varies
+between recordings (one run outlined the row, the next the cell, a little low): it's the
+dialog's approximate box, shown as is. Fifth cut: 85.20 s, 2556 frames, −14.3 LUFS
+(voice only), every record check passed.
 
 ## Phases
 

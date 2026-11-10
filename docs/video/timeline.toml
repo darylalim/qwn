@@ -1,0 +1,112 @@
+# The demo video's one source (PLAN.md → Demo video). `record.py` reads it to drive the
+# shots; `assemble.py` reads it with the recording's events.json to cut both outputs.
+# Times are seconds. Event names per kind are in scripts/demo_video/timeline.py (KINDS).
+# Every wait played above 1x carries the "Sped up Nx" label for its whole length.
+
+[video]
+width = 1920
+height = 1080
+fps = 30
+min_s = 75
+max_s = 90
+type_delay_s = 0.045  # per character typed
+
+[music]
+level_db = -18.0      # under the picture
+fade_in_s = 1.0
+duck_s = 0.5          # fade to silence before the voice question, back after the spoken answer
+fade_out_s = 2.0      # over the end card's last seconds
+
+[thumbnail]
+shot = "answer"       # its "answer" frame, under the title
+title = "qwn"
+subtitle = "Ask your documents. Private, on your Mac."
+
+[[shot]]
+id = "answer"
+kind = "chat"
+query = "hard-033"
+caption = "Ask your documents. Get answers with page citations."
+lead_s = 0.6
+hold_s = 2.5
+waits = [{ from = "sent", to = "answer", speed = 10 }]
+
+[[shot]]
+id = "open-page"
+kind = "open_page"
+caption = "Check every answer against the source page"
+lead_s = 0.8
+hold_s = 4.0
+waits = [{ from = "click", to = "dialog", speed = 8 }]
+zoom = 1.8            # on the answer's row (label to last column), once the dialog is ready
+zoom_ease_s = 1.5
+
+[[shot]]
+id = "figure"
+kind = "chat"
+query = "hard-049"
+caption = "It reads the pages themselves: scans, tables, charts"
+lead_s = 0.6
+hold_s = 3.5
+waits = [{ from = "sent", to = "answer", speed = 10 }]
+
+[[shot]]
+id = "follow-up"
+kind = "followup"
+query = "turn-012"
+caption = "Ask follow-up questions"
+lead_s = 0.6
+mid_s = 1.5           # on the first answer, before the follow-up is typed
+hold_s = 3.0
+waits = [
+  { from = "sent1", to = "answer1", speed = 16 },
+  { from = "sent2", to = "answer2", speed = 10 },
+]
+
+[[shot]]
+id = "voice"
+kind = "voice"
+query = "hard-022"
+caption = "Ask out loud. Hear the answer. Still offline."
+tag = "Question voice: synthetic (Qwen3-TTS)"
+lead_s = 0.6
+hold_s = 1.0          # after the spoken answer ends
+waits = [
+  { from = "rec_stop", to = "answer", speed = 10 },
+  { from = "answer", to = "audio", speed = 8 },
+]
+
+[[shot]]
+id = "refusal"
+kind = "refusal"
+query = "hard-051"
+caption = "Not in your documents? It says so."
+lead_s = 0.6
+hold_s = 2.5
+waits = [{ from = "sent", to = "answer", speed = 10 }]
+
+[[shot]]
+id = "library"
+kind = "library"
+caption = "PDFs, images and notes, all indexed on your Mac"
+hold_s = 5.0
+
+[[shot]]
+id = "terminal"
+kind = "terminal"
+query = "hard-027"
+caption = "Or ask from the terminal"
+lead_s = 0.8
+hold_s = 3.0
+waits = [{ from = "sent", to = "answer", speed = 10 }]
+
+[[shot]]
+id = "card"
+kind = "card"
+hold_s = 7.0
+lines = [
+  "100% on-device",
+  "Qwen3-VL-8B on MLX · Apple Silicon",
+  "Waits sped up · question voice synthetic",
+]
+url = "github.com/darylalim/qwn"
