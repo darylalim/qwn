@@ -110,6 +110,20 @@ uv version --bump minor               # one minor release per completed phase (f
   "Open page" shows "Finding the supporting passage…" first: wait for the dialog's
   `Supporting passage \(approximate\)|Couldn't pinpoint` (unanchored: the caption's icon is
   text), then `stStatusWidget` hidden. The dialog prints absolute paths (your home folder).
+  Capture: Playwright `record_video` and CDP `Page.startScreencast` record CSS pixels and ignore
+  `device_scale_factor` (headed and headless); only `page.screenshot()` (it sends `clip.scale`)
+  gives device pixels: JPEG q95 back to back runs ~24 fps on the Chat page while VL-8B answers.
+  A `file://` page can't load `@font-face` from another file URL (each file is its own origin;
+  it falls back to a serif silently): embed the font as a `data:` URI (Streamlit's Source Sans:
+  `streamlit/static/static/media/SourceSansVF-Upright*.woff2`).
+  At a 1280×720 viewport the Chat page's controls fill half the height: to keep an answer in
+  view, scroll it before every frame (one scroll drifts as "Answering…" collapses to "Done").
+  The Open page outline is drawn into the image (`adapters.images.highlight`), not the DOM: to
+  locate it, map the query's eval `region` onto the image's bounding box.
+  Fake microphone: `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream
+  --use-file-for-fake-audio-capture=<wav>%noloop` and `grant_permissions(["microphone"],
+  origin=url)`; `%noloop` restarts the file on each capture. `st.audio_input`'s buttons:
+  `Record` (`exact=True`), `Stop recording`, `Reset` (clears the last recording's waveform).
 - **README screenshots** (`docs/images/<view>-{light,dark}.png`, a `<picture>` each): real
   models on the hard corpus at 1512 px, 2× scale, `color_scheme` per context (the theme follows
   it), `pngquant` after. Pick a query with `locate_hit` true in the last hard result (hard-032's
@@ -192,6 +206,11 @@ uv version --bump minor               # one minor release per completed phase (f
   Unanswerable rows in `per_query` have no `rank`/`rank_embed` keys: read them with `.get`.
   `--no-generate` changes `settings_hash`, so checking hard ranks against the generated baseline
   is a hand diff of `rank`/`rank_embed` in `per_query`.
+- **ffmpeg:** JPEG frames decode as full-range `yuvj420p`: end the graph with
+  `scale=in_range=full:out_range=tv,format=yuv420p`. `zoompan` rounds to whole pixels and
+  jitters: zoom with Pillow `Image.transform(size, EXTENT, box, BICUBIC)`. Long graphs:
+  `-/filter_complex <file>` (ffmpeg 7). Keep anything a later session needs under `dist/`
+  (gitignored): scratchpads don't outlive the session.
 - **Corpus generators:** draw new facts from their own `random.Random` stream (as
   `SEED_DECOYS` in `eval/hard/build_corpus.py`), never from an existing one, so every existing
   document stays byte-identical. Unit tests that need a corpus build use the session fixture
@@ -216,6 +235,9 @@ uv version --bump minor               # one minor release per completed phase (f
   A label that depends on all sources (a hint on the top score) needs `mlx_vlm_gen.messages`
   patched instead (also looked up by name): `image_label` sees one source.
   `Source.score` is the rerank score, so a label can mark the top page without a new field.
+  TTS preset: `mlx_audio_tts.SPEAKER` (answers use `Ryan`) is read per call, so a probe can set
+  another. Of five presets, ASR heard "Cold store B" exactly from aiden, serena and vivian only.
+  Check a WAV with `Voice(settings, registry).transcribe(load_audio(data))`.
   Probe a retrieval idea without a reindex by monkeypatching `Retriever.rerank_input(hit, title)`
   and running `ev.run(..., ev.Options())` (no generation; ~20 min for hard + public). Probe the
   generator side separately: extra prompt text that helps ranking can break answers.
